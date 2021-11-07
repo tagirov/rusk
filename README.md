@@ -1,33 +1,43 @@
 # rusk
-Extremely simple TODO-manager for CLI
+TODO manager for CLI
 
+## install
 
-## Usage
+Clone the repo
 
-
-Add a task:
-`
-cargo run a task
-`
-If we want concrete date:
-`
-cargo run a 2020/02/08 task
-`
-Let's see what we need to do:
-`
-cargo run l
-`
-In this list we can see the identifiers of all the tasks that we have
-
-We will use it to remove a task from the list:
-`
-cargo run d 456
-`
-#
-At the first start (cargo run **a**(add) or **l**(list)) , Rusk creates a database file in `XDG_CONFIG_HOME/rusk/db.json`
-
-You can also copy compiled file in `/bin/` directory and run it next time by `rusk` command in console:
 ```
-sudo install /rusk/target/release/rusk /usr/bin/    
+git clone https://github.com/tagirov/rusk && cd rusk
 ```
-Quick help is available by the commands `-h` or `--help`
+Build binary
+
+```
+cargo build --release
+```
+
+Install compiled file system-wide
+```
+sudo install ./target/release/rusk /usr/bin/    
+```
+
+## usage
+
+If the database file is missing, Rusk creates `$HOME/rusk/db.json` when you exec either `rusk a` or `rusk l`
+
+Add task
+```
+rusk a task_name
+```
+Add task with the concrete date
+```
+rusk a 2020/02/08 task_name
+```
+Task list
+```
+rusk l
+```
+in the list above we can see identifiers of all tasks that we have
+
+Remove the task from the list
+```
+rusk d task_id
+```

@@ -11,7 +11,7 @@ git clone https://github.com/tagirov/rusk && cd rusk
 Build binary
 
 ```
-cargo build --release
+cargo +nightly build --release
 ```
 
 Install compiled file system-wide

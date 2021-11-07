@@ -114,7 +114,7 @@ fn run(args: Args) -> Result<(), Box<dyn Error>> {
 }
 
 fn db() -> std::io::Result<File> {
-    let cfg_dir = format!("{}/{}", &CFG_PATH, "rusk");
+    let db_dir = format!("{}/{}", &CFG_PATH, "rusk");
     let db_file = format!("{}/{}", &cfg_dir, "db.json");
 
     if !Path::new(&cfg_dir).exists() {

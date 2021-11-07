@@ -1,8 +1,8 @@
 [package]
 name = "rusk"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Alex Tagirov <shurik@email.su"]
-edition = "2018"
+edition = "2021"
 description = "A task manager that focused on embeddedness, modularity, ease of use"
 license = "Unlicense"
 

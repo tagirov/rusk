@@ -1,6 +1,5 @@
 #![feature(with_options)]
 
-use std::error::Error;
 use std::fs::{self, File};
 use std::io::{self, prelude::*};
 use std::path::Path;
@@ -10,6 +9,9 @@ use serde_derive::{Deserialize, Serialize};
 
 const CFG_PATH: &str = env!("HOME");
 
+type GenError = Box<dyn std::error::Error>;
+type GenResult<T> = Result<T, GenError>;
+
 struct Args {
     mode: String,
     date: String,
@@ -18,12 +20,12 @@ struct Args {
 }
 
 impl Args {
-    fn parse(mut args: std::env::Args) -> Result<Args, Box<dyn Error>> {
+    fn parse(mut args: std::env::Args) -> GenResult<Args> {
         args.next();
 
         let mode = match args.next() {
             Some(arg) => arg,
-            None => String::from("--help")
+            None => String::from("--help"),
         };
 
         let mut date = String::from("///");
@@ -52,7 +54,7 @@ impl Args {
 
         let query: String = query.join(" ");
 
-      Ok( Args {
+        Ok(Args {
             mode,
             date,
             query,
@@ -69,7 +71,7 @@ struct Task {
 }
 
 impl Task {
-    fn new(content: String, date: Date) -> Result<Self, Box<dyn Error>> {
+    fn new(content: String, date: Date) -> io::Result<Self> {
         let id = generate_unique_id()?;
 
         Ok(Task { id, content, date })
@@ -89,36 +91,24 @@ impl Date {
     }
 }
 
-fn main() {
-    let args = Args::parse(std::env::args()).unwrap_or_else(|e| {
-			eprintln!("Error when parsing arguments: {}", e);
-			std::process::exit(1);
-		});
-
-		run(args).unwrap_or_else(|e| {
-			eprintln!("Runtime error: {}", e);
-			std::process::exit(1);
-		});
-}
-
-fn run(args: Args) -> Result<(), Box<dyn Error>> {
-    match args.mode.as_str() { 
-        "a" | "--add" => create_task(args.date, args.query),
-        "l" | "--list" => show_task_list(),
-        "d" | "--delete" => delete_task(args.id),
+fn run(args: Args) -> GenResult<()> {
+    match args.mode.as_str() {
+        "a" | "--add" => create_task(args.date, args.query)?,
+        "l" | "--list" => show_task_list()?,
+        "d" | "--delete" => delete_task(args.id)?,
         "h" | "--help" => help(),
         "v" | "--version" => version(),
         _ => help(),
-    }?;
-	Ok(())
+    };
+    Ok(())
 }
 
-fn db() -> std::io::Result<File> {
+fn db() -> io::Result<File> {
     let db_dir = format!("{}/{}", &CFG_PATH, "rusk");
-    let db_file = format!("{}/{}", &cfg_dir, "db.json");
+    let db_file = format!("{}/{}", &db_dir, "db.json");
 
-    if !Path::new(&cfg_dir).exists() {
-        fs::create_dir_all(cfg_dir)?;
+    if !Path::new(&db_dir).exists() {
+        fs::create_dir_all(db_dir)?;
 
         println!("\nDatabase created");
     }
@@ -133,7 +123,7 @@ fn db() -> std::io::Result<File> {
     Ok(db_file)
 }
 
-fn create_task(date: String, mut query: String) -> Result<(), Box<dyn Error>> {
+fn create_task(date: String, mut query: String) -> GenResult<()> {
     let date: Vec<&str> = date.split('/').collect();
     let (year, month, day) = (date[0], date[1], date[2]);
 
@@ -145,30 +135,30 @@ fn create_task(date: String, mut query: String) -> Result<(), Box<dyn Error>> {
         io::stdin().read_line(&mut query)?;
     }
 
-    let query = query.trim().to_string(); // cutoff \n
+    let query = query.trim().to_string(); // trim \n
 
     Ok(add_task(Task::new(query, date)?)?)
 }
 
-fn add_task(task: Task) -> Result<(), Box<dyn Error>> {
+fn add_task(task: Task) -> GenResult<()> {
     let serialize_task = serde_json::to_string(&task)?;
-		
-		let mut db = db()?;
+
+    let mut db = db()?;
 
     writeln!(db, "{}", serialize_task)?;
     println!("\nNew task added");
 
-		Ok(())
+    Ok(())
 }
 
-fn delete_task(id: u8) -> Result<(), Box<dyn Error>> {
+fn delete_task(id: u8) -> io::Result<()> {
     let mut db_buf = String::new();
-		let mut db = db()?;
+    let mut db = db()?;
     db.read_to_string(&mut db_buf)?;
 
     let mut array_db: Vec<&str> = db_buf.split("\n").collect();
     array_db.retain(|&x| !x.contains(&id.to_string()));
-    array_db.pop(); // cutoff last empty line
+    array_db.pop(); // trim the empty line at the end
 
     let db_file_path = format!("{}/{}", CFG_PATH, "rusk/db.json");
 
@@ -181,17 +171,17 @@ fn delete_task(id: u8) -> Result<(), Box<dyn Error>> {
         writeln!(db_file, "{}", &task)?;
     }
 
-		Ok(())
+    Ok(())
 }
 
-fn show_task_list() -> Result<(), Box<dyn Error>>{
+fn show_task_list() -> GenResult<()> {
     let mut db_buf = String::new();
-		let mut db = db()?;
+    let mut db = db()?;
     db.read_to_string(&mut db_buf)?;
 
     let mut db_array: Vec<&str> = db_buf.split('\n').collect();
 
-    db_array.pop(); // trim empty line at the end
+    db_array.pop(); // trim the empty line at the end
     println!();
 
     for line in &db_array {
@@ -206,12 +196,12 @@ fn show_task_list() -> Result<(), Box<dyn Error>>{
             println!("|{}|                 {}", task.id, task.content);
         }
     }
-	Ok(())
+    Ok(())
 }
 
-fn generate_unique_id() -> Result<u8, Box<dyn Error>> {
+fn generate_unique_id() -> io::Result<u8> {
     let mut db_buf = String::new();
-		let mut db = db()?;
+    let mut db = db()?;
     db.read_to_string(&mut db_buf)?;
 
     let mut id: u8 = thread_rng().gen_range(100, 255);
@@ -222,7 +212,7 @@ fn generate_unique_id() -> Result<u8, Box<dyn Error>> {
     Ok(id)
 }
 
-fn help() -> Result<(), Box<dyn Error>> {
+fn help() {
     println!(
         "
 
@@ -236,7 +226,7 @@ fn help() -> Result<(), Box<dyn Error>> {
 ╠═════╬════════════╬════════════════════════════════════════════════════════════════════╣
 ║  h  ║  --help    ║  This menu                                                         ║
 ╠═════╬════════════╬════════════════════════════════════════════════════════════════════╣
-║  v  ║  --version ║  Print version and date of release                                 ║
+║  v  ║  --version ║  Print version and  date of release                                ║
 ╚═════╩════════════╩════════════════════════════════════════════════════════════════════╝
 
      ------------
@@ -249,12 +239,20 @@ fn help() -> Result<(), Box<dyn Error>> {
 
 "
     );
-
-	Ok(())
 }
 
-fn version() -> Result<(), Box<dyn Error>> {
-    println!("rusk 0.2.0 (2021-11-07)");
-	
-	Ok(())
+fn version() {
+    println!("rusk 0.3.0 (2021-11-08)");
+}
+
+fn main() {
+    let args = Args::parse(std::env::args()).unwrap_or_else(|e| {
+        eprintln!("Error when parsing arguments: {}", e);
+        std::process::exit(1);
+    });
+
+    run(args).unwrap_or_else(|e| {
+        eprintln!("Runtime error: {}", e);
+        std::process::exit(1);
+    });
 }

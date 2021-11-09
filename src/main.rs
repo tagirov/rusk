@@ -25,7 +25,7 @@ impl Args {
 
         let mode = match args.next() {
             Some(arg) => arg,
-            None => String::from("--help"),
+            None => String::from("--list"),
         };
 
         let mut date = String::from("///");
@@ -104,7 +104,7 @@ fn run(args: Args) -> GenResult<()> {
 }
 
 fn db() -> io::Result<File> {
-    let db_dir = format!("{}/{}", &CFG_PATH, "rusk");
+    let db_dir = format!("{}/{}", &CFG_PATH, ".rusk");
     let db_file = format!("{}/{}", &db_dir, "db.json");
 
     if !Path::new(&db_dir).exists() {
@@ -141,33 +141,30 @@ fn create_task(date: String, mut query: String) -> GenResult<()> {
 }
 
 fn add_task(task: Task) -> GenResult<()> {
-    let serialize_task = serde_json::to_string(&task)?;
+    let serialized_task = serde_json::to_string(&task)?;
 
-    let mut db = db()?;
-
-    writeln!(db, "{}", serialize_task)?;
-    println!("\nNew task added");
+    writeln!(db()?, "{}", serialized_task)?;
+    println!("\nNew task added ({})", task.id);
 
     Ok(())
 }
 
 fn delete_task(id: u8) -> io::Result<()> {
     let mut db_buf = String::new();
-    let mut db = db()?;
-    db.read_to_string(&mut db_buf)?;
+    db()?.read_to_string(&mut db_buf)?;
 
-    let mut array_db: Vec<&str> = db_buf.split("\n").collect();
-    array_db.retain(|&x| !x.contains(&id.to_string()));
-    array_db.pop(); // trim the empty line at the end
+    let mut db_into_vec: Vec<&str> = db_buf.split("\n").collect();
+    db_into_vec.retain(|&x| !x.contains(&id.to_string()));
+    db_into_vec.pop(); // trim empty line at the end
 
-    let db_file_path = format!("{}/{}", CFG_PATH, "rusk/db.json");
+    let db_file_path = format!("{}/{}", CFG_PATH, ".rusk/db.json");
 
     let mut db_file = File::with_options()
         .write(true)
         .truncate(true)
         .open(&db_file_path)?;
 
-    for task in array_db {
+    for task in db_into_vec {
         writeln!(db_file, "{}", &task)?;
     }
 
@@ -176,24 +173,23 @@ fn delete_task(id: u8) -> io::Result<()> {
 
 fn show_task_list() -> GenResult<()> {
     let mut db_buf = String::new();
-    let mut db = db()?;
-    db.read_to_string(&mut db_buf)?;
+    db()?.read_to_string(&mut db_buf)?;
 
-    let mut db_array: Vec<&str> = db_buf.split('\n').collect();
+    let mut db_into_vec: Vec<&str> = db_buf.split('\n').collect();
 
-    db_array.pop(); // trim the empty line at the end
+    db_into_vec.pop(); // trim empty line at the end
     println!();
 
-    for line in &db_array {
+    for line in &db_into_vec {
         let task: Task = serde_json::from_str(&line)?;
 
         if task.date.year != "" {
             println!(
-                "|{}|    {}/{}/{}   {}",
+                "{}| --- {}/{}/{} --- | {}",
                 task.id, task.date.year, task.date.month, task.date.day, task.content,
             );
         } else {
-            println!("|{}|                 {}", task.id, task.content);
+            println!("{}| ------------------ | {}", task.id, task.content);
         }
     }
     Ok(())
@@ -201,12 +197,13 @@ fn show_task_list() -> GenResult<()> {
 
 fn generate_unique_id() -> io::Result<u8> {
     let mut db_buf = String::new();
-    let mut db = db()?;
-    db.read_to_string(&mut db_buf)?;
+    db()?.read_to_string(&mut db_buf)?;
 
     let mut id: u8 = thread_rng().gen_range(100, 255);
 
-    while id.to_string().contains("id") {
+    let pattern = format!("{}:{}", "\"id\"", id);
+
+    while db_buf.contains(&pattern) {
         id = thread_rng().gen_range(100, 255);
     }
     Ok(id)
@@ -217,8 +214,8 @@ fn help() {
         "
 
 ╔═════╦════════════╦════════════════════════════════════════════════════════════════════╗
-║  a  ║  --add     ║  Add new task with or without specific date (you must specify      ║
-║     ║            ║  the date according to the following pattern: 20yy.mm.dd )         ║
+║  a  ║  --add     ║  Add a new task with or without a specific date (you must specify  ║
+║     ║            ║  date according to the following pattern: 20yy.mm.dd )             ║
 ╠═════╬════════════╬════════════════════════════════════════════════════════════════════╣
 ║  l  ║  --list    ║  List of all tasks:  id, date (if specified), task                 ║
 ╠═════╬════════════╬════════════════════════════════════════════════════════════════════╣
@@ -226,7 +223,7 @@ fn help() {
 ╠═════╬════════════╬════════════════════════════════════════════════════════════════════╣
 ║  h  ║  --help    ║  This menu                                                         ║
 ╠═════╬════════════╬════════════════════════════════════════════════════════════════════╣
-║  v  ║  --version ║  Print version and  date of release                                ║
+║  v  ║  --version ║  Print version and release date                                    ║
 ╚═════╩════════════╩════════════════════════════════════════════════════════════════════╝
 
      ------------
@@ -242,8 +239,12 @@ fn help() {
 }
 
 fn version() {
-    println!("rusk 0.3.0 (2021-11-08)");
+    println!("rusk 0.4.0 (2021-11-09)");
 }
+
+// fn sort_by_date() {
+// 		TODO   //
+// }
 
 fn main() {
     let args = Args::parse(std::env::args()).unwrap_or_else(|e| {

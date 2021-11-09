@@ -21,7 +21,7 @@ sudo install ./target/release/rusk /usr/bin/
 
 ## usage
 
-If the database file is missing, Rusk creates `$HOME/rusk/db.json` when you exec either `rusk a` or `rusk l`
+If the database file is missing, Rusk creates `$HOME/.rusk/db.json` when you exec either `rusk` or `rusk a` or `rusk l`
 
 Add task
 ```

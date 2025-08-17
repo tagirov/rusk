@@ -2,6 +2,22 @@
 
 ![rusk](rusk.png)
 
+## Install
+
+### Manually
+
+```
+git clone https://github.com/tagirov/rusk && cd rusk
+cargo build --release
+sudo install ./target/release/rusk /usr/bin
+```
+
+### Arch Linux
+
+```
+yay -S rusk
+```
+
 ## Usage
 
 ### Add a task

@@ -174,8 +174,9 @@ fn main() -> Result<()> {
             let mut found = false;
             for t in &mut tasks {
                 if t.id == id {
-                    t.done = true;
-                    println!("{} {}: {}", "Marked as done:".cyan(), id, t.text.bold());
+                    t.done = !t.done;
+                    let status = if t.done { "Marked as done".cyan() } else { "Marked as undone".yellow() };
+                    println!("{} {}: {}", status, id, t.text.bold());
                     found = true;
                 }
             }

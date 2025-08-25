@@ -15,7 +15,7 @@ sudo install ./target/release/rusk /usr/bin
 ```
 #### Arch User Repository (AUR)
 ```
-yay -S rusk
+paru -S rusk
 ```
 
 ## Usage
@@ -23,15 +23,17 @@ yay -S rusk
 ##### Add a task
 ```bash
 rusk add buy groceries
-rusk add buy groceries --date 2024-07-01 // or --date 2024-07-01 buy groceries
+rusk add buy groceries --date 2024-07-01
 ```
 
-##### List all tasks
+##### List all tasks. These commands are all the same
 ```bash
 rusk list
+rusk l
+rusk
 ```
 
-##### Mark task as done
+##### Mark or unmark a task as done
 ```bash
 rusk mark 3
 ```
@@ -50,12 +52,13 @@ rusk del 3
 ```bash
 rusk del --all
 ```
+##### Multiple tasks can be passed to the edit, mark, and del commands
 
-##### Help
 ```bash
-rusk --help
+rusk mark 1 2 5
+rusk del {1..5}  ## 1 2 3 4 5 
+rusk e 1 2 -t "These tasks are hidden now" -d 2000-1-1
 ```
-
 
 ## Aliases
 ```bash
@@ -68,5 +71,6 @@ rusk d (del)
 -t (--text)
 -d (--date)
 -h (--help)
+-V (--version)
 
 ```

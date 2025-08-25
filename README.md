@@ -1,5 +1,5 @@
 <h1 align="center">rusk</h1>
-<p align="center">A terminal todo manager</p>
+<p align="center">A minimal terminal task manager</p>
 <p align="center">
     <a href="https://github.com/tagirov/rusk/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/tagirov/rusk?logo=github&labelColor=blue"></a>
 </p>

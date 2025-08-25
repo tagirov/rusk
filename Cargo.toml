@@ -3,7 +3,7 @@ name = "rusk"
 version = "0.1.1"
 authors = ["github.com/tagirov"]
 edition = "2024"
-description = "A minimal CLI todo manager"
+description = "A minimal terminal task manager"
 
 
 [dependencies]

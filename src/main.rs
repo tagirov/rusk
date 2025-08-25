@@ -36,24 +36,29 @@ enum Command {
     },
     #[command(
         alias = "d",
-        about = "Delete a task by id. Use --all to delete all completed tasks. Example: rusk del 3"
+        about = "Delete tasks by id(s). Use --all to delete all completed tasks. Example: rusk del 3, rusk del 1 2 3"
     )]
     Del {
-        id: Option<u8>,
+        #[arg(value_delimiter = ',')]
+        ids: Vec<u8>,
         #[arg(long)]
         all: bool,
     },
     #[command(
         alias = "m",
-        about = "Mark the task as done by id. Example: rusk mark 3"
+        about = "Mark tasks as done/undone by id(s). Example: rusk mark 3, rusk mark 1 2 3"
     )]
-    Mark { id: u8 },
+    Mark { 
+        #[arg(value_delimiter = ',')]
+        ids: Vec<u8> 
+    },
     #[command(
         alias = "e",
-        about = "Edit a task by id. Use --text to change the text, --date to change the date. Example: rusk edit 3 --text new text --date 2025-07-01"
+        about = "Edit tasks by id(s). Use --text to change the text, --date to change the date. Example: rusk edit 3 --text new text, rusk edit 1 2 3 --text new text"
     )]
     Edit {
-        id: u8,
+        #[arg(value_delimiter = ',')]
+        ids: Vec<u8>,
         #[arg(short, long)]
         text: Option<String>,
         #[arg(short, long)]
@@ -132,8 +137,8 @@ fn main() -> Result<()> {
             save_tasks(&tasks)?;
             println!("{} {}: {}", "Added task:".green(), id, text.bold());
         }
-        Some(Command::Del { id, all }) => {
-            if all && id.is_none() {
+        Some(Command::Del { ids, all }) => {
+            if all && ids.is_empty() {
                 let done_count = tasks.iter().filter(|t| t.done).count();
                 if done_count == 0 {
                     println!("{}", "No done tasks to delete.".yellow());
@@ -150,58 +155,103 @@ fn main() -> Result<()> {
                         println!("Canceled.");
                     }
                 }
-            } else if let Some(id) = id {
-                let pos = tasks.iter().position(|t| t.id == id);
-                match pos {
-                    Some(idx) => {
-                        let task = &tasks[idx];
-                        let input = read_user_input(&format!("Delete '{}'? [y/N]: ", task.text))?;
-                        if input.eq_ignore_ascii_case("y") {
-                            tasks.remove(idx);
-                            save_tasks(&tasks)?;
-                            println!("Task deleted.");
-                        } else {
-                            println!("Canceled.");
+            } else if !ids.is_empty() {
+                let mut deleted_count = 0;
+                let mut not_found: Vec<u8> = Vec::new();
+                
+                // Сортируем ID в обратном порядке, чтобы удаление не влияло на индексы
+                let mut sorted_ids: Vec<u8> = ids.clone();
+                sorted_ids.sort_by(|a, b| b.cmp(a));
+                
+                for &id in &sorted_ids {
+                    let pos = tasks.iter().position(|t| t.id == id);
+                    match pos {
+                        Some(idx) => {
+                            let task = &tasks[idx];
+                            let input = read_user_input(&format!("Delete '{}'? [y/N]: ", task.text))?;
+                            if input.eq_ignore_ascii_case("y") {
+                                tasks.remove(idx);
+                                deleted_count += 1;
+                            } else {
+                                println!("Canceled deletion of task {}.", id);
+                            }
                         }
+                        None => not_found.push(id),
                     }
-                    None => println!("{} {}", "No such task:".yellow(), id),
+                }
+                
+                if deleted_count > 0 {
+                    save_tasks(&tasks)?;
+                    println!("Deleted {} task(s).", deleted_count);
+                }
+                
+                if !not_found.is_empty() {
+                    println!("{} {:?}", "Tasks not found:".yellow(), not_found);
                 }
             } else {
-                println!("{}", "Please specify an id or --all.".yellow());
+                println!("{}", "Please specify id(s) or --all.".yellow());
             }
         }
-        Some(Command::Mark { id }) => {
-            let mut found = false;
-            for t in &mut tasks {
-                if t.id == id {
-                    t.done = !t.done;
-                    let status = if t.done { "Marked as done".cyan() } else { "Marked as undone".yellow() };
-                    println!("{} {}: {}", status, id, t.text.bold());
-                    found = true;
+        Some(Command::Mark { ids }) => {
+            let mut found_count = 0;
+            let mut not_found: Vec<u8> = Vec::new();
+            
+            for &id in &ids {
+                let mut found = false;
+                for t in &mut tasks {
+                    if t.id == id {
+                        t.done = !t.done;
+                        let status = if t.done { "Marked as done".cyan() } else { "Marked as undone".yellow() };
+                        println!("{} {}: {}", status, id, t.text.bold());
+                        found = true;
+                        found_count += 1;
+                        break;
+                    }
+                }
+                if !found {
+                    not_found.push(id);
                 }
             }
-            save_tasks(&tasks)?;
-            if !found {
-                println!("{} {}", "No such task:".yellow(), id);
+            
+            if found_count > 0 {
+                save_tasks(&tasks)?;
+            }
+            
+            if !not_found.is_empty() {
+                println!("{} {:?}", "Tasks not found:".yellow(), not_found);
             }
         }
-        Some(Command::Edit { id, text, date }) => {
-            let mut found = false;
-            for t in &mut tasks {
-                if t.id == id {
-                    if let Some(new_text) = text.clone() {
-                        t.text = new_text;
+        Some(Command::Edit { ids, text, date }) => {
+            let mut found_count = 0;
+            let mut not_found: Vec<u8> = Vec::new();
+            
+            for &id in &ids {
+                let mut found = false;
+                for t in &mut tasks {
+                    if t.id == id {
+                        if let Some(new_text) = text.clone() {
+                            t.text = new_text;
+                        }
+                        if let Some(ref new_date) = date {
+                            t.date = NaiveDate::parse_from_str(&new_date, "%Y-%m-%d").ok();
+                        }
+                        println!("{} {}: {}", "Edited task:".blue(), id, t.text.bold());
+                        found = true;
+                        found_count += 1;
+                        break;
                     }
-                    if let Some(ref new_date) = date {
-                        t.date = NaiveDate::parse_from_str(&new_date, "%Y-%m-%d").ok();
-                    }
-                    println!("{} {}: {}", "Edited task:".blue(), id, t.text.bold());
-                    found = true;
+                }
+                if !found {
+                    not_found.push(id);
                 }
             }
-            save_tasks(&tasks)?;
-            if !found {
-                println!("{} {}", "No such task:".yellow(), id);
+            
+            if found_count > 0 {
+                save_tasks(&tasks)?;
+            }
+            
+            if !not_found.is_empty() {
+                println!("{} {:?}", "Tasks not found:".yellow(), not_found);
             }
         }
         Some(Command::List) | None => {

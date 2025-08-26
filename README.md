@@ -47,7 +47,7 @@ rusk mark 3
 
 #### Edit a task
 ```bash
-rusk edit 3 --text "new text" --date 2024-07-01
+rusk edit 3 --text new text --date 2024-07-01
 ```
 
 #### Delete a task
@@ -64,7 +64,7 @@ rusk del --all
 ```bash
 rusk mark 1 2 5
 rusk del {1..5}  ## 1 2 3 4 5 
-rusk e 1 2 -t "These tasks are hidden now" -d 2000-1-1
+rusk e 1 2 -t These tasks are hidden now -d 2000-1-1
 ```
 
 ## Aliases

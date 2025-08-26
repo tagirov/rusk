@@ -13,7 +13,7 @@ git clone https://github.com/tagirov/rusk && cd rusk
 cargo build --release
 sudo install ./target/release/rusk /usr/bin
 ```
-#### Arch User Repository (AUR)
+#### Arch Linux (AUR)
 ```
 paru -S rusk
 ```

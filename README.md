@@ -6,7 +6,7 @@
 
 <p align="center"><img src="rusk.png" alt="demonstration of rusk in a battle"></p>
 
-## Install
+# Install
 #### Manually
 ```
 git clone https://github.com/tagirov/rusk && cd rusk
@@ -18,41 +18,48 @@ sudo install ./target/release/rusk /usr/bin
 paru -S rusk
 ```
 
-## Usage
+#### Cargo via github
+```
+cargo install --git https://github.com/tagirov/rusk
+```
 
-##### Add a task
+> The binary will be installed to ~/.cargo/bin/rusk. To use it globally, you must either create a symlink in /usr/bin or add ~/.cargo/bin to your $PATH.
+
+# Usage
+
+#### Add a task
 ```bash
 rusk add buy groceries
 rusk add buy groceries --date 2024-07-01
 ```
 
-##### List all tasks. These commands are all the same
+#### List all tasks. These commands are all the same
 ```bash
 rusk list
 rusk l
 rusk
 ```
 
-##### Mark or unmark a task as done
+#### Mark or unmark a task as done
 ```bash
 rusk mark 3
 ```
 
-##### Edit a task
+#### Edit a task
 ```bash
 rusk edit 3 --text "new text" --date 2024-07-01
 ```
 
-##### Delete a task
+#### Delete a task
 ```bash
 rusk del 3
 ```
 
-##### Delete all done tasks
+#### Delete all done tasks
 ```bash
 rusk del --all
 ```
-##### Multiple tasks can be passed to the edit, mark, and del commands
+#### Multiple tasks can be passed to the edit, mark, and del commands
 
 ```bash
 rusk mark 1 2 5

@@ -1,6 +1,6 @@
 [package]
 name = "rusk"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["github.com/tagirov"]
 edition = "2024"
 description = "A minimal terminal task manager"

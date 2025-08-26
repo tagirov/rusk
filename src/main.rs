@@ -48,9 +48,9 @@ enum Command {
         alias = "m",
         about = "Mark tasks as done/undone by id(s). Example: rusk mark 3, rusk mark 1 2 3"
     )]
-    Mark { 
+    Mark {
         #[arg(value_delimiter = ',')]
-        ids: Vec<u8> 
+        ids: Vec<u8>,
     },
     #[command(
         alias = "e",
@@ -59,8 +59,8 @@ enum Command {
     Edit {
         #[arg(value_delimiter = ',')]
         ids: Vec<u8>,
-        #[arg(short, long)]
-        text: Option<String>,
+        #[arg(short, long, num_args = 1..)]
+        text: Option<Vec<String>>, 
         #[arg(short, long)]
         date: Option<String>,
     },
@@ -158,17 +158,18 @@ fn main() -> Result<()> {
             } else if !ids.is_empty() {
                 let mut deleted_count = 0;
                 let mut not_found: Vec<u8> = Vec::new();
-                
-                // Сортируем ID в обратном порядке, чтобы удаление не влияло на индексы
+
+                // Sort the IDs in reverse order so that deletion doesn't affect the indexes
                 let mut sorted_ids: Vec<u8> = ids.clone();
                 sorted_ids.sort_by(|a, b| b.cmp(a));
-                
+
                 for &id in &sorted_ids {
                     let pos = tasks.iter().position(|t| t.id == id);
                     match pos {
                         Some(idx) => {
                             let task = &tasks[idx];
-                            let input = read_user_input(&format!("Delete '{}'? [y/N]: ", task.text))?;
+                            let input =
+                                read_user_input(&format!("Delete '{}'? [y/N]: ", task.text))?;
                             if input.eq_ignore_ascii_case("y") {
                                 tasks.remove(idx);
                                 deleted_count += 1;
@@ -179,12 +180,12 @@ fn main() -> Result<()> {
                         None => not_found.push(id),
                     }
                 }
-                
+
                 if deleted_count > 0 {
                     save_tasks(&tasks)?;
                     println!("Deleted {} task(s).", deleted_count);
                 }
-                
+
                 if !not_found.is_empty() {
                     println!("{} {:?}", "Tasks not found:".yellow(), not_found);
                 }
@@ -195,13 +196,17 @@ fn main() -> Result<()> {
         Some(Command::Mark { ids }) => {
             let mut found_count = 0;
             let mut not_found: Vec<u8> = Vec::new();
-            
+
             for &id in &ids {
                 let mut found = false;
                 for t in &mut tasks {
                     if t.id == id {
                         t.done = !t.done;
-                        let status = if t.done { "Marked as done".cyan() } else { "Marked as undone".yellow() };
+                        let status = if t.done {
+                            "Marked as done".cyan()
+                        } else {
+                            "Marked as undone".yellow()
+                        };
                         println!("{} {}: {}", status, id, t.text.bold());
                         found = true;
                         found_count += 1;
@@ -212,11 +217,11 @@ fn main() -> Result<()> {
                     not_found.push(id);
                 }
             }
-            
+
             if found_count > 0 {
                 save_tasks(&tasks)?;
             }
-            
+
             if !not_found.is_empty() {
                 println!("{} {:?}", "Tasks not found:".yellow(), not_found);
             }
@@ -224,13 +229,14 @@ fn main() -> Result<()> {
         Some(Command::Edit { ids, text, date }) => {
             let mut found_count = 0;
             let mut not_found: Vec<u8> = Vec::new();
-            
+
             for &id in &ids {
                 let mut found = false;
                 for t in &mut tasks {
                     if t.id == id {
-                        if let Some(new_text) = text.clone() {
-                            t.text = new_text;
+                        if let Some(words) = text.clone() {
+                            let joined = words.join(" ");
+                            t.text = joined;
                         }
                         if let Some(ref new_date) = date {
                             t.date = NaiveDate::parse_from_str(&new_date, "%Y-%m-%d").ok();
@@ -245,11 +251,11 @@ fn main() -> Result<()> {
                     not_found.push(id);
                 }
             }
-            
+
             if found_count > 0 {
                 save_tasks(&tasks)?;
             }
-            
+
             if !not_found.is_empty() {
                 println!("{} {:?}", "Tasks not found:".yellow(), not_found);
             }

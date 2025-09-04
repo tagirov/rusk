@@ -27,10 +27,8 @@ git clone https://github.com/tagirov/rusk && cd rusk
 cargo build --release
 ```
 ```bash
-sudo install ./target/release/rusk /usr/bin
+sudo install -m 755 ./target/release/rusk /usr/bin
 ```
-
-
 
 # Usage
 

@@ -1,70 +1,82 @@
 <h1 align="center">rusk</h1>
 <p align="center">A minimal terminal task manager</p>
 <p align="center">
-    <a href="https://github.com/tagirov/rusk/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/tagirov/rusk?logo=github&labelColor=blue"></a>
+    <a href="https://github.com/tagirov/rusk/releases"><img alt="Release 0.1.0" src="https://img.shields.io/github/v/release/tagirov/rusk?logo=github&labelColor=blue"></a>
 </p>
 
-<p align="center"><img src="rusk.png" alt="demonstration of rusk in a battle"></p>
+<p align="center"><img src="rusk.png" alt="demonstration of rusk in the wild"></p>
 
 # Install
-#### Manually
-```
-git clone https://github.com/tagirov/rusk && cd rusk
-cargo build --release
-sudo install ./target/release/rusk /usr/bin
-```
 #### Arch Linux (AUR)
-```
+```bash
 paru -S rusk
 ```
 
 #### Cargo via github
-```
+```bash
 cargo install --git https://github.com/tagirov/rusk
 ```
 
 > The binary will be installed to ~/.cargo/bin/rusk. To use it globally, you must either create a symlink in /usr/bin or add ~/.cargo/bin to your $PATH.
 
-# Usage
-
-#### Add a task
+#### Manually
 ```bash
-rusk add buy groceries
-rusk add buy groceries --date 2024-07-01
+git clone https://github.com/tagirov/rusk && cd rusk
+```
+```bash
+cargo build --release
+```
+```bash
+sudo install ./target/release/rusk /usr/bin
 ```
 
-#### List all tasks. These commands are all the same
+
+
+# Usage
+
 ```bash
+# Add a task
+rusk add pump up the wheel
+
+# With a date
+rusk add Remove all dust from the table --date 2025-7-1
+
+# List all tasks. These commands are all the same
 rusk list
 rusk l
 rusk
-```
 
-#### Mark or unmark a task as done
-```bash
-rusk mark 3
-```
+# Edit a task
+rusk edit [id] a new text --date YYYY-MM-DD
 
-#### Edit a task
-```bash
-rusk edit 3 --text new text --date 2024-07-01
-```
+# Change only the date
+rusk edit [id] --date YYYY-MM-DD
 
-#### Delete a task
-```bash
-rusk del 3
-```
+# Mark or unmark a task as done
+rusk mark [id]
 
-#### Delete all done tasks
-```bash
+# Delete a task
+rusk del [id]
+
+# Delete all done tasks
 rusk del --all
 ```
-#### Multiple tasks can be passed to the edit, mark, and del commands
+## Bulk task operations
+
+All of `edit`, `mark`, and `del` commands support flexible ID input:
 
 ```bash
+# Space-separated IDs
 rusk mark 1 2 5
-rusk del {1..5}  ## 1 2 3 4 5 
-rusk e 1 2 -t These tasks are hidden now -d 2000-1-1
+
+# Comma-separated IDs  
+rusk edit 1,2,5
+
+# Mixed formats
+rusk del 1 2,5 8
+
+# Expands to: 1 2 3 4 5 (brace expansion doesn't work in NuShell)
+rusk del {1..5}  
 ```
 
 ## Aliases
@@ -74,10 +86,68 @@ rusk l (list)
 rusk m (mark)
 rusk e (edit)
 rusk d (del)
+rusk r (restore)
 
 -t (--text)
 -d (--date)
 -h (--help)
 -V (--version)
+```
 
+## Examples
+
+```bash
+# Change the text and date for tasks with IDs 1 and 2
+rusk e 1 2 These tasks are hidden now -d 2000-1-1
+
+# Change only the date for tasks with IDs 1, 2, 3, 4
+rusk e {1..4} -d 2025-12-31
+```
+
+
+
+# Configuration
+
+
+
+### Database Location
+By default, rusk stores tasks in `~/.rusk/tasks.json`. You can customize this location using the `RUSK_DB` environment variable:
+
+
+```bash
+# Use a custom database file
+export RUSK_DB="/path/to/your/tasks.json"
+rusk add My task
+
+# Use a custom directory (tasks.json will be created inside)
+export RUSK_DB="/path/to/your/project/"
+rusk add Project task
+
+# Or set it for a single command
+RUSK_DB="./my_tasks.json" rusk add Another task
+```
+
+This proves especially useful for:
+- Keeping different task lists for different projects
+- Sharing task files between machines
+- Testing with temporary databases
+
+# Data Safety & Backup
+
+Rusk automatically creates backups to protect your data
+
+#### Automatic Backups
+- Every save operation creates a `.json.backup` file
+- Backups are stored in the same directory as your database
+- Atomic writes prevent data corruption during saves
+
+#### Manual Restore
+```bash
+# Restore from the automatic backup
+rusk restore
+
+# This will:
+# 1. Validate the backup file
+# 2. Create a safety backup of current database (if valid)
+# 3. Restore tasks from backup
 ```

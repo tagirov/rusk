@@ -16,8 +16,7 @@ paru -S rusk
 ```bash
 cargo install --git https://github.com/tagirov/rusk
 ```
-
-> The binary will be installed to ~/.cargo/bin/rusk. To use it globally, you must either create a symlink in /usr/bin or add ~/.cargo/bin to your $PATH.
+> The binary will be installed in ~/.cargo/bin/rusk. To use it globally, make sure that ~/.cargo/bin is added to your $PATH
 
 #### Manually
 ```bash

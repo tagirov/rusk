@@ -1,22 +1,23 @@
 <h1 align="center">rusk</h1>
-<p align="center">A minimal terminal task manager</p>
+<p align="center">A cross-platform minimal terminal task manager</p>
 <p align="center">
-    <a href="https://github.com/tagirov/rusk/releases"><img alt="Release 0.1.0" src="https://img.shields.io/github/v/release/tagirov/rusk?logo=github&labelColor=blue"></a>
+    <a href="https://github.com/tagirov/rusk/releases"><img alt="rusk release version number" src="https://img.shields.io/github/v/release/tagirov/rusk?logo=github"></a>
 </p>
 
-<p align="center"><img src="rusk.png" alt="demonstration of rusk in the wild"></p>
+<p align="center"><img src="rusk.png" alt="0.1.0"></p>
 
 # Install
+#### Linux/MacOS/Windows
+```bash
+cargo install --git https://github.com/tagirov/rusk
+```
+The binary will be installed to: Linux/MacOS -> `$HOME/.cargo/bin/rusk` Windows -> `%USERPROFILE%\.cargo\bin\rusk.exe`
+Make sure that these paths are added to your $PATH environment variable to use `rusk` command globally.
+
 #### Arch Linux (AUR)
 ```bash
 paru -S rusk
 ```
-
-#### Cargo via github
-```bash
-cargo install --git https://github.com/tagirov/rusk
-```
-> The binary will be installed in ~/.cargo/bin/rusk. To use it globally, make sure that ~/.cargo/bin is added to your $PATH
 
 #### Manually
 ```bash
@@ -25,8 +26,17 @@ git clone https://github.com/tagirov/rusk && cd rusk
 ```bash
 cargo build --release
 ```
+
+Linux/MacOS
+
 ```bash
-sudo install -m 755 ./target/release/rusk /usr/bin
+sudo install -m 755 ./target/release/rusk /usr/local/bin
+```
+
+Windows
+
+```bash
+copy .\target\release\rusk.exe "%USERPROFILE%\AppData\Local\Microsoft\WindowsApps\"
 ```
 
 # Usage
@@ -101,15 +111,12 @@ rusk e 1 2 These tasks are hidden now -d 2000-1-1
 rusk e {1..4} -d 2025-12-31
 ```
 
-
-
 # Configuration
-
-
-
 ### Database Location
-By default, rusk stores tasks in `~/.rusk/tasks.json`. You can customize this location using the `RUSK_DB` environment variable:
 
+By default, rusk stores tasks to: Linux/MacOS -> `$HOME/.rusk/tasks.json` Windows -> `C:\Users\%USERPROFILE%\.rusk\tasks.json`
+
+You can customize this location using the `RUSK_DB` environment variable:
 
 ```bash
 # Use a custom database file
@@ -130,9 +137,6 @@ This proves especially useful for:
 - Testing with temporary databases
 
 # Data Safety & Backup
-
-Rusk automatically creates backups to protect your data
-
 #### Automatic Backups
 - Every save operation creates a `.json.backup` file
 - Backups are stored in the same directory as your database

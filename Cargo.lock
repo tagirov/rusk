@@ -392,7 +392,7 @@ dependencies = [
 
 [[package]]
 name = "rusk"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -402,6 +402,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

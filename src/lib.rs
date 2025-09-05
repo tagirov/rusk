@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::env;
 
 pub mod cli;
+pub mod windows_console;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Task {

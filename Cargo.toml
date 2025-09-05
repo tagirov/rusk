@@ -1,6 +1,6 @@
 [package]
 name = "rusk"
-version = "0.5.0"
+version = "0.5.1"
 authors = ["github.com/tagirov/rusk/graphs/contributors"]
 edition = "2024"
 description = "A minimal terminal task manager"
@@ -21,6 +21,9 @@ serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0"
 dirs = "6.0"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_Console"] }
 
 [dev-dependencies]
 tempfile = "3.0"

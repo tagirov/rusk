@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::*;
-use rusk::{TaskManager, cli::HandlerCLI};
+use rusk::{TaskManager, cli::HandlerCLI, windows_console};
 
 /// Parse flexible ID input (space-separated, comma-separated, or mixed)
 /// Returns vector of valid IDs
@@ -88,6 +88,9 @@ enum Command {
 }
 
 fn main() -> Result<()> {
+    // Enable ANSI color support on Windows
+    windows_console::enable_ansi_support();
+    
     let cli = Cli::parse();
     let mut tm = TaskManager::new()?;
     

@@ -82,8 +82,6 @@ rusk edit 1,2,5
 # Mixed formats
 rusk del 1 2,5 8
 
-# Expands to: 1 2 3 4 5 (brace expansion doesn't work in NuShell)
-rusk del {1..5}  
 ```
 
 ## Aliases

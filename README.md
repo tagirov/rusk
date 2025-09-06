@@ -105,8 +105,8 @@ rusk r (restore)
 # Change the text and date for tasks with IDs 1 and 2
 rusk e 1 2 These tasks are hidden now -d 2000-1-1
 
-# Change only the date for tasks with IDs 1, 2, 3, 4
-rusk e {1..4} -d 2025-12-31
+# Change only the date for tasks with ID 1
+rusk e 1 -d 2025-12-31
 ```
 
 # Configuration

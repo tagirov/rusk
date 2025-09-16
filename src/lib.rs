@@ -364,4 +364,83 @@ impl TaskManager {
     }
 }
 
+/// Parse flexible ID input (space-separated, comma-separated, or mixed)
+/// Returns vector of valid IDs
+pub fn parse_flexible_ids(args: &[String]) -> Vec<u8> {
+    let mut ids = Vec::new();
+
+    for arg in args {
+        // Try to parse as single ID first
+        if let Ok(id) = arg.parse::<u8>() {
+            ids.push(id);
+        } else if arg.contains(',') {
+            // Handle comma-separated IDs like "1,2,3"
+            for part in arg.split(',') {
+                let trimmed = part.trim();
+                if let Ok(id) = trimmed.parse::<u8>() {
+                    ids.push(id);
+                }
+                // Skip invalid parts silently
+            }
+        }
+        // Skip non-numeric arguments silently
+    }
+
+    ids
+}
+
+/// Parse edit command arguments to separate IDs and text
+pub fn parse_edit_args(args: Vec<String>) -> (Vec<u8>, Option<Vec<String>>) {
+    let mut ids = Vec::new();
+    let mut text_parts = Vec::new();
+    let mut parsing_ids = true;
+    
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        
+        // Skip date flags and their values
+        if arg == "-d" || arg == "--date" {
+            i += 2; // Skip flag and its value
+            continue;
+        }
+        
+        if parsing_ids {
+            // Try to parse as ID (number)
+            if let Ok(id) = arg.parse::<u8>() {
+                ids.push(id);
+            } else if arg.contains(',') {
+                // Handle comma-separated IDs like "1,2,3"
+                let mut found_any_valid_id = false;
+                for part in arg.split(',') {
+                    let trimmed = part.trim();
+                    if let Ok(id) = trimmed.parse::<u8>() {
+                        ids.push(id);
+                        found_any_valid_id = true;
+                    }
+                    // Skip invalid parts silently, but continue parsing
+                }
+                
+                if !found_any_valid_id {
+                    // No valid IDs found in comma-separated string, switch to text
+                    parsing_ids = false;
+                    text_parts.push(arg.clone());
+                }
+            } else {
+                // Not a number, switch to text parsing
+                parsing_ids = false;
+                text_parts.push(arg.clone());
+            }
+        } else {
+            // We're parsing text now
+            text_parts.push(arg.clone());
+        }
+        
+        i += 1;
+    }
+    
+    let text_option = if text_parts.is_empty() { None } else { Some(text_parts) };
+    (ids, text_option)
+}
+
 

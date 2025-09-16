@@ -1,32 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::*;
-use rusk::{TaskManager, cli::HandlerCLI, windows_console};
-
-/// Parse flexible ID input (space-separated, comma-separated, or mixed)
-/// Returns vector of valid IDs
-fn parse_flexible_ids(args: &[String]) -> Vec<u8> {
-    let mut ids = Vec::new();
-    
-    for arg in args {
-        // Try to parse as single ID first
-        if let Ok(id) = arg.parse::<u8>() {
-            ids.push(id);
-        } else if arg.contains(',') {
-            // Handle comma-separated IDs like "1,2,3"
-            for part in arg.split(',') {
-                let trimmed = part.trim();
-                if let Ok(id) = trimmed.parse::<u8>() {
-                    ids.push(id);
-                }
-                // Skip invalid parts silently
-            }
-        }
-        // Skip non-numeric arguments silently
-    }
-    
-    ids
-}
+use rusk::{TaskManager, cli::HandlerCLI, windows_console, parse_flexible_ids, parse_edit_args};
 
 #[derive(Parser)]
 #[command(about, version)]
@@ -119,61 +94,13 @@ fn main() -> Result<()> {
                 std::process::exit(1);
             }
             
-            // Parse arguments: first consecutive numbers are IDs, rest is text
-            let mut ids = Vec::new();
-            let mut text_parts = Vec::new();
-            let mut parsing_ids = true;
-            
-            let mut i = 0;
-            while i < args.len() {
-                let arg = &args[i];
-                
-                // Skip date flags and their values
-                if arg == "-d" || arg == "--date" {
-                    i += 2; // Skip flag and its value
-                    continue;
-                }
-                
-                if parsing_ids {
-                    // Try to parse as ID (number)
-                    if let Ok(id) = arg.parse::<u8>() {
-                        ids.push(id);
-                    } else if arg.contains(',') {
-                        // Handle comma-separated IDs like "1,2,3"
-                        let mut found_any_valid_id = false;
-                        for part in arg.split(',') {
-                            let trimmed = part.trim();
-                            if let Ok(id) = trimmed.parse::<u8>() {
-                                ids.push(id);
-                                found_any_valid_id = true;
-                            }
-                            // Skip invalid parts silently, but continue parsing
-                        }
-                        
-                        if !found_any_valid_id {
-                            // No valid IDs found in comma-separated string, switch to text
-                            parsing_ids = false;
-                            text_parts.push(arg.clone());
-                        }
-                    } else {
-                        // Not a number, switch to text parsing
-                        parsing_ids = false;
-                        text_parts.push(arg.clone());
-                    }
-                } else {
-                    // We're parsing text now
-                    text_parts.push(arg.clone());
-                }
-                
-                i += 1;
-            }
+            let (ids, text_option) = parse_edit_args(args);
             
             if ids.is_empty() {
                 eprintln!("{}", "Error: No valid task IDs provided".red());
                 std::process::exit(1);
             }
             
-            let text_option = if text_parts.is_empty() { None } else { Some(text_parts) };
             HandlerCLI::handle_edit_tasks(&mut tm, ids, text_option, date)?;
         }
         Some(Command::List) | None => {

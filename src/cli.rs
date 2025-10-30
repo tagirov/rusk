@@ -43,15 +43,24 @@ impl HandlerCLI {
             return Ok(());
         }
         
-        let input = Self::read_user_input(&format!(
-            "Delete all done tasks ({} total)? [y/N]: ",
-            done_count
-        ))?;
+        let input = Self::read_user_input(
+            &format!(
+                "{}{}{}",
+                "Delete all done tasks (".truecolor(255, 165, 0),
+                done_count.to_string().white(),
+                ")? [y/N]: ".truecolor(255, 165, 0)
+            )
+        )?;
         
         if input.eq_ignore_ascii_case("y") {
             let deleted = tm.delete_all_done()?;
             if deleted > 0 {
-                println!("Deleted {} done tasks.", deleted);
+                println!(
+                    "{}{}{}",
+                    "Deleted ".red(),
+                    deleted.to_string(),
+                    " done tasks.".red()
+                );
             }
             Ok(())
         } else {
@@ -69,7 +78,14 @@ impl HandlerCLI {
         for &id in &ids {
             if let Some(idx) = tm.find_task_by_id(id) {
                 let task = &tm.tasks()[idx];
-                let input = Self::read_user_input(&format!("Delete '{}'? [y/N]: ", task.text))?;
+                let input = Self::read_user_input(
+                    &format!(
+                        "{}{}{}",
+                        "Delete '".truecolor(255, 165, 0),
+                        task.text.white(),
+                        "'? [y/N]: ".truecolor(255, 165, 0)
+                    )
+                )?;
                 if input.eq_ignore_ascii_case("y") {
                     confirmed_ids.push(id);
                 } else {
@@ -84,11 +100,17 @@ impl HandlerCLI {
         if !confirmed_ids.is_empty() {
             let deleted_count = confirmed_ids.len();
             let _ = tm.delete_tasks(confirmed_ids)?; // TaskManager handles saving
-            println!("Deleted {} task(s).", deleted_count);
+            println!(
+                "{}{}{}",
+                "Deleted ".red(),
+                deleted_count.to_string(),
+                " task(s).".red()
+            );
         }
         
         if !not_found.is_empty() {
-            println!("{} {:?}", "Tasks not found:".yellow(), not_found);
+            let list = not_found.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(" ");
+            println!("{} {}", "Tasks not found IDs:".yellow(), list);
         }
         
         Ok(())
@@ -108,7 +130,8 @@ impl HandlerCLI {
         }
         
         if !not_found.is_empty() {
-            println!("{} {:?}", "Tasks not found:".yellow(), not_found);
+            let list = not_found.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(" ");
+            println!("{} {}", "Tasks not found IDs:".yellow(), list);
         }
         
         Ok(())
@@ -135,7 +158,8 @@ impl HandlerCLI {
         }
         
         if !not_found.is_empty() {
-            println!("{} {:?}", "Tasks not found:".yellow(), not_found);
+            let list = not_found.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(" ");
+            println!("{} {}", "Tasks not found IDs:".yellow(), list);
         }
         
         Ok(())

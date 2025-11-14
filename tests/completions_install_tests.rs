@@ -663,11 +663,22 @@ fn test_bash_completion_syntax() -> Result<()> {
     let output = Command::new("bash")
         .arg("-n")
         .arg(&script_path)
-        .output()?;
+        .output();
     
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        panic!("Bash syntax check failed:\n{}", stderr);
+    // Bash might not be installed, so we skip if command not found
+    match output {
+        Ok(result) => {
+            if !result.status.success() {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                panic!("Bash syntax check failed:\n{}", stderr);
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Bash not installed, skip test
+            eprintln!("Warning: bash command not found, skipping syntax check");
+            return Ok(());
+        }
+        Err(e) => return Err(e.into()),
     }
     
     Ok(())
@@ -686,11 +697,22 @@ fn test_zsh_completion_syntax() -> Result<()> {
     let output = Command::new("zsh")
         .arg("-n")
         .arg(&script_path)
-        .output()?;
+        .output();
     
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        panic!("Zsh syntax check failed:\n{}", stderr);
+    // Zsh might not be installed, so we skip if command not found
+    match output {
+        Ok(result) => {
+            if !result.status.success() {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                panic!("Zsh syntax check failed:\n{}", stderr);
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Zsh not installed, skip test
+            eprintln!("Warning: zsh command not found, skipping syntax check");
+            return Ok(());
+        }
+        Err(e) => return Err(e.into()),
     }
     
     Ok(())
@@ -710,11 +732,22 @@ fn test_fish_completion_syntax() -> Result<()> {
     let output = Command::new("fish")
         .arg("--no-execute")
         .arg(&script_path)
-        .output()?;
+        .output();
     
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        panic!("Fish syntax check failed:\n{}", stderr);
+    // Fish might not be installed, so we skip if command not found
+    match output {
+        Ok(result) => {
+            if !result.status.success() {
+                let stderr = String::from_utf8_lossy(&result.stderr);
+                panic!("Fish syntax check failed:\n{}", stderr);
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Fish not installed, skip test
+            eprintln!("Warning: fish command not found, skipping syntax check");
+            return Ok(());
+        }
+        Err(e) => return Err(e.into()),
     }
     
     Ok(())

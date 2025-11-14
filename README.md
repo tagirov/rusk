@@ -327,12 +327,6 @@ When running in debug mode (`cargo run` or debug builds), rusk uses a temporary 
 In debug mode, the `RUSK_DB` environment variable is ignored, and the database path is printed to the console when the program starts.
 
 
-<div style="margin-left: 30%;">
-    <a href="#rusk" style="text-decoration: none; color: inherit;">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle;">
-            <path d="M12 19V5M5 12l7-7 7 7"/>
-        </svg>
-        <span style="vertical-align: middle; margin-left: 6px;">Back to top</span>
-    </a>
-</div>
-
+<a href="#rusk">
+  <p align="center">Back to top</p>
+</a>

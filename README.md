@@ -31,6 +31,7 @@ cargo install --git https://github.com/tagirov/rusk
 The binary will be installed to:
 - Linux/MacOS: `$HOME/.cargo/bin/rusk`
 - Windows: `%USERPROFILE%\.cargo\bin\rusk.exe`
+
 Make sure that these paths are added to your $PATH environment variable to use `rusk` command globally.
 
 #### Arch Linux (AUR)

@@ -2,8 +2,8 @@
 #[cfg(windows)]
 pub fn enable_ansi_support() {
     use windows_sys::Win32::System::Console::{
-        GetConsoleMode, SetConsoleMode, GetStdHandle, 
-        STD_OUTPUT_HANDLE, ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        ENABLE_VIRTUAL_TERMINAL_PROCESSING, GetConsoleMode, GetStdHandle, STD_OUTPUT_HANDLE,
+        SetConsoleMode,
     };
 
     unsafe {

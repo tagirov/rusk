@@ -1,9 +1,9 @@
 [package]
 name = "rusk"
-version = "0.5.1"
+version = "0.6.0-beta"
 authors = ["github.com/tagirov/rusk/graphs/contributors"]
 edition = "2024"
-description = "A cross-platform minimal terminal task manager"
+description = "A minimal cross-platform terminal task manager"
 
 [lib]
 name = "rusk"
@@ -21,6 +21,7 @@ serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0"
 dirs = "6.0"
+crossterm = "0.27"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_System_Console"] }

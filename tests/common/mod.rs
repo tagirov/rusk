@@ -1,5 +1,5 @@
-use rusk::Task;
 use chrono::NaiveDate;
+use rusk::Task;
 
 // Helper function to create test tasks
 pub fn create_test_task(id: u8, text: &str, done: bool) -> Task {
@@ -17,7 +17,7 @@ pub fn create_test_task_with_date(id: u8, text: &str, done: bool, date: &str) ->
     Task {
         id,
         text: text.to_string(),
-        date: NaiveDate::parse_from_str(date, "%Y-%m-%d").ok(),
+        date: NaiveDate::parse_from_str(date, "%d-%m-%Y").ok(),
         done,
     }
 }

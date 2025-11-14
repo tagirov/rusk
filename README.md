@@ -127,6 +127,9 @@ rusk edit 1
 
 # Edit task text and date interactively
 rusk edit 1 -d
+
+# Interactive editing of tasks in sequence
+rusk edit 1 2 3
 ```
 
 

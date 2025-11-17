@@ -69,12 +69,10 @@ rusk add Buy groceries
 
 # Add a task with a deadline
 rusk add Finish project report --date 31-12-2025
-
-# When using --date or -d flag, shell completions (see [Shell Completion](#shell-completion)) suggest default dates:
-# - Today (current date)
-# - Tomorrow (current date + 1 day)
-# - One week ahead (current date + 7 days)
-# - Two weeks ahead (current date + 14 days)
+# Or with short year and slash separator:
+rusk add Finish project report --date 31/12/25
+# Leading zero for day is optional:
+rusk add Finish project report --date 1-12-25
 
 # View all tasks
 rusk list
@@ -94,7 +92,7 @@ rusk edit 1 Complete the project documentation
 rusk edit 1 --date 25-12-2025
 
 # Edit both text and date
-rusk edit 1 Update documentation --date 25-12-2025
+rusk edit 1 Update documentation --date 23/12/25
 
 # Delete a task
 rusk del 1
@@ -130,7 +128,7 @@ rusk edit 1
 rusk edit 1 -d
 
 # Interactive editing of tasks in sequence
-rusk edit 1 2 3
+rusk edit 1 4 5
 ```
 
 
@@ -295,9 +293,6 @@ mkdir -p ~/.config/powershell
 rusk completions show powershell > ~/.config/powershell/rusk-completions.ps1
 Add-Content $PROFILE ". ~/.config/powershell/rusk-completions.ps1"
 ```
-
-
-
 ### Database Location
 
 By default, rusk stores tasks to:

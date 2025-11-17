@@ -2,6 +2,7 @@ use chrono::NaiveDate;
 use rusk::Task;
 
 // Helper function to create test tasks
+#[allow(dead_code)]
 pub fn create_test_task(id: u8, text: &str, done: bool) -> Task {
     Task {
         id,

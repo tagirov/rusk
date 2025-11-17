@@ -1,5 +1,5 @@
 use chrono::NaiveDate;
-use rusk::TaskManager;
+use rusk::{TaskManager, normalize_date_string};
 
 #[test]
 fn test_cli_add_command() {
@@ -284,6 +284,10 @@ fn test_cli_date_handling() {
         "31-12-2025",
         "29-02-2024", // Leap year
         "15-06-2025",
+        "01/01/2025", // Slash separator
+        "31/12/2025", // Slash separator
+        "12-12-25",   // Short year (25 -> 2025)
+        "12/12/25",   // Short year with slash
     ];
 
     for (i, date) in valid_dates.iter().enumerate() {
@@ -291,7 +295,9 @@ fn test_cli_date_handling() {
         assert!(result.is_ok());
 
         let task = &tm.tasks[i];
-        let parsed_date = NaiveDate::parse_from_str(date, "%d-%m-%Y").unwrap();
+        // Normalize date (replace / with -, convert short year) before parsing
+        let normalized = normalize_date_string(date);
+        let parsed_date = NaiveDate::parse_from_str(&normalized, "%d-%m-%Y").unwrap();
         assert_eq!(task.date, Some(parsed_date));
     }
 
@@ -301,7 +307,6 @@ fn test_cli_date_handling() {
         "32-01-2025", // Invalid day
         "30-02-2025", // Invalid day for February
         "invalid-date",
-        "01/01/2025", // Wrong format
         "2025-01-01", // Wrong format (old YYYY-MM-DD)
     ];
 

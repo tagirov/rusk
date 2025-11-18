@@ -69,6 +69,9 @@ complete -c rusk -f -n '__fish_use_subcommand' -a 'm' -d 'Alias for mark'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'd' -d 'Alias for del'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'l' -d 'Alias for list'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'r' -d 'Alias for restore'
+# Global flags
+complete -c rusk -f -n '__fish_use_subcommand' -s h -l help -d 'Show help'
+complete -c rusk -f -n '__fish_use_subcommand' -s V -l version -d 'Show version'
 
 # Functions to get individual date options
 function __rusk_get_today_date
@@ -100,14 +103,66 @@ function __rusk_should_complete_date
     end
 end
 
+# Function to complete flags for add command with narrowing
+function __rusk_complete_add_flags
+    set -l cmdline (commandline -opc)
+    set -l current_word (commandline -ct)
+    
+    # All available flags
+    set -l all_flags -d --date -h --help -V --version
+    
+    # If current word starts with -, filter flags that match
+    if string match -qr '^-' -- "$current_word"
+        for flag in $all_flags
+            if string match -qr "^$current_word" -- "$flag"
+                echo $flag
+            end
+        end
+    else
+        # If current word doesn't start with -, show all flags
+        for flag in $all_flags
+            echo $flag
+        end
+    end
+end
+
+# Function to check if we're completing flags for add command
+function __rusk_should_complete_add_flags
+    __fish_seen_subcommand_from add a; or return 1
+    set -l cmdline (commandline -opc)
+    # Don't complete flags if we're completing date value
+    if test (count $cmdline) -ge 2
+        set -l prev_word $cmdline[-1]
+        if test "$prev_word" = "-d"; or test "$prev_word" = "--date"
+            return 1
+        end
+    end
+    # Don't complete flags if we're completing task text (after flags)
+    # Check if there's already text entered
+    if test (count $cmdline) -ge 3
+        # If previous word is not a flag and not a date, we're probably entering text
+        set -l prev_word $cmdline[-1]
+        if not string match -qr '^-' -- "$prev_word"
+            # Check if it's not a date format
+            if not string match -qr '^\d{2}-\d{2}-\d{4}$' -- "$prev_word"
+                return 1
+            end
+        end
+    end
+    # Complete flags if current word starts with - or is empty
+    set -l current_word (commandline -ct)
+    string match -qr '^-' -- "$current_word"; or test -z "$current_word"
+end
+
 # Add command flags
 # Complete date flag with individual date options
 complete -c rusk -f -n '__rusk_should_complete_date' -a '(__rusk_get_today_date)' -d 'Today'
 complete -c rusk -f -n '__rusk_should_complete_date' -a '(__rusk_get_tomorrow_date)' -d 'Tomorrow'
 complete -c rusk -f -n '__rusk_should_complete_date' -a '(__rusk_get_week_ahead_date)' -d 'One week ahead'
 complete -c rusk -f -n '__rusk_should_complete_date' -a '(__rusk_get_two_weeks_ahead_date)' -d 'Two weeks ahead'
-complete -c rusk -f -n '__fish_seen_subcommand_from add a' -l date -d 'Set task date'
-complete -c rusk -f -n '__fish_seen_subcommand_from add a' -s d -d 'Set task date'
+
+# Complete flags with narrowing support
+complete -c rusk -f -n '__rusk_should_complete_add_flags' -a '(__rusk_complete_add_flags)'
 
 # Function to check if we're completing date value for edit command
 function __rusk_should_complete_edit_date
@@ -122,14 +177,54 @@ function __rusk_should_complete_edit_date
     end
 end
 
+# Function to complete flags for edit command with narrowing
+function __rusk_complete_edit_flags
+    set -l cmdline (commandline -opc)
+    set -l current_word (commandline -ct)
+    
+    # All available flags
+    set -l all_flags -d --date -h --help
+    
+    # If current word starts with -, filter flags that match
+    if string match -qr '^-' -- "$current_word"
+        for flag in $all_flags
+            if string match -qr "^$current_word" -- "$flag"
+                echo $flag
+            end
+        end
+    else
+        # If current word doesn't start with -, show all flags
+        for flag in $all_flags
+            echo $flag
+        end
+    end
+end
+
+# Function to check if we're completing flags for edit command
+function __rusk_should_complete_edit_flags
+    __fish_seen_subcommand_from edit e; or return 1
+    set -l cmdline (commandline -opc)
+    # Don't complete flags if we're completing date value
+    if test (count $cmdline) -ge 2
+        set -l prev_word $cmdline[-1]
+        if test "$prev_word" = "-d"; or test "$prev_word" = "--date"
+            return 1
+        end
+    end
+    # Complete flags if current word starts with - or is empty
+    set -l current_word (commandline -ct)
+    string match -qr '^-' -- "$current_word"; or test -z "$current_word"
+end
+
 # Edit command - flags first
 # Complete date flag with individual date options
 complete -c rusk -f -n '__rusk_should_complete_edit_date' -a '(__rusk_get_today_date)' -d 'Today'
 complete -c rusk -f -n '__rusk_should_complete_edit_date' -a '(__rusk_get_tomorrow_date)' -d 'Tomorrow'
 complete -c rusk -f -n '__rusk_should_complete_edit_date' -a '(__rusk_get_week_ahead_date)' -d 'One week ahead'
 complete -c rusk -f -n '__rusk_should_complete_edit_date' -a '(__rusk_get_two_weeks_ahead_date)' -d 'Two weeks ahead'
-complete -c rusk -f -n '__fish_seen_subcommand_from edit e' -l date -d 'Set task date'
-complete -c rusk -f -n '__fish_seen_subcommand_from edit e' -s d -d 'Set task date'
+
+# Complete flags with narrowing support
+complete -c rusk -f -n '__rusk_should_complete_edit_flags' -a '(__rusk_complete_edit_flags)'
 
 # Function to complete task text after ID
 function __rusk_complete_edit_text

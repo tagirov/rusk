@@ -30,10 +30,9 @@ fn test_parse_edit_args_interactive_short_flag() {
 
 #[test]
 fn test_parse_edit_args_mixed_ids_and_text_with_date() {
-    // rusk edit 1 2 new text --date 2025-06-15
+    // rusk edit 1,2 new text --date 2025-06-15
     let (ids, text) = parse_edit_args(vec![
-        "1".to_string(),
-        "2".to_string(),
+        "1,2".to_string(),
         "new".to_string(),
         "text".to_string(),
         "--date".to_string(),
@@ -91,5 +90,92 @@ fn test_parse_edit_args_short_date_without_value_then_text_ignored_as_date_value
     // so text remains None and ids parsed
     let (ids, text) = parse_edit_args(vec!["7".to_string(), "-d".to_string(), "some".to_string()]);
     assert_eq!(ids, vec![7]);
+    assert!(text.is_none());
+}
+
+#[test]
+fn test_parse_edit_args_with_space_before_comma() {
+    // Handle case like "1,5,4 ,6" which becomes ["1,5,4", " ,6"]
+    let (ids, text) = parse_edit_args(vec!["1,5,4".to_string(), " ,6".to_string()]);
+    assert_eq!(ids, vec![1, 5, 4, 6]);
+    assert!(text.is_none());
+}
+
+#[test]
+fn test_parse_edit_args_with_space_before_comma_and_text() {
+    // Handle case like "1,5,4 ,6" with text
+    let (ids, text) = parse_edit_args(vec![
+        "1,5,4".to_string(),
+        " ,6".to_string(),
+        "new".to_string(),
+        "text".to_string(),
+    ]);
+    assert_eq!(ids, vec![1, 5, 4, 6]);
+    assert_eq!(text, Some(vec!["new".to_string(), "text".to_string()]));
+}
+
+#[test]
+fn test_parse_edit_args_with_comma_at_start() {
+    // Handle case like "1,2" ",3" ",4"
+    let (ids, text) = parse_edit_args(vec!["1,2".to_string(), ",3".to_string(), ",4".to_string()]);
+    assert_eq!(ids, vec![1, 2, 3, 4]);
+    assert!(text.is_none());
+}
+
+#[test]
+fn test_parse_edit_args_with_comma_at_start_and_text() {
+    // Handle case like "1,2" ",3" ",4" with text
+    let (ids, text) = parse_edit_args(vec![
+        "1,2".to_string(),
+        ",3".to_string(),
+        ",4".to_string(),
+        "new".to_string(),
+        "text".to_string(),
+    ]);
+    assert_eq!(ids, vec![1, 2, 3, 4]);
+    assert_eq!(text, Some(vec!["new".to_string(), "text".to_string()]));
+}
+
+#[test]
+fn test_parse_edit_args_with_space_before_comma_and_date() {
+    // Handle case like "1,5,4 ,6" with date flag
+    let (ids, text) = parse_edit_args(vec![
+        "1,5,4".to_string(),
+        " ,6".to_string(),
+        "-d".to_string(),
+        "2025-01-01".to_string(),
+    ]);
+    assert_eq!(ids, vec![1, 5, 4, 6]);
+    assert!(text.is_none());
+}
+
+#[test]
+fn test_parse_edit_args_with_space_before_comma_text_and_date() {
+    // Handle case like "1,5,4 ,6" with text and date
+    let (ids, text) = parse_edit_args(vec![
+        "1,5,4".to_string(),
+        " ,6".to_string(),
+        "new".to_string(),
+        "text".to_string(),
+        "--date".to_string(),
+        "2025-01-01".to_string(),
+    ]);
+    assert_eq!(ids, vec![1, 5, 4, 6]);
+    assert_eq!(text, Some(vec!["new".to_string(), "text".to_string()]));
+}
+
+#[test]
+fn test_parse_edit_args_empty_parts_in_comma_separated() {
+    // Handle case with empty parts: "1,,3"
+    let (ids, text) = parse_edit_args(vec!["1,,3".to_string()]);
+    assert_eq!(ids, vec![1, 3]);
+    assert!(text.is_none());
+}
+
+#[test]
+fn test_parse_edit_args_multiple_comma_args() {
+    // Handle case with multiple comma-separated arguments
+    let (ids, text) = parse_edit_args(vec!["1,2".to_string(), "3,4".to_string()]);
+    assert_eq!(ids, vec![1, 2, 3, 4]);
     assert!(text.is_none());
 }

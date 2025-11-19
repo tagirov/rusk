@@ -105,7 +105,7 @@ rusk del --done
 
 ## Working with Multiple Tasks
 
-Multiple task IDs must be comma-separated (spaces are not supported):
+Multiple task IDs must be comma-separated
 
 ```bash
 # Mark multiple tasks as done
@@ -115,10 +115,7 @@ rusk mark 1,2,3
 rusk edit 1,2,3 Update status to completed
 
 # Delete multiple tasks
-rusk del 1,2,5
-
-# You can also split IDs across arguments (useful for autocompletion)
-rusk mark 1,5,4 ,6  # Processes IDs: 1, 5, 4, 6
+rusk del 1,2,3
 ```
 
 ## Interactive Editing

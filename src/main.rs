@@ -15,7 +15,8 @@ struct Cli {
 enum Command {
     #[command(
         alias = "a",
-        about = "Add a new task (alias: \x1b[1ma\x1b[0m). Example: rusk add buy groceries. With a specific date: rusk add buy groceries --date 01-07-2025"
+        about = "Add a new task (alias: \x1b[1ma\x1b[0m). Example: rusk add buy groceries. With a specific date: rusk add buy groceries --date 01-07-2025",
+        help_template = "{about-section}\n\nUsage: rusk add [TEXT]... [OPTIONS]\n\n{all-args}"
     )]
     Add {
         text: Vec<String>,
@@ -24,7 +25,8 @@ enum Command {
     },
     #[command(
         alias = "d",
-        about = "Delete tasks by id(s) (alias: \x1b[1md\x1b[0m). Use --done to delete all completed tasks. Examples: rusk del 3, rusk del 1 2 3, rusk del 1,2,3"
+        about = "Delete tasks by id(s) (alias: \x1b[1md\x1b[0m). Use --done to delete all completed tasks. Examples: rusk del 3, rusk del 1,2,3",
+        help_template = "{about-section}\n\nUsage: rusk del [IDS]... [OPTIONS]\n\n{all-args}"
     )]
     Del {
         #[arg(trailing_var_arg = true)]
@@ -34,15 +36,16 @@ enum Command {
     },
     #[command(
         alias = "m",
-        about = "Mark tasks as done/undone by id(s) (alias: \x1b[1mm\x1b[0m). Examples: rusk mark 3, rusk mark 1 2 3, rusk mark 1,2,3"
+        about = "Mark tasks as done/undone by id(s) (alias: \x1b[1mm\x1b[0m). Examples: rusk mark 3, rusk mark 1,2,3"
     )]
     Mark {
-        #[arg(trailing_var_arg = true)]
+        #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
         ids: Vec<String>,
     },
     #[command(
         alias = "e",
-        about = "Edit tasks by id(s) (alias: \x1b[1me\x1b[0m). Text can be provided without quotes. Examples: rusk e 3 new task text -d 01-11-2025, rusk e 1 2 3 shared text"
+        about = "Edit tasks by id(s) (alias: \x1b[1me\x1b[0m). Text can be provided without quotes. Examples: rusk e 3 new task text -d 01-11-2025, rusk e 1,2,3 shared text",
+        help_template = "{about-section}\n\nUsage: rusk edit [ARGS]... [OPTIONS]\n\n{all-args}"
     )]
     Edit {
         /// All arguments (IDs and text mixed)
@@ -62,7 +65,8 @@ enum Command {
     )]
     Restore,
     #[command(
-        about = "Install shell completions. Example: rusk completions install bash"
+        alias = "c",
+        about = "Install shell completions (alias: \x1b[1mc\x1b[0m). Example: rusk completions install bash"
     )]
     Completions {
         #[command(subcommand)]
@@ -101,11 +105,33 @@ fn main() -> Result<()> {
             }
         }
         Some(Command::Del { ids, done }) => {
-            let parsed_ids = parse_flexible_ids(&ids);
+            // Filter out flags (arguments starting with -)
+            let filtered_ids: Vec<String> = ids.iter()
+                .filter(|arg| !arg.trim_start().starts_with('-'))
+                .cloned()
+                .collect();
+            
+            let parsed_ids = parse_flexible_ids(&filtered_ids);
             HandlerCLI::handle_delete_tasks(&mut tm, parsed_ids, done)?;
         }
         Some(Command::Mark { ids }) => {
-            let parsed_ids = parse_flexible_ids(&ids);
+            // Filter out flags (arguments starting with -)
+            // This will filter out -h, --help, and any other flags
+            let filtered_ids: Vec<String> = ids.iter()
+                .filter(|arg| {
+                    let trimmed = arg.trim();
+                    !trimmed.starts_with('-')
+                })
+                .cloned()
+                .collect();
+            
+            // If after filtering we have no IDs, show error
+            if filtered_ids.is_empty() {
+                eprintln!("{}", "Error: No valid task IDs provided".red());
+                std::process::exit(1);
+            }
+            
+            let parsed_ids = parse_flexible_ids(&filtered_ids);
             if parsed_ids.is_empty() {
                 eprintln!("{}", "Error: No valid task IDs provided".red());
                 std::process::exit(1);

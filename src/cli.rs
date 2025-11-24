@@ -82,12 +82,29 @@ impl HandlerCLI {
     ) -> Result<()> {
         tm.add_task(text, date)?;
         let task = tm.tasks().last().unwrap();
-        println!(
-            "{} {}: {}",
-            "Added task:".green(),
-            task.id,
-            task.text.bold()
-        );
+        if let Some(date) = task.date {
+            let today = chrono::Local::now().date_naive();
+            let date_str = date.format("%d-%m-%Y").to_string();
+            let colored_date = if date < today {
+                date_str.red()
+            } else {
+                date_str.cyan()
+            };
+            println!(
+                "{} {}: {} ({})",
+                "Added task:".green(),
+                task.id,
+                task.text.bold(),
+                colored_date
+            );
+        } else {
+            println!(
+                "{} {}: {}",
+                "Added task:".green(),
+                task.id,
+                task.text.bold()
+            );
+        }
         Ok(())
     }
 
@@ -106,7 +123,14 @@ impl HandlerCLI {
     /// Interactive single-line editor for task text (no external editor)
     /// If the user submits an empty line, the text is considered unchanged
     /// If allow_skip is true, Escape will return an error instead of exiting (for multi-task editing)
-    fn interactive_edit_text(current: &str, allow_skip: bool) -> Result<Option<String>> {
+    fn interactive_edit_text(current: &str, task_id: u8, allow_skip: bool) -> Result<Option<String>> {
+        println!(
+            "{} {} {} {}",
+            "Current text[".cyan(),
+            task_id.to_string().bright_cyan().bold(),
+            "]:".cyan(),
+            current.bold()
+        );
         println!(
             "{}",
             "Enter new text and press Enter (leave empty to keep, Tab to autocomplete from prefill):".cyan()
@@ -515,7 +539,7 @@ impl HandlerCLI {
             if let Some(idx) = tm.find_task_by_id(*id) {
                 let current_text = tm.tasks()[idx].text.clone();
 
-                match Self::interactive_edit_text(&current_text, allow_skip) {
+                match Self::interactive_edit_text(&current_text, *id, allow_skip) {
                     Ok(Some(new_text)) => {
                         if new_text != current_text {
                             let task = &mut tm.tasks_mut()[idx];

@@ -103,19 +103,17 @@ rusk del --done
 
 ## Working with Multiple Tasks
 
+Multiple task IDs must be comma-separated
+
 ```bash
 # Mark multiple tasks as done
-rusk mark 1 2 3
-# or with commas
 rusk mark 1,2,3
-# or mixed
-rusk mark 1 2,3 4
 
 # Edit multiple tasks with the same text
-rusk edit 1 2 3 Update status to completed
+rusk edit 1,2,3 Update status to completed
 
 # Delete multiple tasks
-rusk del 1 2 5
+rusk del 1,2,3
 ```
 
 ## Interactive Editing
@@ -128,7 +126,7 @@ rusk edit 1
 rusk edit 1 -d
 
 # Interactive editing of tasks in sequence
-rusk edit 1 4 5
+rusk edit 1,2,3
 ```
 
 

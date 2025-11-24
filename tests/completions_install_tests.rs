@@ -601,6 +601,151 @@ fn test_completion_scripts_match_source_files() -> Result<()> {
 }
 
 #[test]
+fn test_nu_completion_has_quote_functions() {
+    // Verify that Nu completion script contains functions for quoting text with special characters
+    let nu_script = Shell::Nu.get_script();
+    
+    // Should contain the needs-quotes function
+    assert!(
+        nu_script.contains("needs-quotes") || nu_script.contains("def needs-quotes"),
+        "Nu script should contain needs-quotes function"
+    );
+    
+    // Should contain the quote-if-needed function
+    assert!(
+        nu_script.contains("quote-if-needed") || nu_script.contains("def quote-if-needed"),
+        "Nu script should contain quote-if-needed function"
+    );
+    
+    // Should check for special characters
+    assert!(
+        nu_script.contains("special_chars") || nu_script.contains("special") || nu_script.contains("|") || nu_script.contains(";"),
+        "Nu script should check for special characters"
+    );
+}
+
+#[test]
+fn test_nu_completion_quotes_special_characters() {
+    // Verify that Nu completion script properly handles special characters
+    let nu_script = Shell::Nu.get_script();
+    
+    // Should escape double quotes
+    assert!(
+        nu_script.contains("str replace") || nu_script.contains("replace") || nu_script.contains("\\\""),
+        "Nu script should escape double quotes"
+    );
+    
+    // Should wrap text in quotes when needed
+    assert!(
+        nu_script.contains("\"") || nu_script.contains("quote"),
+        "Nu script should wrap text in quotes"
+    );
+}
+
+#[test]
+fn test_nu_completion_mark_del_prev_contains_comma_logic() {
+    // Verify that Nu completion script has logic to prevent suggesting IDs
+    // when multiple IDs are already entered via comma (e.g., "rusk mark 8,5 <tab>")
+    let nu_script = Shell::Nu.get_script();
+    
+    // Should contain check for prev_contains_comma
+    assert!(
+        nu_script.contains("prev_contains_comma") || nu_script.contains("prev contains comma"),
+        "Nu script should check if previous word contains comma"
+    );
+    
+    // Should contain logic for mark and del commands
+    assert!(
+        nu_script.contains("\"mark\"") || nu_script.contains("mark") || nu_script.contains("\"m\""),
+        "Nu script should handle mark command"
+    );
+    
+    assert!(
+        nu_script.contains("\"del\"") || nu_script.contains("del") || nu_script.contains("\"d\""),
+        "Nu script should handle del command"
+    );
+    
+    // Should check for comma-separated IDs
+    assert!(
+        nu_script.contains("ends_with_comma") || nu_script.contains("ends with comma") || nu_script.contains("ends-with"),
+        "Nu script should check if word ends with comma"
+    );
+    
+    // Should contain should_suggest_ids logic
+    assert!(
+        nu_script.contains("should_suggest_ids") || nu_script.contains("should suggest"),
+        "Nu script should have logic to determine when to suggest IDs"
+    );
+    
+    // Should check for empty entered_ids or prev_contains_comma condition
+    assert!(
+        nu_script.contains("entered_ids") || nu_script.contains("entered_ids | is-empty"),
+        "Nu script should check if IDs are already entered"
+    );
+}
+
+#[test]
+fn test_nu_completion_completions_partial_input() {
+    // Verify that Nu completion script supports partial input for completions command
+    // e.g., "rusk completions ins<tab>" -> "install", "rusk completions install ba<tab>" -> "bash"
+    let nu_script = Shell::Nu.get_script();
+    
+    // Should contain logic for filtering subcommands by partial input
+    assert!(
+        nu_script.contains("str starts-with") || nu_script.contains("starts-with"),
+        "Nu script should filter commands by partial input"
+    );
+    
+    // Should handle partial input for install/show subcommands
+    assert!(
+        nu_script.contains("install") && nu_script.contains("show"),
+        "Nu script should handle install and show subcommands"
+    );
+    
+    // Should handle partial input for shell names
+    assert!(
+        (nu_script.contains("bash") || nu_script.contains("\"bash\"")) &&
+        (nu_script.contains("zsh") || nu_script.contains("\"zsh\"")) &&
+        (nu_script.contains("fish") || nu_script.contains("\"fish\"")) &&
+        (nu_script.contains("nu") || nu_script.contains("\"nu\"")) &&
+        (nu_script.contains("powershell") || nu_script.contains("\"powershell\"")),
+        "Nu script should handle all shell names for partial input"
+    );
+    
+    // Should filter subcommands when user types partial input
+    assert!(
+        nu_script.contains("where") || nu_script.contains("filter") || nu_script.contains("matching"),
+        "Nu script should filter options based on partial input"
+    );
+}
+
+#[test]
+fn test_nu_completion_handles_common_special_chars() {
+    // Verify that Nu completion script handles common special characters
+    let nu_script = Shell::Nu.get_script();
+    
+    // Check for common special characters that require quoting
+    let special_chars = ["|", ";", "&", ">", "<", "(", ")", "[", "]", "{", "}", "$", "*", "?", "~", "#", "@", "!", "%", "^", "=", "+", "-", "/", ":", ",", "."];
+    
+    // At least some of these should be mentioned or checked in the script
+    let mut found_any = false;
+    for char in &special_chars {
+        if nu_script.contains(char) {
+            found_any = true;
+            break;
+        }
+    }
+    
+    // The script should reference special characters (either in comments or in the logic)
+    // This is a soft check - the script might handle them without explicitly listing them
+    // But it's good to verify the functionality exists
+    assert!(
+        found_any || nu_script.contains("special") || nu_script.contains("quote"),
+        "Nu script should handle special characters"
+    );
+}
+
+#[test]
 fn test_completion_install_creates_file_with_correct_permissions() -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     

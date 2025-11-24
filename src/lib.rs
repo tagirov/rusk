@@ -533,23 +533,41 @@ pub fn normalize_date_string(date_str: &str) -> String {
     normalized
 }
 
-/// Parse flexible ID input (space-separated, comma-separated, or mixed)
+/// Parse ID input (comma-separated only)
 /// Returns vector of valid IDs
+/// Accepts comma-separated IDs in one or more arguments (e.g., "1,2,3" or "1,2" ",3")
+/// Arguments starting with comma or containing comma are processed
 pub fn parse_flexible_ids(args: &[String]) -> Vec<u8> {
     let mut ids = Vec::new();
 
+    if args.is_empty() {
+        return ids;
+    }
+
+    // Check if any argument contains comma
+    let has_comma_args = args.iter().any(|a| a.trim().contains(',') || a.trim().starts_with(','));
+    
+    // Process all arguments that contain commas or start with comma (after trimming)
+    // This handles cases like "1,5,4 ,6" which becomes ["1,5,4", " ,6"]
     for arg in args {
-        // Try to parse as single ID first
-        if let Ok(id) = arg.parse::<u8>() {
-            ids.push(id);
-        } else if arg.contains(',') {
-            // Handle comma-separated IDs like "1,2,3"
-            for part in arg.split(',') {
+        let trimmed_arg = arg.trim();
+        if trimmed_arg.contains(',') || trimmed_arg.starts_with(',') {
+            // Handle comma-separated IDs like "1,2,3" or " ,6"
+            for part in trimmed_arg.split(',') {
                 let trimmed = part.trim();
-                if let Ok(id) = trimmed.parse::<u8>() {
-                    ids.push(id);
+                if !trimmed.is_empty() {
+                    if let Ok(id) = trimmed.parse::<u8>() {
+                        ids.push(id);
+                    }
+                    // Skip invalid parts silently
                 }
-                // Skip invalid parts silently
+            }
+        } else if !has_comma_args && let Ok(id) = trimmed_arg.parse::<u8>() {
+            // Single ID without comma (only if no comma-separated args exist)
+            // This prevents treating space-separated IDs as multiple single IDs
+            // Only process the first argument if it's a single ID
+            if ids.is_empty() {
+                ids.push(id);
             }
         }
         // Skip non-numeric arguments silently
@@ -581,23 +599,35 @@ pub fn parse_edit_args(args: Vec<String>) -> (Vec<u8>, Option<Vec<String>>) {
         }
 
         if parsing_ids {
-            // Try to parse as ID (number)
-            if let Ok(id) = arg.parse::<u8>() {
-                ids.push(id);
-            } else if arg.contains(',') {
-                // Handle comma-separated IDs like "1,2,3"
+            let trimmed_arg = arg.trim();
+            // Check if argument contains comma or starts with comma (after trimming)
+            // This handles cases like "1,5,4 ,6" which becomes ["1,5,4", " ,6"]
+            if trimmed_arg.contains(',') || trimmed_arg.starts_with(',') {
+                // Handle comma-separated IDs like "1,2,3" or " ,6"
                 let mut found_any_valid_id = false;
-                for part in arg.split(',') {
+                for part in trimmed_arg.split(',') {
                     let trimmed = part.trim();
-                    if let Ok(id) = trimmed.parse::<u8>() {
-                        ids.push(id);
-                        found_any_valid_id = true;
+                    if !trimmed.is_empty() {
+                        if let Ok(id) = trimmed.parse::<u8>() {
+                            ids.push(id);
+                            found_any_valid_id = true;
+                        }
+                        // Skip invalid parts silently, but continue parsing
                     }
-                    // Skip invalid parts silently, but continue parsing
                 }
 
                 if !found_any_valid_id {
                     // No valid IDs found in comma-separated string, switch to text
+                    parsing_ids = false;
+                    text_parts.push(arg.clone());
+                }
+            } else if let Ok(id) = trimmed_arg.parse::<u8>() {
+                // Single ID (only one ID allowed without comma)
+                // If we already have IDs, this is likely text, not another ID
+                if ids.is_empty() {
+                    ids.push(id);
+                } else {
+                    // Multiple IDs without comma - treat as text
                     parsing_ids = false;
                     text_parts.push(arg.clone());
                 }

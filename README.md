@@ -4,6 +4,10 @@
     <a href="https://github.com/tagirov/rusk/releases"><img alt="rusk release version number" src="https://img.shields.io/github/v/release/tagirov/rusk?logo=github"></a>
 </p>
 
+<p align="center"><img src="rusk.png" alt="rusk 0.6"></p>
+
+<br />
+
 - [Install](#install)
 - [Basic Usage](#basic-usage)
   - [Working with Multiple Tasks](#working-with-multiple-tasks)

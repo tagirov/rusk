@@ -258,7 +258,6 @@ fn test_edge_case_invalid_date_formats() {
         "00-01-2025", // Invalid day (0)
         "32-13-2025", // Both invalid
         "invalid-date",
-        "01/01/2025",       // Wrong format
         "2025-01-01",       // Wrong format (old YYYY-MM-DD)
         "01.01.2025",       // Wrong format
         "01_01_2025",       // Wrong format

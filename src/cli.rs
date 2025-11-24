@@ -1,4 +1,4 @@
-use crate::{Task, TaskManager};
+use crate::{Task, TaskManager, normalize_date_string};
 use anyhow::{Context, Result};
 use colored::*;
 use crossterm::{
@@ -133,7 +133,7 @@ impl HandlerCLI {
         );
         println!(
             "{}",
-            "Enter new text and press Enter (leave empty to keep):".cyan()
+            "Enter new text and press Enter (leave empty to keep, Tab to autocomplete from prefill):".cyan()
         );
         let edited = Self::interactive_line_editor("> ", current, true, None, true, allow_skip)?;
         if edited.trim().is_empty() {
@@ -582,10 +582,12 @@ impl HandlerCLI {
                     );
                     println!(
                         "{}",
-                        "Enter new date DD-MM-YYYY (leave empty to keep):".cyan()
+                        "Enter new date DD-MM-YYYY or DD/MM/YYYY (short year like 25 is OK, leave empty to keep, Tab to autocomplete from ghost prefill):".cyan()
                     );
-                    let date_editor =
-                        |s: &str| chrono::NaiveDate::parse_from_str(s, "%d-%m-%Y").is_ok();
+                    let date_editor = |s: &str| {
+                        let normalized = normalize_date_string(s);
+                        chrono::NaiveDate::parse_from_str(&normalized, "%d-%m-%Y").is_ok()
+                    };
                     match Self::interactive_line_editor(
                         "> ",
                         &current_date,
@@ -596,8 +598,9 @@ impl HandlerCLI {
                     ) {
                         Ok(date_input) => {
                             if !date_input.trim().is_empty() {
+                                let normalized = normalize_date_string(date_input.trim());
                                 if let Ok(parsed) =
-                                    chrono::NaiveDate::parse_from_str(date_input.trim(), "%d-%m-%Y")
+                                    chrono::NaiveDate::parse_from_str(&normalized, "%d-%m-%Y")
                                 {
                                     let task = &mut tm.tasks_mut()[idx];
                                     if task.date != Some(parsed) {
@@ -786,7 +789,10 @@ impl HandlerCLI {
         // Parse new date before it's moved
         let parsed_new_date = date
             .as_ref()
-            .and_then(|d| chrono::NaiveDate::parse_from_str(d, "%d-%m-%Y").ok());
+            .and_then(|d| {
+                let normalized = normalize_date_string(d);
+                chrono::NaiveDate::parse_from_str(&normalized, "%d-%m-%Y").ok()
+            });
 
         let (edited, unchanged, not_found) = tm.edit_tasks(ids, text, date)?;
 

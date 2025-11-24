@@ -220,6 +220,8 @@ fn test_completion_show_output() {
 
 #[test]
 fn test_completion_paths_use_correct_filenames() {
+    let _temp_dir = TempDir::new().unwrap();
+    
     let test_cases = vec![
         (Shell::Bash, "rusk"),
         (Shell::Zsh, "_rusk"),

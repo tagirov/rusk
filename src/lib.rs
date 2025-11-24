@@ -125,7 +125,10 @@ impl TaskManager {
             anyhow::bail!("Task text cannot be empty");
         }
 
-        let date = date.and_then(|d| NaiveDate::parse_from_str(&d, "%d-%m-%Y").ok());
+        let date = date.and_then(|d| {
+            let normalized = normalize_date_string(&d);
+            NaiveDate::parse_from_str(&normalized, "%d-%m-%Y").ok()
+        });
         let id = self.generate_next_id()?;
 
         let task = Task {
@@ -226,7 +229,8 @@ impl TaskManager {
                 }
 
                 if let Some(ref new_date) = date {
-                    let parsed_date = NaiveDate::parse_from_str(new_date, "%d-%m-%Y").ok();
+                    let normalized = normalize_date_string(new_date);
+                    let parsed_date = NaiveDate::parse_from_str(&normalized, "%d-%m-%Y").ok();
                     if task.date != parsed_date {
                         task.date = parsed_date;
                         was_changed = true;
@@ -499,6 +503,34 @@ impl TaskManager {
 
         Ok(())
     }
+}
+
+/// Normalize date string: replace '/' with '-', and convert short year (25) to full year (2025)
+/// Supports formats: DD-MM-YYYY, DD/MM/YYYY, DD-MM-YY, DD/MM/YY
+pub fn normalize_date_string(date_str: &str) -> String {
+    let mut normalized = date_str.replace('/', "-");
+    
+    // Check if year is short (1-2 digits without leading zeros) and convert to full year
+    // Pattern: DD-MM-YY or DD/MM/YY -> DD-MM-2025
+    // But NOT: DD-MM-0001 (4 digits, even if parsed as 1)
+    let parts: Vec<&str> = normalized.split('-').collect();
+    if parts.len() == 3 {
+        if let Some(year_str) = parts.get(2) {
+            let year_str = year_str.trim();
+            // Only convert if year string is 1-2 digits (no leading zeros)
+            if year_str.len() <= 2 && !year_str.is_empty() {
+                if let Ok(year) = year_str.parse::<u16>() {
+                    // If year is 1-2 digits (0-99), assume 2000s
+                    if year < 100 {
+                        let full_year = 2000 + year;
+                        normalized = format!("{}-{}-{}", parts[0], parts[1], full_year);
+                    }
+                }
+            }
+        }
+    }
+    
+    normalized
 }
 
 /// Parse ID input (comma-separated only)

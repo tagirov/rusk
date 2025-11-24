@@ -15,7 +15,7 @@ struct Cli {
 enum Command {
     #[command(
         alias = "a",
-        about = "Add a new task (alias: \x1b[1ma\x1b[0m). Example: rusk add buy groceries. With a specific date: rusk add buy groceries --date 01-07-2025",
+        about = "Add a new task (alias: \x1b[1ma\x1b[0m). Example: rusk add buy groceries. With a specific date: rusk add buy groceries --date 01-07-2025 (or short format: 1-7-25)",
         help_template = "{about-section}\n\nUsage: rusk add [TEXT]... [OPTIONS]\n\n{all-args}"
     )]
     Add {
@@ -44,7 +44,7 @@ enum Command {
     },
     #[command(
         alias = "e",
-        about = "Edit tasks by id(s) (alias: \x1b[1me\x1b[0m). Text can be provided without quotes. Examples: rusk e 3 new task text -d 01-11-2025, rusk e 1,2,3 shared text",
+        about = "Edit tasks by id(s) (alias: \x1b[1me\x1b[0m). Text can be provided without quotes. Examples: rusk e 3 new task text -d 01-11-2025 (or short format: 1-11-25), rusk e 1,2,3 shared text",
         help_template = "{about-section}\n\nUsage: rusk edit [ARGS]... [OPTIONS]\n\n{all-args}"
     )]
     Edit {

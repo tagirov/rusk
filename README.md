@@ -99,11 +99,19 @@ rusk del 1
 
 # Delete all completed tasks
 rusk del --done
+
+# Get help for any command
+rusk --help
+# or
+rusk -h
+# Get help for a specific command
+rusk add --help
+rusk edit -h
 ```
 
 ## Working with Multiple Tasks
 
-Multiple task IDs must be comma-separated
+Multiple task IDs must be comma-separated (no spaces allowed between IDs)
 
 ```bash
 # Mark multiple tasks as done
@@ -115,6 +123,8 @@ rusk edit 1,2,3 Update status to completed
 # Delete multiple tasks
 rusk del 1,2,3
 ```
+
+**Note:** When specifying multiple task IDs, use commas without spaces. For example, use `1,2,3` not `1, 2, 3`.
 
 ## Interactive Editing
 

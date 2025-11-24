@@ -470,7 +470,7 @@ dependencies = [
 
 [[package]]
 name = "rusk"
-version = "0.6.0-beta.1"
+version = "0.6.0-beta.2"
 dependencies = [
  "anyhow",
  "chrono",

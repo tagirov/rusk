@@ -1,8 +1,13 @@
 <h1 align="center" id="rusk">rusk</h1>
 <p align="center">A minimal cross-platform terminal task manager</p>
+
 <p align="center">
-    <a href="https://github.com/tagirov/rusk/releases"><img alt="rusk release version number" src="https://img.shields.io/github/v/release/tagirov/rusk?logo=github"></a>
+  <a href="https://github.com/tagirov/rusk/actions"><img src="https://img.shields.io/github/actions/workflow/status/tagirov/rusk/.github/workflows/rust.yml?logo=github-actions" alt="build"></a>&nbsp;
+  <a href="https://github.com/tagirov/rusk/releases"><img src="https://img.shields.io/github/v/release/tagirov/rusk?logo=github" alt="release"></a>&nbsp;
+  <a href="https://aur.archlinux.org/packages/rusk"><img src="https://img.shields.io/aur/version/rusk?logo=archlinux" alt="AUR Version"></a>
 </p>
+
+<br />
 
 <p align="center"><img src="rusk.png" alt="rusk 0.6"></p>
 

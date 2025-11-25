@@ -78,13 +78,16 @@ rusk add Buy groceries
 
 # Add a task with a deadline
 rusk add Finish project report --date 31-12-2025
+
 # Or with short year and slash separator:
 rusk add Finish project report --date 31/12/25
-# Leading zero for day is optional:
-rusk add Finish project report --date 1-12-25
+
+# Leading zero for day and month is optional:
+rusk add Finish project report --date 1-3-25
 
 # View all tasks
 rusk list
+
 # or simply
 rusk
 
@@ -111,11 +114,10 @@ rusk del --done
 
 # Get help for any command
 rusk --help
-# or
-rusk -h
+
 # Get help for a specific command
 rusk add --help
-rusk edit -h
+rusk del --done --help 
 ```
 
 ## Working with Multiple Tasks
@@ -133,12 +135,10 @@ rusk edit 1,2,3 Update status to completed
 rusk del 1,2,3
 ```
 
-**Note:** When specifying multiple task IDs, use commas without spaces. For example, use `1,2,3` not `1, 2, 3`.
-
 ## Interactive Editing
 
 ```bash
-# Edit task text interactively (opens editor for text and date)
+# Edit task text interactively
 rusk edit 1
 
 # Edit task text and date interactively
@@ -181,19 +181,18 @@ rusk r (restore)
 -V (--version)
 ```
 
-
 # Configuration
 
 ### Shell Completion
 
-It provides autocomplete for commands, task IDs, and task text during editing by pressing `<TAB>` button.
+It provides autocomplete for commands, task IDs, and task text during editing by pressing `<tab>` button.
 
 **Features:**
 - **Command completion**: Autocomplete commands (`add`, `edit`, `mark`, `del`, etc.) and their aliases
 - **Task ID completion**: Tab-complete task IDs for `edit`, `mark`, and `del` commands
-- **Smart text completion**: When typing `rusk edit 3 <TAB>`, automatically suggests the current task text for easy editing (`rusk edit 3<TAB>` for Nu Shell).
+- **Smart text completion**: When typing `rusk edit 3 <tab>`, automatically suggests the current task text for easy editing. (`rusk edit 3<tab>` will complete the ID)
 - **Flag completion**: Autocomplete `--date`, `--done`, etc.
-- **Date suggestions**: When using `--date` or `-d` flag, suggests default dates: Today, Tomorrow, One week ahead, Two weeks ahead
+- **Date suggestions**: When using `--date<tab>` or `-d<tab>` flag, suggests default dates: Today, Tomorrow, One week ahead, Two weeks ahead
 
 #### Quick Install (Recommended)
 

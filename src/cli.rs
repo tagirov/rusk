@@ -23,6 +23,50 @@ impl HandlerCLI {
         Ok(input.trim().to_string())
     }
 
+    /// Read confirmation (y/n) with immediate response on key press (no Enter required)
+    /// Returns true only for 'y' or 'Y', false for any other key (including Enter, Escape, n, N, etc.)
+    fn read_confirmation(prompt: &str) -> Result<bool> {
+        let mut stdout = io::stdout();
+        enable_raw_mode().context("Failed to enable raw mode")?;
+
+        // Print prompt
+        stdout.queue(Print(prompt))?;
+        stdout.flush().context("Failed to flush stdout")?;
+
+        loop {
+            match read()? {
+                Event::Key(KeyEvent { code, modifiers, .. }) => {
+                    match (code, modifiers) {
+                        (KeyCode::Char('y') | KeyCode::Char('Y'), _) => {
+                            disable_raw_mode().ok();
+                            println!("y");
+                            return Ok(true);
+                        }
+                        (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                            // Ctrl+C: interrupt and exit
+                            disable_raw_mode().ok();
+                            println!("\n");
+                            std::process::exit(130);
+                        }
+                        (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+                            // Ctrl+D: EOF, exit
+                            disable_raw_mode().ok();
+                            println!("\n");
+                            std::process::exit(0);
+                        }
+                        _ => {
+                            // Any other key (n, N, Enter, Escape, etc.) means "no" (cancel)
+                            disable_raw_mode().ok();
+                            println!();
+                            return Ok(false);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Print message for unchanged task with optional edited info
     fn print_unchanged_task_message(current_text: &str, edited_info: &[(u8, String)]) {
         if !edited_info.is_empty() {
@@ -678,14 +722,14 @@ impl HandlerCLI {
             return Ok(());
         }
 
-        let input = Self::read_user_input(&format!(
+        let confirmed = Self::read_confirmation(&format!(
             "{}{}{}",
             "Delete all done tasks (".truecolor(255, 165, 0),
             done_count.to_string().white(),
             ")? [y/N]: ".truecolor(255, 165, 0)
         ))?;
 
-        if input.eq_ignore_ascii_case("y") {
+        if confirmed {
             let deleted = tm.delete_all_done()?;
             if deleted > 0 {
                 println!(
@@ -711,7 +755,7 @@ impl HandlerCLI {
         for &id in &ids {
             if let Some(idx) = tm.find_task_by_id(id) {
                 let task = &tm.tasks()[idx];
-                let input = Self::read_user_input(&format!(
+                let confirmed = Self::read_confirmation(&format!(
                     "{}{}{}{}{}{}",
                     "Delete '".truecolor(255, 165, 0),
                     task.text.white(),
@@ -720,7 +764,7 @@ impl HandlerCLI {
                     format!("{}", task.id).white(),
                     "]? [y/N]: ".truecolor(255, 165, 0)
                 ))?;
-                if input.eq_ignore_ascii_case("y") {
+                if confirmed {
                     confirmed_ids.push(id);
                 } else {
                     print!("{} ", "Canceled deletion of task".magenta());

@@ -63,6 +63,47 @@ impl TaskManager {
         }
     }
 
+    /// Create sample tasks for testing/demo purposes
+    fn create_sample_tasks() -> Vec<Task> {
+        let today = chrono::Local::now().date_naive();
+        let yesterday = today - chrono::Duration::days(1);
+        let tomorrow = today + chrono::Duration::days(1);
+        let next_week = today + chrono::Duration::days(7);
+        let last_week = today - chrono::Duration::days(7);
+        
+        // 14 tasks with different cases
+        vec![
+            // 1. Task without date, not done
+            Task { id: 1, text: "Simple task without date".to_string(), date: None, done: false },
+            // 2. Task without date, done
+            Task { id: 2, text: "Completed task without date".to_string(), date: None, done: true },
+            // 3. Task with date in the past, not done
+            Task { id: 3, text: "Overdue task from last week".to_string(), date: Some(last_week), done: false },
+            // 4. Task with date in the past, done
+            Task { id: 4, text: "Completed overdue task".to_string(), date: Some(yesterday), done: true },
+            // 5. Task with date today, not done
+            Task { id: 5, text: "Task due today".to_string(), date: Some(today), done: false },
+            // 6. Task with date today, done
+            Task { id: 6, text: "Completed task due today".to_string(), date: Some(today), done: true },
+            // 7. Task with date tomorrow, not done
+            Task { id: 7, text: "Task due tomorrow".to_string(), date: Some(tomorrow), done: false },
+            // 8. Task with date in the future, done
+            Task { id: 8, text: "Completed future task".to_string(), date: Some(next_week), done: true },
+            // 9. Task with short text
+            Task { id: 9, text: "Short".to_string(), date: None, done: false },
+            // 10. Task with long text
+            Task { id: 10, text: "This is a very long task description that contains multiple words and demonstrates how the system handles longer text content".to_string(), date: Some(tomorrow), done: false },
+            // 11. Task with special characters
+            Task { id: 11, text: "Task with special chars: @#$%^&*()".to_string(), date: None, done: false },
+            // 12. Task with numbers in text
+            Task { id: 12, text: "Complete task 42 and review items 1-10".to_string(), date: Some(next_week), done: false },
+            // 13. Task with multiple words
+            Task { id: 13, text: "Buy groceries: milk, bread, eggs, and cheese".to_string(), date: Some(tomorrow), done: false },
+            // 14. Task with date far in the future
+            Task { id: 14, text: "Long-term project milestone".to_string(), date: Some(today + chrono::Duration::days(30)), done: false },
+        ]
+    }
+
     /// Create a new TaskManager instance
     pub fn new() -> Result<Self> {
         let db_path = Self::resolve_db_path();
@@ -71,44 +112,7 @@ impl TaskManager {
         
         // In debug mode, add 14 sample tasks with different cases when initializing empty DB
         if cfg!(debug_assertions) && !Self::is_test_mode() && tasks.is_empty() {
-            let today = chrono::Local::now().date_naive();
-            let yesterday = today - chrono::Duration::days(1);
-            let tomorrow = today + chrono::Duration::days(1);
-            let next_week = today + chrono::Duration::days(7);
-            let last_week = today - chrono::Duration::days(7);
-            
-            // 14 tasks with different cases
-            let sample_tasks = vec![
-                // 1. Task without date, not done
-                Task { id: 1, text: "Simple task without date".to_string(), date: None, done: false },
-                // 2. Task without date, done
-                Task { id: 2, text: "Completed task without date".to_string(), date: None, done: true },
-                // 3. Task with date in the past, not done
-                Task { id: 3, text: "Overdue task from last week".to_string(), date: Some(last_week), done: false },
-                // 4. Task with date in the past, done
-                Task { id: 4, text: "Completed overdue task".to_string(), date: Some(yesterday), done: true },
-                // 5. Task with date today, not done
-                Task { id: 5, text: "Task due today".to_string(), date: Some(today), done: false },
-                // 6. Task with date today, done
-                Task { id: 6, text: "Completed task due today".to_string(), date: Some(today), done: true },
-                // 7. Task with date tomorrow, not done
-                Task { id: 7, text: "Task due tomorrow".to_string(), date: Some(tomorrow), done: false },
-                // 8. Task with date in the future, done
-                Task { id: 8, text: "Completed future task".to_string(), date: Some(next_week), done: true },
-                // 9. Task with short text
-                Task { id: 9, text: "Short".to_string(), date: None, done: false },
-                // 10. Task with long text
-                Task { id: 10, text: "This is a very long task description that contains multiple words and demonstrates how the system handles longer text content".to_string(), date: Some(tomorrow), done: false },
-                // 11. Task with special characters
-                Task { id: 11, text: "Task with special chars: @#$%^&*()".to_string(), date: None, done: false },
-                // 12. Task with numbers in text
-                Task { id: 12, text: "Complete task 42 and review items 1-10".to_string(), date: Some(next_week), done: false },
-                // 13. Task with multiple words
-                Task { id: 13, text: "Buy groceries: milk, bread, eggs, and cheese".to_string(), date: Some(tomorrow), done: false },
-                // 14. Task with date far in the future
-                Task { id: 14, text: "Long-term project milestone".to_string(), date: Some(today + chrono::Duration::days(30)), done: false },
-            ];
-            
+            let sample_tasks = Self::create_sample_tasks();
             tasks = sample_tasks;
             
             // Save the tasks to database

@@ -878,6 +878,65 @@ impl HandlerCLI {
         Ok(())
     }
 
+    /// Wrap text by words to fit within a given width
+    fn wrap_text_by_words(text: &str, width: usize) -> Vec<String> {
+        if text.is_empty() {
+            return vec![String::new()];
+        }
+
+        let mut lines = Vec::new();
+        let mut current_line = String::new();
+
+        for word in text.split_whitespace() {
+            let word_len = word.chars().count();
+            
+            if current_line.is_empty() {
+                // First word on line
+                if word_len <= width {
+                    current_line.push_str(word);
+                } else {
+                    // Word is longer than width, split it character by character
+                    let mut chars: Vec<char> = word.chars().collect();
+                    while !chars.is_empty() {
+                        let chunk: Vec<char> = chars.drain(..width.min(chars.len())).collect();
+                        lines.push(chunk.iter().collect());
+                    }
+                }
+            } else {
+                // Check if adding this word would exceed width
+                let space_needed = 1 + word_len; // space + word
+                if current_line.chars().count() + space_needed <= width {
+                    current_line.push(' ');
+                    current_line.push_str(word);
+                } else {
+                    // Current line is full, start a new one
+                    lines.push(current_line);
+                    current_line = String::new();
+                    if word_len <= width {
+                        current_line.push_str(word);
+                    } else {
+                        // Word is longer than width, split it character by character
+                        let mut chars: Vec<char> = word.chars().collect();
+                        while !chars.is_empty() {
+                            let chunk: Vec<char> = chars.drain(..width.min(chars.len())).collect();
+                            lines.push(chunk.iter().collect());
+                        }
+                    }
+                }
+            }
+        }
+
+        if !current_line.is_empty() {
+            lines.push(current_line);
+        }
+
+        if lines.is_empty() {
+            vec![String::new()]
+        } else {
+            lines
+        }
+    }
+
     /// List all tasks with their status, id, date, and text
     pub fn handle_list_tasks(tasks: &[Task]) {
         if tasks.is_empty() {
@@ -892,6 +951,14 @@ impl HandlerCLI {
             "task".blue()
         );
         println!("  ──────────────────────────────────────────────");
+
+        // Maximum line width is 80 characters
+        const MAX_LINE_WIDTH: usize = 80;
+        
+        // Calculate prefix width: "  " (2) + status (1) + " " (1) + id (3) + " " (1) + date (10) + " " (1) = 19
+        // The prefix is: "  " + status + " " + id + " " + date + " " = 19 characters
+        let prefix_width = 19; // Width of prefix (status + id + date + spaces)
+        let available_width = MAX_LINE_WIDTH.saturating_sub(prefix_width);
 
         for task in tasks {
             let status = if task.done {
@@ -915,13 +982,31 @@ impl HandlerCLI {
                 "".normal()
             };
 
-            println!(
-                "  {} {:>3} {:^10} {}",
-                status,
-                task.id.to_string().bold(),
-                date_colored,
-                task.text
-            );
+            // Wrap task text by words
+            let wrapped_lines = Self::wrap_text_by_words(&task.text, available_width);
+
+            // Print first line with status, id, and date
+            if let Some(first_line) = wrapped_lines.first() {
+                println!(
+                    "  {} {:>3} {:^10} {}",
+                    status,
+                    task.id.to_string().bold(),
+                    date_colored,
+                    first_line
+                );
+            }
+
+            // Print continuation lines with proper indentation
+            for line in wrapped_lines.iter().skip(1) {
+                // Indent continuation lines to align with task text start
+                println!(
+                    "  {} {:>3} {:^10} {}",
+                    " ", // Empty status space
+                    " ", // Empty id space
+                    " ", // Empty date space
+                    line
+                );
+            }
         }
 
         println!("\n");

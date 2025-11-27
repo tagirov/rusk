@@ -162,13 +162,13 @@ impl HandlerCLI {
     /// If the user submits an empty line, the text is considered unchanged
     /// If allow_skip is true, Escape will return an error instead of exiting (for multi-task editing)
     fn interactive_edit_text(current: &str, task_id: u8, allow_skip: bool) -> Result<Option<String>> {
-        println!(
-            "{} {} {} {}",
+        let prefix = format!(
+            "{} {} {}",
             "Current text[".cyan(),
             task_id.to_string().bright_cyan().bold(),
-            "]:".cyan(),
-            current.bold()
+            "]:".cyan()
         );
+        Self::print_task_text_with_wrapping(&prefix, &current.bold().to_string());
         println!(
             "{}",
             "Enter new text and press Enter (leave empty to keep, Tab to autocomplete from prefill):".cyan()

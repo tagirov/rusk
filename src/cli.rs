@@ -14,15 +14,6 @@ use std::io::{self, Write};
 pub struct HandlerCLI;
 
 impl HandlerCLI {
-    /// Read user input from stdin with a prompt
-    fn read_user_input(prompt: &str) -> Result<String> {
-        print!("{prompt}");
-        io::stdout().flush().context("Failed to flush stdout")?;
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).context("Input error")?;
-        Ok(input.trim().to_string())
-    }
-
     /// Read confirmation (y/n) with immediate response on key press (no Enter required)
     /// Returns true only for 'y' or 'Y', false for any other key (including Enter, Escape, n, N, etc.)
     fn read_confirmation(prompt: &str) -> Result<bool> {
@@ -69,25 +60,21 @@ impl HandlerCLI {
 
     /// Print message for unchanged task with optional edited info
     fn print_unchanged_task_message(current_text: &str, edited_info: &[(u8, String)]) {
-        if !edited_info.is_empty() {
+        let prefix = if !edited_info.is_empty() {
             let edited_texts: Vec<String> = edited_info
                 .iter()
                 .map(|(eid, text)| format!("{eid}: {text}"))
                 .collect();
-            println!(
-                "{} {} {} {}",
+            format!(
+                "{} {} {}",
                 "Task already has this content:".magenta(),
-                current_text.bold(),
                 "(edited:".cyan(),
                 format!("{})", edited_texts.join(", ")).bold()
-            );
+            )
         } else {
-            println!(
-                "{} {}",
-                "Task already has this content:".magenta(),
-                current_text.bold()
-            );
-        }
+            format!("{}", "Task already has this content:".magenta())
+        };
+        Self::print_task_text_with_wrapping(&prefix, &current_text.bold().to_string());
     }
 
     /// Handle SkipTask error - return true if skipped, false otherwise
@@ -126,7 +113,7 @@ impl HandlerCLI {
     ) -> Result<()> {
         tm.add_task(text, date)?;
         let task = tm.tasks().last().unwrap();
-        if let Some(date) = task.date {
+        let prefix = if let Some(date) = task.date {
             let today = chrono::Local::now().date_naive();
             let date_str = date.format("%d-%m-%Y").to_string();
             let colored_date = if date < today {
@@ -134,21 +121,11 @@ impl HandlerCLI {
             } else {
                 date_str.cyan()
             };
-            println!(
-                "{} {}: {} ({})",
-                "Added task:".green(),
-                task.id,
-                task.text.bold(),
-                colored_date
-            );
+            format!("{} {}: ({})", "Added task:".green(), task.id, colored_date)
         } else {
-            println!(
-                "{} {}: {}",
-                "Added task:".green(),
-                task.id,
-                task.text.bold()
-            );
-        }
+            format!("{} {}:", "Added task:".green(), task.id)
+        };
+        Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
         Ok(())
     }
 
@@ -591,7 +568,8 @@ impl HandlerCLI {
                             edited.push(*id);
                             edited_info.push((*id, new_text.clone()));
                             any_changed = true;
-                            println!("{} {}: {}", "Edited task:".green(), id, task.text.bold());
+                            let prefix = format!("{} {}: ", "Edited task:".green(), id);
+                            Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
                         } else {
                             unchanged.push(*id);
                             Self::print_unchanged_task_message(&current_text, &edited_info);
@@ -653,12 +631,8 @@ impl HandlerCLI {
                                             edited.push(*id);
                                         }
                                         any_changed = true;
-                                        println!(
-                                            "{} {}: {}",
-                                            "Edited task:".green(),
-                                            id,
-                                            task.text.bold()
-                                        );
+                                        let prefix = format!("{} {}: ", "Edited task:".green(), id);
+                                        Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
                                     }
                                 }
                             }
@@ -755,15 +729,10 @@ impl HandlerCLI {
         for &id in &ids {
             if let Some(idx) = tm.find_task_by_id(id) {
                 let task = &tm.tasks()[idx];
-                let confirmed = Self::read_confirmation(&format!(
-                    "{}{}{}{}{}{}",
-                    "Delete '".truecolor(255, 165, 0),
-                    task.text.white(),
-                    "' ".truecolor(255, 165, 0),
-                    "[ID ".truecolor(255, 165, 0),
-                    format!("{}", task.id).white(),
-                    "]? [y/N]: ".truecolor(255, 165, 0)
-                ))?;
+                // Print delete confirmation dialog and get prompt
+                let prompt = Self::print_delete_confirmation_dialog(&task.text, task.id);
+                // Show confirmation prompt (empty if already printed)
+                let confirmed = Self::read_confirmation(&prompt)?;
                 if confirmed {
                     confirmed_ids.push(id);
                 } else {
@@ -801,12 +770,8 @@ impl HandlerCLI {
             if let Some(idx) = tm.find_task_by_id(id) {
                 let task = &tm.tasks()[idx];
                 let status = if done { "done" } else { "undone" };
-                println!(
-                    "{} {}: {}",
-                    format!("Marked task as {status}:").green(),
-                    id,
-                    task.text.bold()
-                );
+                let prefix = format!("{} {}: ", format!("Marked task as {status}:").green(), id);
+                Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
             }
         }
 
@@ -851,7 +816,8 @@ impl HandlerCLI {
                 let new_date = task.date;
 
                 // Print task text
-                print!("{} {}: {}", "Edited task:".green(), id, task.text.bold());
+                let prefix = format!("{} {}: ", "Edited task:".green(), id);
+                Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
 
                 // Print date information
                 if parsed_new_date.is_some() {
@@ -885,8 +851,6 @@ impl HandlerCLI {
                         let date_str = Self::format_date_for_display(new_date);
                         println!(" {} {}", "- date:".cyan(), date_str.bold());
                     }
-                } else {
-                    println!();
                 }
             }
         }
@@ -902,24 +866,225 @@ impl HandlerCLI {
                 let current_date = task.date;
 
                 // Print task text
-                print!(
-                    "{} {}",
-                    "Task already has this content:".magenta(),
-                    task.text.bold()
-                );
+                let prefix = format!("{} ", "Task already has this content:".magenta());
+                Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
 
                 // Print date information if date was provided
                 if parsed_new_date.is_some() {
                     let date_str = Self::format_date_for_display(current_date);
                     println!(" {} {}", "- date:".cyan(), date_str.bold());
-                } else {
-                    println!();
                 }
             }
         }
 
         Self::print_not_found_ids(&not_found);
         Ok(())
+    }
+
+    /// Print delete confirmation dialog with proper formatting
+    /// task_text: the task text to print (will be bold)
+    /// task_id: the task ID
+    /// Returns the formatted confirmation prompt string for read_confirmation
+    /// If prompt fits on the same line, it's already printed and empty string is returned
+    /// Text has 4 spaces left and right margin
+    fn print_delete_confirmation_dialog(task_text: &str, task_id: u8) -> String {
+        const MAX_LINE_WIDTH: usize = 80;
+        const LEFT_MARGIN: usize = 4;
+        const RIGHT_MARGIN: usize = 4;
+        const PROMPT_RIGHT_MARGIN: usize = 4;
+        
+        let prompt_plain = "[y/N]: ";
+        let prompt_with_space = format!(" {}", prompt_plain);
+        let prompt_width = prompt_with_space.chars().count();
+        
+        // Calculate available width for task text (with left and right margins)
+        let available_width_for_text = MAX_LINE_WIDTH
+            .saturating_sub(LEFT_MARGIN)
+            .saturating_sub(RIGHT_MARGIN);
+        
+        // Wrap task text
+        let wrapped_lines = Self::wrap_text_by_words(task_text, available_width_for_text);
+        
+        // Check if prompt fits on last line
+        let empty_string = String::new();
+        let last_line = wrapped_lines.last().unwrap_or(&empty_string);
+        let last_line_width = last_line.chars().count();
+        let space_needed_for_prompt = prompt_width; // space + prompt
+        
+        let prompt_fits_on_last_line = last_line_width + space_needed_for_prompt <= available_width_for_text;
+        
+        // Print "Delete [ID x]:" on first line
+        println!(
+            "{}{}{}{}",
+            "Delete ".truecolor(255, 165, 0),
+            "[ID ".truecolor(255, 165, 0),
+            format!("{}", task_id).white(),
+            "]:".truecolor(255, 165, 0)
+        );
+        
+        // Print text lines starting from second line with left margin
+        let left_indent = " ".repeat(LEFT_MARGIN);
+        
+        // Print first line
+        if let Some(first_line) = wrapped_lines.first() {
+            let is_single_line = wrapped_lines.len() == 1;
+            
+            if is_single_line && prompt_fits_on_last_line {
+                // Single line with prompt - everything fits on one line
+                print!(
+                    "{}{}{}",
+                    left_indent,
+                    first_line.bold(),
+                    prompt_with_space.truecolor(255, 165, 0)
+                );
+                io::stdout().flush().ok();
+                // Return empty string - prompt already printed, read_confirmation will handle input
+                return String::new();
+            } else {
+                // First line without prompt
+                print!("{}{}", left_indent, first_line.bold());
+                println!();
+            }
+        }
+        
+        // Print continuation lines
+        for (idx, line) in wrapped_lines.iter().enumerate().skip(1) {
+            let is_last = idx == wrapped_lines.len() - 1;
+            
+            if is_last {
+                // Last line
+                if prompt_fits_on_last_line {
+                    // Prompt fits on last line
+                    print!(
+                        "{}{}{}",
+                        left_indent,
+                        line.bold(),
+                        prompt_with_space.truecolor(255, 165, 0)
+                    );
+                    io::stdout().flush().ok();
+                    // Return empty string - prompt already printed
+                    return String::new();
+                } else {
+                    // Prompt doesn't fit - just print line
+                    print!("{}{}", left_indent, line.bold());
+                    println!();
+                }
+            } else {
+                // Not last line
+                print!("{}{}", left_indent, line.bold());
+                println!();
+            }
+        }
+        
+        // If we get here, prompt needs to be on a new line with right alignment
+        // Calculate spaces before prompt: 80 - prompt_width - 4 (right margin)
+        let spaces_before_prompt = MAX_LINE_WIDTH
+            .saturating_sub(prompt_width)
+            .saturating_sub(PROMPT_RIGHT_MARGIN);
+        let indent = " ".repeat(spaces_before_prompt);
+        
+        // Build the prompt string with formatting
+        let prompt = format!("{}{}", indent, prompt_with_space.truecolor(255, 165, 0));
+        // Return prompt for read_confirmation to print
+        prompt
+    }
+
+    /// Print task text with wrapping to fit within 80 characters
+    /// prefix: the prefix string (e.g., "Marked task as done: 5: ")
+    /// text: the task text to print (may contain ANSI codes)
+    /// Header is printed on first line, text starts on second line
+    /// Text has 4 spaces left and right margin
+    fn print_task_text_with_wrapping(prefix: &str, text: &str) {
+        const MAX_LINE_WIDTH: usize = 80;
+        const LEFT_MARGIN: usize = 4;
+        const RIGHT_MARGIN: usize = 4;
+        
+        // Strip ANSI codes from text for width calculation
+        let text_plain = Self::strip_ansi_codes(text);
+        
+        // Extract ANSI codes from the beginning of the original text (for formatting)
+        let (ansi_prefix, ansi_suffix) = Self::extract_ansi_codes(text);
+        
+        // Calculate available width for text (with left and right margins)
+        let available_width = MAX_LINE_WIDTH.saturating_sub(LEFT_MARGIN).saturating_sub(RIGHT_MARGIN);
+        
+        // Wrap plain text (without ANSI codes) to get correct line breaks
+        let wrapped_lines_plain = Self::wrap_text_by_words(&text_plain, available_width);
+        
+        // Print header on first line
+        println!("{}", prefix);
+        
+        // Print all text lines starting from second line with left margin
+        let left_indent = " ".repeat(LEFT_MARGIN);
+        for line in wrapped_lines_plain.iter() {
+            println!("{}{}{}{}", left_indent, ansi_prefix, line, ansi_suffix);
+        }
+    }
+    
+    /// Extract ANSI codes from the beginning and end of a string
+    /// Returns (prefix_codes, suffix_codes) where prefix_codes are codes at the start
+    /// and suffix_codes are reset codes at the end
+    fn extract_ansi_codes(s: &str) -> (String, String) {
+        let mut prefix = String::new();
+        let mut suffix = String::new();
+        let mut chars = s.chars().peekable();
+        let mut in_ansi = false;
+        let mut ansi_seq = String::new();
+        
+        // Extract prefix ANSI codes
+        while let Some(&ch) = chars.peek() {
+            if ch == '\x1b' {
+                in_ansi = true;
+                ansi_seq.push(ch);
+                chars.next();
+                while let Some(&next) = chars.peek() {
+                    ansi_seq.push(next);
+                    chars.next();
+                    if next == 'm' {
+                        prefix.push_str(&ansi_seq);
+                        ansi_seq.clear();
+                        in_ansi = false;
+                        break;
+                    }
+                }
+            } else if in_ansi {
+                break;
+            } else {
+                // Found first non-ANSI character, stop
+                break;
+            }
+        }
+        
+        // Check for reset code at the end (we'll add it if prefix had formatting)
+        if !prefix.is_empty() {
+            suffix.push_str("\x1b[0m");
+        }
+        
+        (prefix, suffix)
+    }
+    
+    /// Strip ANSI color codes from a string to get plain text length
+    fn strip_ansi_codes(s: &str) -> String {
+        // Simple ANSI code stripper - removes escape sequences
+        let mut result = String::new();
+        let mut chars = s.chars().peekable();
+        
+        while let Some(ch) = chars.next() {
+            if ch == '\x1b' {
+                // Skip escape sequence
+                while let Some(&next) = chars.peek() {
+                    if next == 'm' {
+                        chars.next();
+                        break;
+                    }
+                    chars.next();
+                }
+            } else {
+                result.push(ch);
+            }
+        }
+        
+        result
     }
 
     /// Wrap text by words to fit within a given width

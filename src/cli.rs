@@ -6,7 +6,7 @@ use crossterm::{
     cursor::MoveTo,
     event::{Event, KeyCode, KeyEvent, KeyModifiers, read},
     style::Print,
-    terminal::{disable_raw_mode, enable_raw_mode},
+    terminal::{disable_raw_mode, enable_raw_mode, size},
 };
 use std::io::{self, Write};
 
@@ -14,6 +14,23 @@ use std::io::{self, Write};
 pub struct HandlerCLI;
 
 impl HandlerCLI {
+    /// Get the maximum line width for text wrapping
+    /// Returns the minimum of 80 and terminal width, or 80 if terminal width cannot be determined
+    fn get_max_line_width() -> usize {
+        const DEFAULT_WIDTH: usize = 80;
+        match size() {
+            Ok((width, _)) => {
+                let terminal_width = width as usize;
+                if terminal_width < DEFAULT_WIDTH {
+                    terminal_width
+                } else {
+                    DEFAULT_WIDTH
+                }
+            }
+            Err(_) => DEFAULT_WIDTH,
+        }
+    }
+
     /// Read confirmation (y/n) with immediate response on key press (no Enter required)
     /// Returns true only for 'y' or 'Y', false for any other key (including Enter, Escape, n, N, etc.)
     fn read_confirmation(prompt: &str) -> Result<bool> {
@@ -888,7 +905,7 @@ impl HandlerCLI {
     /// If prompt fits on the same line, it's already printed and empty string is returned
     /// Text has 4 spaces left and right margin
     fn print_delete_confirmation_dialog(task_text: &str, task_id: u8) -> String {
-        const MAX_LINE_WIDTH: usize = 80;
+        let max_line_width = Self::get_max_line_width();
         const LEFT_MARGIN: usize = 4;
         const RIGHT_MARGIN: usize = 4;
         const PROMPT_RIGHT_MARGIN: usize = 4;
@@ -898,7 +915,7 @@ impl HandlerCLI {
         let prompt_width = prompt_with_space.chars().count();
         
         // Calculate available width for task text (with left and right margins)
-        let available_width_for_text = MAX_LINE_WIDTH
+        let available_width_for_text = max_line_width
             .saturating_sub(LEFT_MARGIN)
             .saturating_sub(RIGHT_MARGIN);
         
@@ -977,8 +994,8 @@ impl HandlerCLI {
         }
         
         // If we get here, prompt needs to be on a new line with right alignment
-        // Calculate spaces before prompt: 80 - prompt_width - 4 (right margin)
-        let spaces_before_prompt = MAX_LINE_WIDTH
+        // Calculate spaces before prompt: max_line_width - prompt_width - 4 (right margin)
+        let spaces_before_prompt = max_line_width
             .saturating_sub(prompt_width)
             .saturating_sub(PROMPT_RIGHT_MARGIN);
         let indent = " ".repeat(spaces_before_prompt);
@@ -989,13 +1006,13 @@ impl HandlerCLI {
         prompt
     }
 
-    /// Print task text with wrapping to fit within 80 characters
+    /// Print task text with wrapping to fit within terminal width (max 80 characters)
     /// prefix: the prefix string (e.g., "Marked task as done: 5: ")
     /// text: the task text to print (may contain ANSI codes)
     /// Header is printed on first line, text starts on second line
     /// Text has 4 spaces left and right margin
     fn print_task_text_with_wrapping(prefix: &str, text: &str) {
-        const MAX_LINE_WIDTH: usize = 80;
+        let max_line_width = Self::get_max_line_width();
         const LEFT_MARGIN: usize = 4;
         const RIGHT_MARGIN: usize = 4;
         
@@ -1006,7 +1023,7 @@ impl HandlerCLI {
         let (ansi_prefix, ansi_suffix) = Self::extract_ansi_codes(text);
         
         // Calculate available width for text (with left and right margins)
-        let available_width = MAX_LINE_WIDTH.saturating_sub(LEFT_MARGIN).saturating_sub(RIGHT_MARGIN);
+        let available_width = max_line_width.saturating_sub(LEFT_MARGIN).saturating_sub(RIGHT_MARGIN);
         
         // Wrap plain text (without ANSI codes) to get correct line breaks
         let wrapped_lines_plain = Self::wrap_text_by_words(&text_plain, available_width);
@@ -1161,13 +1178,14 @@ impl HandlerCLI {
         );
         println!("  ──────────────────────────────────────────────");
 
-        // Maximum line width is 80 characters
-        const MAX_LINE_WIDTH: usize = 80;
+        // Maximum line width is terminal width (max 80 characters)
+        let max_line_width = Self::get_max_line_width();
         
         // Calculate prefix width: "  " (2) + status (1) + " " (1) + id (3) + " " (1) + date (10) + " " (1) = 19
         // The prefix is: "  " + status + " " + id + " " + date + " " = 19 characters
         let prefix_width = 19; // Width of prefix (status + id + date + spaces)
-        let available_width = MAX_LINE_WIDTH.saturating_sub(prefix_width);
+        // Subtract right margin of 4 spaces
+        let available_width = max_line_width.saturating_sub(prefix_width).saturating_sub(4);
 
         for task in tasks {
             let status = if task.done {

@@ -101,10 +101,10 @@ rusk mark 1
 rusk edit 1 Complete the project documentation
 
 # Edit task date
-rusk edit 1 --date 25-12-2025
+rusk edit 1 --date 25/12/2025
 
 # Edit both text and date
-rusk edit 1 Update documentation --date 23/12/25
+rusk edit 1 Update documentation --date 23-12-25
 
 # Delete a task
 rusk del 1

@@ -11,34 +11,67 @@
 #
 #      Completions will be automatically loaded by Fish shell
 
+# ============================================================================
+# Utility Functions
+# ============================================================================
+
 # Find rusk binary
 function __rusk_cmd
     command -v rusk 2>/dev/null; or echo rusk
 end
 
-function __rusk_get_task_ids
+# Get command line arguments
+function __rusk_get_cmdline
+    commandline -opc
+end
+
+# Get current word being typed
+function __rusk_get_current_word
+    commandline -ct
+end
+
+# Check if word matches pattern
+function __rusk_is_flag
+    string match -qr '^-' -- "$argv[1]"
+end
+
+# Check if word is a number (task ID)
+function __rusk_is_number
+    string match -qr '^[0-9]+$' -- "$argv[1]"
+end
+
+# ============================================================================
+# Task Management Functions
+# ============================================================================
+
+# Get all task IDs from rusk list output
+function __rusk_get_all_task_ids
     set -l rusk_cmd (__rusk_cmd)
-    set -l all_ids ($rusk_cmd list 2>/dev/null | grep -E '[•✔]' | grep -oE '^\s+[•✔]\s+[0-9]+\s+' | grep -oE '[0-9]+' | sort -n)
-    # Exclude already entered IDs from suggestions
-    set -l cmdline (commandline -opc)
+    $rusk_cmd list 2>/dev/null | grep -E '[•✔]' | grep -oE '^\s+[•✔]\s+[0-9]+\s+' | grep -oE '[0-9]+' | sort -n
+end
+
+# Get entered task IDs from command line
+function __rusk_get_entered_ids
+    set -l cmdline (__rusk_get_cmdline)
     set -l entered_ids
     # Skip first two words: "rusk" and command
     for i in (seq 3 (count $cmdline))
-        if test -n "$cmdline[$i]"; and string match -qr '^[0-9]+$' -- "$cmdline[$i]"
-            set -a entered_ids "$cmdline[$i]"
+        set -l arg $cmdline[$i]
+        if test -n "$arg"; and __rusk_is_number "$arg"
+            set -a entered_ids "$arg"
         end
     end
-    # Filter out entered IDs
+    echo $entered_ids
+end
+
+# Get task IDs excluding already entered ones
+function __rusk_get_task_ids
+    set -l all_ids (__rusk_get_all_task_ids)
+    set -l entered_ids (__rusk_get_entered_ids)
+    
     if test (count $entered_ids) -gt 0
         for id in $all_ids
-            set -l found 0
-            for entered in $entered_ids
-                if test "$id" = "$entered"
-                    set found 1
-                    break
-                end
-            end
-            if test $found -eq 0
+            if not contains -- $id $entered_ids
                 echo $id
             end
         end
@@ -49,31 +82,29 @@ function __rusk_get_task_ids
     end
 end
 
+# Get task text by ID
 function __rusk_get_task_text
     set -l task_id $argv[1]
     set -l rusk_cmd (__rusk_cmd)
     $rusk_cmd list 2>/dev/null | grep -E "^\s*[•✔]\s+$task_id\s+" | head -1 | sed -E 's/^[[:space:]]*[•✔][[:space:]]+[0-9]+[[:space:]]+[0-9-]*[[:space:]]*//'
 end
 
-# Main commands
-complete -c rusk -f -n '__fish_use_subcommand' -a 'add' -d 'Add a new task'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'edit' -d 'Edit tasks by id(s)'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'mark' -d 'Mark tasks as done/undone'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'del' -d 'Delete tasks by id(s)'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'list' -d 'List all tasks'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'restore' -d 'Restore from backup'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'completions' -d 'Install shell completions'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'a' -d 'Alias for add'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'e' -d 'Alias for edit'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'm' -d 'Alias for mark'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'd' -d 'Alias for del'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'l' -d 'Alias for list'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'r' -d 'Alias for restore'
-# Global flags
-complete -c rusk -f -n '__fish_use_subcommand' -s h -l help -d 'Show help'
-complete -c rusk -f -n '__fish_use_subcommand' -s V -l version -d 'Show version'
+# Quote text if it contains special characters
+function __rusk_quote_text
+    set -l text $argv[1]
+    if string match -qr '[ "\\$`]' -- "$text"
+        # Only escape double quotes to prevent breaking the string
+        set -l quoted_text (string replace -a '"' '\\"' "$text")
+        printf '"%s"\n' "$quoted_text"
+    else
+        printf '%s\n' "$text"
+    end
+end
 
-# Functions to get individual date options
+# ============================================================================
+# Date Functions
+# ============================================================================
+
 function __rusk_get_today_date
     date +%d-%m-%Y 2>/dev/null
 end
@@ -90,11 +121,67 @@ function __rusk_get_two_weeks_ahead_date
     date -d '+2 weeks' +%d-%m-%Y 2>/dev/null; or date -v+2w +%d-%m-%Y 2>/dev/null; or date +%d-%m-%Y
 end
 
-# Function to check if we're completing date value
-function __rusk_should_complete_date
-    __fish_seen_subcommand_from add a; or return 1
-    set -l cmdline (commandline -opc)
-    # Check if previous word is -d or --date
+# ============================================================================
+# Command Detection Functions
+# ============================================================================
+
+# Check if we're in a specific command (with aliases)
+function __rusk_is_command
+    set -l cmd $argv[1]
+    set -l aliases $argv[2..-1]
+    __fish_seen_subcommand_from $cmd $aliases
+end
+
+# Check if we're in completions/c command
+function __rusk_is_completions_command
+    set -l cmdline (__rusk_get_cmdline)
+    if test (count $cmdline) -ge 2
+        set -l cmd $cmdline[2]
+        test "$cmd" = "completions"; or test "$cmd" = "c"
+    else
+        return 1
+    end
+end
+
+# Check if install/show is already in command line
+function __rusk_has_install_or_show
+    set -l cmdline (__rusk_get_cmdline)
+    for i in (seq 2 (count $cmdline))
+        set -l arg $cmdline[$i]
+        if test "$arg" = "install" -o "$arg" = "show"
+            return 0
+        end
+    end
+    return 1
+end
+
+# ============================================================================
+# Flag Completion Functions
+# ============================================================================
+
+# Complete flags with narrowing support
+function __rusk_complete_flags
+    set -l flags $argv
+    set -l current_word (__rusk_get_current_word)
+    
+    if __rusk_is_flag "$current_word"
+        # Filter flags that match current word
+        for flag in $flags
+            if string match -qr "^$current_word" -- "$flag"
+                echo $flag
+            end
+        end
+    else
+        # Show all flags
+        for flag in $flags
+            echo $flag
+        end
+    end
+end
+
+# Check if previous word is a date flag
+function __rusk_is_after_date_flag
+    set -l cmdline (__rusk_get_cmdline)
     if test (count $cmdline) -ge 2
         set -l prev_word $cmdline[-1]
         test "$prev_word" = "-d"; or test "$prev_word" = "--date"
@@ -103,213 +190,165 @@ function __rusk_should_complete_date
     end
 end
 
-# Function to complete flags for add command with narrowing
-function __rusk_complete_add_flags
-    set -l cmdline (commandline -opc)
-    set -l current_word (commandline -ct)
-    
-    # All available flags
-    set -l all_flags -d --date -h --help -V --version
-    
-    # If current word starts with -, filter flags that match
-    if string match -qr '^-' -- "$current_word"
-        for flag in $all_flags
-            if string match -qr "^$current_word" -- "$flag"
-                echo $flag
-            end
-        end
-    else
-        # If current word doesn't start with -, show all flags
-        for flag in $all_flags
-            echo $flag
-        end
-    end
+# Check if we should complete date value
+function __rusk_should_complete_date
+    set -l commands $argv
+    __rusk_is_command $commands[1] $commands[2..-1]; or return 1
+    __rusk_is_after_date_flag
 end
 
-# Function to check if we're completing flags for add command
+# Check if we should complete flags (generic)
+function __rusk_should_complete_flags
+    set -l commands $argv[1..-2]
+    set -l flags $argv[-1]
+    __rusk_is_command $commands[1] $commands[2..-1]; or return 1
+    __rusk_is_after_date_flag; and return 1
+    set -l current_word (__rusk_get_current_word)
+    __rusk_is_flag "$current_word"; or test -z "$current_word"
+end
+
+# Complete flags for add command
+function __rusk_complete_add_flags
+    set -l all_flags -d --date -h --help -V --version
+    __rusk_complete_flags $all_flags
+end
+
+# Check if we should complete flags for add command
 function __rusk_should_complete_add_flags
-    __fish_seen_subcommand_from add a; or return 1
-    set -l cmdline (commandline -opc)
-    # Don't complete flags if we're completing date value
-    if test (count $cmdline) -ge 2
-        set -l prev_word $cmdline[-1]
-        if test "$prev_word" = "-d"; or test "$prev_word" = "--date"
-            return 1
-        end
-    end
+    __rusk_is_command add a; or return 1
+    __rusk_is_after_date_flag; and return 1
+    
     # Don't complete flags if we're completing task text (after flags)
-    # Check if there's already text entered
+    set -l cmdline (__rusk_get_cmdline)
     if test (count $cmdline) -ge 3
-        # If previous word is not a flag and not a date, we're probably entering text
         set -l prev_word $cmdline[-1]
-        if not string match -qr '^-' -- "$prev_word"
+        if not __rusk_is_flag "$prev_word"
             # Check if it's not a date format
             if not string match -qr '^\d{2}-\d{2}-\d{4}$' -- "$prev_word"
                 return 1
             end
         end
     end
-    # Complete flags if current word starts with - or is empty
-    set -l current_word (commandline -ct)
-    string match -qr '^-' -- "$current_word"; or test -z "$current_word"
-end
-
-# Add command flags
-# Complete date flag with individual date options
-complete -c rusk -f -n '__rusk_should_complete_date' -a '(__rusk_get_today_date)' -d 'Today'
-complete -c rusk -f -n '__rusk_should_complete_date' -a '(__rusk_get_tomorrow_date)' -d 'Tomorrow'
-complete -c rusk -f -n '__rusk_should_complete_date' -a '(__rusk_get_week_ahead_date)' -d 'One week ahead'
-complete -c rusk -f -n '__rusk_should_complete_date' -a '(__rusk_get_two_weeks_ahead_date)' -d 'Two weeks ahead'
-
-# Complete flags with narrowing support
-complete -c rusk -f -n '__rusk_should_complete_add_flags' -a '(__rusk_complete_add_flags)'
-
-# Function to check if we're completing date value for edit command
-function __rusk_should_complete_edit_date
-    __fish_seen_subcommand_from edit e; or return 1
-    set -l cmdline (commandline -opc)
-    # Check if previous word is -d or --date
-    if test (count $cmdline) -ge 2
-        set -l prev_word $cmdline[-1]
-        test "$prev_word" = "-d"; or test "$prev_word" = "--date"
-    else
-        return 1
-    end
-end
-
-# Function to complete flags for edit command with narrowing
-function __rusk_complete_edit_flags
-    set -l cmdline (commandline -opc)
-    set -l current_word (commandline -ct)
     
-    # All available flags
-    set -l all_flags -d --date -h --help
-    
-    # If current word starts with -, filter flags that match
-    if string match -qr '^-' -- "$current_word"
-        for flag in $all_flags
-            if string match -qr "^$current_word" -- "$flag"
-                echo $flag
-            end
-        end
-    else
-        # If current word doesn't start with -, show all flags
-        for flag in $all_flags
-            echo $flag
-        end
-    end
+    set -l current_word (__rusk_get_current_word)
+    __rusk_is_flag "$current_word"; or test -z "$current_word"
 end
 
-# Function to check if we're completing flags for edit command
-function __rusk_should_complete_edit_flags
-    __fish_seen_subcommand_from edit e; or return 1
-    set -l cmdline (commandline -opc)
-    # Don't complete flags if we're completing date value
-    if test (count $cmdline) -ge 2
-        set -l prev_word $cmdline[-1]
-        if test "$prev_word" = "-d"; or test "$prev_word" = "--date"
-            return 1
-        end
-    end
-    # Complete flags if current word starts with - or is empty
-    set -l current_word (commandline -ct)
-    string match -qr '^-' -- "$current_word"; or test -z "$current_word"
-end
-
-# Edit command - flags first
-# Complete date flag with individual date options
-complete -c rusk -f -n '__rusk_should_complete_edit_date' -a '(__rusk_get_today_date)' -d 'Today'
-complete -c rusk -f -n '__rusk_should_complete_edit_date' -a '(__rusk_get_tomorrow_date)' -d 'Tomorrow'
-complete -c rusk -f -n '__rusk_should_complete_edit_date' -a '(__rusk_get_week_ahead_date)' -d 'One week ahead'
-complete -c rusk -f -n '__rusk_should_complete_edit_date' -a '(__rusk_get_two_weeks_ahead_date)' -d 'Two weeks ahead'
-
-# Complete flags with narrowing support
-complete -c rusk -f -n '__rusk_should_complete_edit_flags' -a '(__rusk_complete_edit_flags)'
-
-# Function to complete task text after ID
-function __rusk_complete_edit_text
-    set -l cmdline (commandline -opc)
-    # We need at least: rusk edit <ID>
+# Check if there are ID arguments after edit command
+function __rusk_has_edit_id
+    set -l cmdline (__rusk_get_cmdline)
     if test (count $cmdline) -ge 3
-        # Check if we're after edit/e command
-        if test "$cmdline[2]" = "edit" -o "$cmdline[2]" = "e"
-            # Get arguments after edit/e command
-            set -l args $cmdline[3..-1]
-            if test (count $args) -ge 1
-                # Count how many IDs have been entered
-                set -l id_count 0
-                for arg in $args
-                    if string match -qr '^[0-9]+$' -- $arg
-                        set id_count (math $id_count + 1)
-                    end
-                end
-                # Only suggest task text if there's exactly one ID
-                if test $id_count -eq 1
-                    # Get the last argument (should be task ID)
-                    set -l last_arg $args[-1]
-                    # Check if last argument is a number (task ID)
-                    if string match -qr '^[0-9]+$' -- $last_arg
-                        set -l task_text (__rusk_get_task_text $last_arg)
-                        if test -n "$task_text"
-                            # Return text in quotes if it contains spaces
-                            # This helps fish handle it better
-                            if string match -qr ' ' -- "$task_text"
-                                printf '"%s"\n' "$task_text"
-                            else
-                                printf '%s\n' "$task_text"
-                            end
-                        end
-                    end
+        set -l args $cmdline[3..-1]
+        for arg in $args
+            if not __rusk_is_flag "$arg"
+                if __rusk_is_number "$arg"
+                    return 0
                 end
             end
         end
     end
+    return 1
 end
 
-# Completion for task text after ID in edit command
-# This should be checked BEFORE ID completion to have higher priority
-function __rusk_should_complete_edit_text
-    __fish_seen_subcommand_from edit e; or return 1
-    set -l cmdline (commandline -opc)
-    test (count $cmdline) -ge 3; or return 1
+# Complete flags for edit command
+function __rusk_complete_edit_flags
+    set -l current_word (__rusk_get_current_word)
+    
+    if __rusk_has_edit_id
+        # Only suggest date flag after ID
+        set -l date_flags -d --date
+        __rusk_complete_flags $date_flags
+    else
+        # All available flags when no ID is present
+        set -l all_flags -d --date -h --help
+        __rusk_complete_flags $all_flags
+    end
+end
+
+# Check if we should complete flags for edit command
+function __rusk_should_complete_edit_flags
+    __rusk_is_command edit e; or return 1
+    __rusk_is_after_date_flag; and return 1
+    set -l current_word (__rusk_get_current_word)
+    __rusk_is_flag "$current_word"; or test -z "$current_word"
+end
+
+# ============================================================================
+# Edit Command Text Completion
+# ============================================================================
+
+# Complete task text after ID
+function __rusk_complete_edit_text
+    set -l cmdline (__rusk_get_cmdline)
+    if test (count $cmdline) -lt 3
+        return
+    end
+    
+    # Check if we're after edit/e command
+    set -l cmd $cmdline[2]
+    if test "$cmd" != "edit" -a "$cmd" != "e"
+        return
+    end
+    
     # Get arguments after edit/e command
     set -l args $cmdline[3..-1]
+    if test (count $args) -lt 1
+        return
+    end
+    
+    # Count how many IDs have been entered
+    set -l id_count 0
+    for arg in $args
+        if __rusk_is_number "$arg"
+            set id_count (math $id_count + 1)
+        end
+    end
+    
+    # Only suggest task text if there's exactly one ID
+    if test $id_count -eq 1
+        set -l last_arg $args[-1]
+        if __rusk_is_number "$last_arg"
+            set -l task_text (__rusk_get_task_text $last_arg)
+            if test -n "$task_text"
+                __rusk_quote_text "$task_text"
+            end
+        end
+    end
+end
+
+# Check if we should complete task text after ID
+function __rusk_should_complete_edit_text
+    __rusk_is_command edit e; or return 1
+    set -l cmdline (__rusk_get_cmdline)
+    test (count $cmdline) -ge 3; or return 1
+    
+    set -l args $cmdline[3..-1]
     test (count $args) -ge 1; or return 1
+    
     set -l last_arg $args[-1]
-    # Check if last argument is a number (task ID)
-    string match -qr '^[0-9]+$' -- $last_arg; or return 1
-    # Check if we're at the position right after the ID
-    # Current word should be empty or equal to the ID
-    set -l current_word (commandline -ct)
+    __rusk_is_number "$last_arg"; or return 1
+    
+    set -l current_word (__rusk_get_current_word)
     test -z "$current_word"; or test "$current_word" = "$last_arg"
 end
 
-# Complete task text after ID - this rule should come BEFORE ID completion
-# Note: Fish requires 2 tabs for single match (safety feature), but this rule
-# has higher priority and will trigger first
-complete -c rusk -f \
-    -n '__rusk_should_complete_edit_text' \
-    -a '(__rusk_complete_edit_text)' \
-    -d 'Task text'
-
-# Edit command - task IDs
-# Complete task IDs when we're in edit/e command and haven't completed text yet
+# Check if we should complete edit ID
 function __rusk_should_complete_edit_id
-    __fish_seen_subcommand_from edit e; or return 1
-    set -l cmdline (commandline -opc)
+    __rusk_is_command edit e; or return 1
+    set -l cmdline (__rusk_get_cmdline)
+    
     # Don't complete ID if we're after a flag
     set -l last_token $cmdline[-1]
-    if string match -qr '^-' -- $last_token
+    if __rusk_is_flag "$last_token"
         return 1
     end
+    
     # Don't complete ID if we're completing text (after an ID)
-    # Get arguments after edit/e command
     if test (count $cmdline) -ge 3
         set -l args $cmdline[3..-1]
         if test (count $args) -ge 1
             set -l last_arg $args[-1]
-            if string match -qr '^[0-9]+$' -- $last_arg
-                # We're after an ID, don't complete another ID (let text completion handle it)
+            if __rusk_is_number "$last_arg"
                 return 1
             end
         end
@@ -317,24 +356,162 @@ function __rusk_should_complete_edit_id
     return 0
 end
 
+# ============================================================================
+# Mark/Del Command Functions
+# ============================================================================
+
+# Check if we should complete task IDs for mark/del commands
+function __rusk_should_complete_mark_del_id
+    __rusk_is_command mark m del d; or return 1
+    set -l cmdline (__rusk_get_cmdline)
+    
+    # Don't complete ID if we're after a flag
+    set -l last_token $cmdline[-1]
+    if __rusk_is_flag "$last_token"
+        return 1
+    end
+    
+    # Check if there are any ID arguments after the command
+    if test (count $cmdline) -ge 3
+        set -l args $cmdline[3..-1]
+        for arg in $args
+            if not __rusk_is_flag "$arg"
+                return 1
+            end
+        end
+    end
+    return 0
+end
+
+# ============================================================================
+# Completions Command Functions
+# ============================================================================
+
+# Get available shells, excluding already selected ones
+function __rusk_get_available_shells
+    set -l cmdline (__rusk_get_cmdline)
+    set -l all_shells bash zsh fish nu powershell
+    set -l selected_shells
+    
+    # Find install or show in command line
+    set -l install_show_index 0
+    for i in (seq 2 (count $cmdline))
+        set -l arg $cmdline[$i]
+        if test "$arg" = "install" -o "$arg" = "show"
+            set install_show_index $i
+            break
+        end
+    end
+    
+    # If we found install/show, collect all shell arguments after it
+    if test $install_show_index -gt 0
+        for i in (seq (math $install_show_index + 1) (count $cmdline))
+            set -l arg $cmdline[$i]
+            if contains -- $arg $all_shells
+                set -a selected_shells $arg
+            end
+        end
+    end
+    
+    # Return shells that are not selected
+    for shell in $all_shells
+        if not contains -- $shell $selected_shells
+            echo $shell
+        end
+    end
+end
+
+# Check if we should complete shells (after install/show)
+function __rusk_should_complete_shells
+    __rusk_is_completions_command; or return 1
+    __rusk_has_install_or_show; or return 1
+    
+    # Don't suggest flags after shell is selected
+    set -l current_word (__rusk_get_current_word)
+    if __rusk_is_flag "$current_word"
+        return 1
+    end
+    return 0
+end
+
+# ============================================================================
+# Main Command Completions
+# ============================================================================
+
+# Root commands and aliases
+complete -c rusk -f -n '__fish_use_subcommand' -a 'add' -d 'Add a new task'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'edit' -d 'Edit tasks by id(s)'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'mark' -d 'Mark tasks as done/undone'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'del' -d 'Delete tasks by id(s)'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'list' -d 'List all tasks'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'restore' -d 'Restore from backup'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'completions' -d 'Install shell completions'
+
+# Aliases
+complete -c rusk -f -n '__fish_use_subcommand' -a 'a' -d 'Alias for add'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'e' -d 'Alias for edit'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'm' -d 'Alias for mark'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'd' -d 'Alias for del'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'l' -d 'Alias for list'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'r' -d 'Alias for restore'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'c' -d 'Alias for completions'
+
+# Global flags
+complete -c rusk -f -n '__fish_use_subcommand' -s h -l help -d 'Show help'
+complete -c rusk -f -n '__fish_use_subcommand' -s V -l version -d 'Show version'
+
+# ============================================================================
+# Add Command Completions
+# ============================================================================
+
+# Date completions
+complete -c rusk -f -n '__rusk_should_complete_date add a' -a '(__rusk_get_today_date)' -d 'Today'
+complete -c rusk -f -n '__rusk_should_complete_date add a' -a '(__rusk_get_tomorrow_date)' -d 'Tomorrow'
+complete -c rusk -f -n '__rusk_should_complete_date add a' -a '(__rusk_get_week_ahead_date)' -d 'One week ahead'
+complete -c rusk -f -n '__rusk_should_complete_date add a' -a '(__rusk_get_two_weeks_ahead_date)' -d 'Two weeks ahead'
+
+# Flag completions
+complete -c rusk -f -n '__rusk_should_complete_add_flags' -a '(__rusk_complete_add_flags)'
+
+# ============================================================================
+# Edit Command Completions
+# ============================================================================
+
+# Date completions
+complete -c rusk -f -n '__rusk_should_complete_date edit e' -a '(__rusk_get_today_date)' -d 'Today'
+complete -c rusk -f -n '__rusk_should_complete_date edit e' -a '(__rusk_get_tomorrow_date)' -d 'Tomorrow'
+complete -c rusk -f -n '__rusk_should_complete_date edit e' -a '(__rusk_get_week_ahead_date)' -d 'One week ahead'
+complete -c rusk -f -n '__rusk_should_complete_date edit e' -a '(__rusk_get_two_weeks_ahead_date)' -d 'Two weeks ahead'
+
+# Flag completions
+complete -c rusk -f -n '__rusk_should_complete_edit_flags' -a '(__rusk_complete_edit_flags)'
+
+# Task text completion (before ID completion for priority)
+complete -c rusk -f \
+    -n '__rusk_should_complete_edit_text' \
+    -a '(__rusk_complete_edit_text)' \
+    -d 'Task text'
+
+# Task ID completion
 complete -c rusk -f -n '__rusk_should_complete_edit_id' -a '(__rusk_get_task_ids)' -d 'Task ID'
 
-# Mark command - task IDs
-complete -c rusk -f -n '__fish_seen_subcommand_from mark m' -a '(__rusk_get_task_ids)' -d 'Task ID'
+# ============================================================================
+# Mark/Del Command Completions
+# ============================================================================
 
-# Del command - task IDs and --done flag
-complete -c rusk -f -n '__fish_seen_subcommand_from del d' -a '(__rusk_get_task_ids)' -d 'Task ID'
-complete -c rusk -f -n '__fish_seen_subcommand_from del d' -l done -d 'Delete all completed tasks'
+complete -c rusk -f -n '__rusk_should_complete_mark_del_id' -a '(__rusk_get_task_ids)' -d 'Task ID'
+complete -c rusk -f -n '__rusk_should_complete_mark_del_id' -l done -d 'Delete all completed tasks'
 
-# List and restore don't take arguments
+# ============================================================================
+# List/Restore Command Completions
+# ============================================================================
+
 complete -c rusk -f -n '__fish_seen_subcommand_from list l restore r'
 
-# Completions subcommand
-complete -c rusk -f -n '__fish_seen_subcommand_from completions' -a 'install' -d 'Install completions for a shell'
-complete -c rusk -f -n '__fish_seen_subcommand_from completions' -a 'show' -d 'Show completion script'
-complete -c rusk -f -n '__fish_seen_subcommand_from completions; and __fish_seen_subcommand_from install show' -a 'bash' -d 'Bash shell'
-complete -c rusk -f -n '__fish_seen_subcommand_from completions; and __fish_seen_subcommand_from install show' -a 'zsh' -d 'Zsh shell'
-complete -c rusk -f -n '__fish_seen_subcommand_from completions; and __fish_seen_subcommand_from install show' -a 'fish' -d 'Fish shell'
-complete -c rusk -f -n '__fish_seen_subcommand_from completions; and __fish_seen_subcommand_from install show' -a 'nu' -d 'Nu shell'
-complete -c rusk -f -n '__fish_seen_subcommand_from completions; and __fish_seen_subcommand_from install show' -a 'powershell' -d 'PowerShell'
+# ============================================================================
+# Completions Command Completions
+# ============================================================================
 
+complete -c rusk -f -n '__rusk_is_completions_command; and not __rusk_has_install_or_show' -a 'install' -d 'Install completions for a shell'
+complete -c rusk -f -n '__rusk_is_completions_command; and not __rusk_has_install_or_show' -a 'show' -d 'Show completion script'
+complete -c rusk -f -n '__rusk_should_complete_shells' -a '(__rusk_get_available_shells)'

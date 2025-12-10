@@ -569,22 +569,115 @@ def complete-list-restore [cur: string] {
   []
 }
 
+# Get available shells, excluding already selected ones
+def get-available-shells [spans: list<string>] {
+  let all_shells = (get-shells | get value)
+  mut selected_shells: list<string> = []
+  
+  # Find install or show in spans
+  mut install_show_index = -1
+  for $i in 0..<($spans | length) {
+    if ($spans | get $i) == "install" or ($spans | get $i) == "show" {
+      $install_show_index = $i
+      break
+    }
+  }
+  
+  # If we found install/show, collect all shell arguments after it
+  if $install_show_index >= 0 {
+    for $i in (($install_show_index + 1)..<($spans | length)) {
+      let arg = ($spans | get $i)
+      # Check if it's a valid shell name
+      if ($all_shells | any {|shell| $shell == $arg}) {
+        $selected_shells = ($selected_shells | append [$arg])
+      }
+    }
+  }
+  
+  # Return shells that are not selected
+  $all_shells | where {|shell| not ($selected_shells | any {|selected| $selected == $shell})}
+}
+
+# Check if we have already selected at least one shell after install/show
+def has-selected-shell [spans: list<string>] {
+  let available_shells = (get-available-shells $spans)
+  let all_shells = (get-shells | get value)
+  # If available_shells is shorter than all_shells, at least one shell was selected
+  ($available_shells | length) < ($all_shells | length)
+}
+
+# Check if install or show is already in spans
+def has-install-or-show [spans: list<string>] {
+  ($spans | any {|s| $s == "install" or $s == "show"})
+}
+
 # Complete completions command
-def complete-completions [cur: string, prev: string, word_count: int, command: string] {
+def complete-completions [spans: list<string>, cur: string, prev: string, word_count: int, command: string] {
   let is_after_install_or_show = ($prev == "install" or $prev == "show")
+  let has_install_show = (has-install-or-show $spans)
   let cur_might_be_subcommand = ($cur != "") and (not ($cur | str starts-with "-")) and (
     ("install" | str starts-with $cur) or ("show" | str starts-with $cur)
   )
   let cur_might_be_shell = ($cur != "") and (not ($cur | str starts-with "-")) and (not $cur_might_be_subcommand) and ($cur != "install") and ($cur != "show")
+  let has_shell_selected = (has-selected-shell $spans)
   
-  # Show shells if after install/show
-  if $is_after_install_or_show or ($word_count >= 3 and $cur_might_be_shell and ($command == "completions" or $command == "c") and not $cur_might_be_subcommand) {
+  # Show shells if after install/show (allow multiple shells)
+  # Check if we're after install/show OR if we have install/show and word_count >= 3 (meaning we might be entering a shell)
+  if $is_after_install_or_show or ($has_install_show and $word_count >= 3 and ($command == "completions" or $command == "c") and not $cur_might_be_subcommand) {
+    # If shell is already selected, only show other shells (no flags, no install/show)
+    if $has_shell_selected {
+      if ($cur | str starts-with "-") {
+        # Don't suggest flags after shell is selected
+        return []
+      }
+      # Get available shells (excluding already selected) and filter by prefix
+      let available_shells = (get-available-shells $spans)
+      if ($available_shells | length) == 0 {
+        return []
+      }
+      let shell_completions = ($available_shells | each {|shell|
+        let shell_info = (get-shells | where {|s| $s.value == $shell} | first)
+        if ($shell_info != null) {
+          $shell_info
+        } else {
+          {value: $shell, description: $shell}
+        }
+      })
+      if ($cur == "") {
+        return $shell_completions
+      } else {
+        let matching = (filter-by-prefix $shell_completions $cur)
+        return $matching
+      }
+    }
+    
+    # Before shell is selected, show shells and flags
     if ($cur == "") {
-      return ((get-shells) | append (get-common-flags))
+      # Get available shells (excluding already selected)
+      let available_shells = (get-available-shells $spans)
+      let shell_completions = ($available_shells | each {|shell|
+        let shell_info = (get-shells | where {|s| $s.value == $shell} | first)
+        if ($shell_info != null) {
+          $shell_info
+        } else {
+          {value: $shell, description: $shell}
+        }
+      })
+      return ($shell_completions | append (get-common-flags))
     } else if ($cur | str starts-with "-") {
       return (complete-flags (get-common-flags) $cur)
     } else {
-      let matching = (filter-by-prefix (get-shells) $cur)
+      # Get available shells (excluding already selected) and filter by prefix
+      let available_shells = (get-available-shells $spans)
+      let shell_completions = ($available_shells | each {|shell|
+        let shell_info = (get-shells | where {|s| $s.value == $shell} | first)
+        if ($shell_info != null) {
+          $shell_info
+        } else {
+          {value: $shell, description: $shell}
+        }
+      })
+      let matching = (filter-by-prefix $shell_completions $cur)
       if ($matching | length) > 0 {
         return $matching
       } else {
@@ -593,8 +686,8 @@ def complete-completions [cur: string, prev: string, word_count: int, command: s
     }
   }
   
-  # Complete subcommands
-  if ($prev == "completions" or $prev == "c" or $command == "completions" or $command == "c") {
+  # Complete subcommands (only if install/show not already entered)
+  if (not $has_install_show) and ($prev == "completions" or $prev == "c" or $command == "completions" or $command == "c") {
     if ($cur == "") {
       return ((get-completions-subcommands) | append (get-common-flags))
     } else if ($cur | str starts-with "-") {
@@ -609,9 +702,11 @@ def complete-completions [cur: string, prev: string, word_count: int, command: s
     }
   }
   
-  # Complete flags
-  if ($cur == "") or ($cur | str starts-with "-") {
-    return (complete-flags (get-common-flags) $cur)
+  # Complete flags (only if not after install/show with shell selected)
+  if (not $has_install_show) or (not $has_shell_selected) {
+    if ($cur == "") or ($cur | str starts-with "-") {
+      return (complete-flags (get-common-flags) $cur)
+    }
   }
   
   []
@@ -744,7 +839,7 @@ export def rusk-completions-main [spans: list<string>] {
     }
     
     "completions" | "c" => {
-      complete-completions $ctx.cur $ctx.prev $ctx.word_count $ctx.command
+      complete-completions $spans $ctx.cur $ctx.prev $ctx.word_count $ctx.command
     }
     
     _ => {

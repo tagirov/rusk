@@ -66,7 +66,7 @@ enum Command {
     Restore,
     #[command(
         alias = "c",
-        about = "Install shell completions (alias: \x1b[1mc\x1b[0m). Example: rusk completions install bash"
+        about = "Install shell completions (alias: \x1b[1mc\x1b[0m). Example: rusk completions install bash, or rusk completions install fish nu"
     )]
     Completions {
         #[command(subcommand)]
@@ -76,11 +76,11 @@ enum Command {
 
 #[derive(Subcommand)]
 enum CompletionAction {
-    #[command(about = "Install completions for a shell")]
+    #[command(about = "Install completions for one or more shells")]
     Install {
-        #[arg(value_enum)]
-        shell: Shell,
-        #[arg(short, long, help = "Output file path (default: auto-detect based on shell)")]
+        #[arg(value_enum, required = true, num_args = 1..)]
+        shells: Vec<Shell>,
+        #[arg(short, long, help = "Output file path (default: auto-detect based on shell). Ignored when multiple shells are specified.")]
         output: Option<PathBuf>,
     },
     #[command(about = "Show completion script (for manual installation)")]
@@ -214,8 +214,8 @@ fn main() -> Result<()> {
         }
         Some(Command::Completions { action }) => {
             match action {
-                CompletionAction::Install { shell, output } => {
-                    handle_completions_install(shell, output)?;
+                CompletionAction::Install { shells, output } => {
+                    handle_completions_install(shells, output)?;
                 }
                 CompletionAction::Show { shell } => {
                     handle_completions_show(shell)?;
@@ -227,35 +227,73 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn handle_completions_install(shell: Shell, output: Option<PathBuf>) -> Result<()> {
-    let script = shell.get_script();
-    let path = match output {
-        Some(p) => p,
-        None => shell.get_default_path()?,
-    };
-
-    // Create parent directory if it doesn't exist
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+fn handle_completions_install(shells: Vec<Shell>, output: Option<PathBuf>) -> Result<()> {
+    if shells.is_empty() {
+        eprintln!("{}", "Error: At least one shell must be specified".red());
+        std::process::exit(1);
     }
 
-    // Write completion script
-    std::fs::write(&path, script)
-        .with_context(|| format!("Failed to write completion file: {}", path.display()))?;
+    // If multiple shells are specified, ignore custom output path
+    let use_custom_output = shells.len() == 1 && output.is_some();
+    let shells_count = shells.len();
+    let mut installed_paths = Vec::new();
 
-    println!(
-        "{} {} {}",
-        "✓".green(),
-        "Completion installed to:".green(),
-        path.display()
-    );
+    // Install all completions first
+    for shell in &shells {
+        let script = shell.get_script();
+        let path = if use_custom_output {
+            output.as_ref().unwrap().clone()
+        } else {
+            shell.get_default_path()?
+        };
 
-    // Print setup instructions
-    let instructions = shell.get_instructions(&path);
-    println!("\n{}", instructions.cyan());
+        // Create parent directory if it doesn't exist
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+        }
+
+        // Write completion script
+        std::fs::write(&path, script)
+            .with_context(|| format!("Failed to write completion file: {}", path.display()))?;
+
+        println!(
+            "{} {} {}",
+            "✓".green(),
+            format!("{} completion installed to:", shell_name(shell)).green(),
+            path.display()
+        );
+
+        installed_paths.push((shell, path));
+    }
+
+    // Print setup instructions for all installed shells
+    if shells_count > 1 {
+        println!(); // Add blank line before instructions
+    }
+    
+    for (idx, (shell, path)) in installed_paths.iter().enumerate() {
+        let instructions = shell.get_instructions(path);
+        if shells_count > 1 {
+            println!("{} {}:", "Setup instructions for".cyan(), shell_name(shell).cyan().bold());
+        }
+        println!("{}", instructions.cyan());
+        if idx < installed_paths.len() - 1 {
+            println!(); // Add blank line between instructions for different shells
+        }
+    }
 
     Ok(())
+}
+
+fn shell_name(shell: &Shell) -> String {
+    match shell {
+        Shell::Bash => "Bash",
+        Shell::Zsh => "Zsh",
+        Shell::Fish => "Fish",
+        Shell::Nu => "Nu Shell",
+        Shell::PowerShell => "PowerShell",
+    }.to_string()
 }
 
 fn handle_completions_show(shell: Shell) -> Result<()> {

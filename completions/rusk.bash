@@ -15,34 +15,115 @@
 #      System-wide (requires root):
 #      rusk completions show bash | sudo tee /etc/bash_completion.d/rusk > /dev/null
 #      System-wide completions are loaded automatically on bash startup
-#
 
-
-# Find rusk binary at script load time
+# Find rusk binary
 _rusk_cmd() {
     command -v rusk 2>/dev/null || echo "rusk"
 }
 
+# Get list of task IDs from rusk list output
 _rusk_get_task_ids() {
-    # Get list of task IDs from rusk list output
-    # Filter lines with • or ✔ to skip table headers
     local rusk_cmd=$(_rusk_cmd)
     "$rusk_cmd" list 2>/dev/null | grep -E '[•✔]' | grep -oE '^\s+[•✔]\s+[0-9]+\s+' | grep -oE '[0-9]+' | sort -n | tr '\n' ' '
 }
 
+# Get task text by ID
 _rusk_get_task_text() {
     local task_id="$1"
-    # Get task text by parsing rusk list output
-    # Format: "  •  3  2025-01-01  buy groceries" or "  •  1            hui"
-    # Filter lines with • or ✔ to skip table headers
     local rusk_cmd=$(_rusk_cmd)
     local task_line=$("$rusk_cmd" list 2>/dev/null | grep -E '[•✔]' | grep -E "^\s+[•✔]\s+$task_id\s+")
     if [ -n "$task_line" ]; then
-        # Extract text after ID and date
-        # Format: status (•/✔), ID, date (optional), text
-        # Use sed to remove leading whitespace, status, ID, and date
+        # Extract text after ID and date (remove status, ID, optional date)
         echo "$task_line" | sed -E 's/^\s+[•✔]\s+[0-9]+\s+([0-9]{2}-[0-9]{2}-[0-9]{4}\s+)?//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
     fi
+}
+
+# Get date options (today, tomorrow, week ahead, two weeks ahead)
+_rusk_get_date_options() {
+    local today=$(date +%d-%m-%Y 2>/dev/null)
+    local tomorrow=$(date -d '+1 day' +%d-%m-%Y 2>/dev/null || date -v+1d +%d-%m-%Y 2>/dev/null || date +%d-%m-%Y)
+    local week_ahead=$(date -d '+1 week' +%d-%m-%Y 2>/dev/null || date -v+1w +%d-%m-%Y 2>/dev/null || date +%d-%m-%Y)
+    local two_weeks_ahead=$(date -d '+2 weeks' +%d-%m-%Y 2>/dev/null || date -v+2w +%d-%m-%Y 2>/dev/null || date +%d-%m-%Y)
+    echo "$today $tomorrow $week_ahead $two_weeks_ahead"
+}
+
+# Get entered task IDs from command line
+_rusk_get_entered_ids() {
+    local entered_ids=""
+    local i
+    for ((i=2; i<COMP_CWORD; i++)); do
+        if [[ "${COMP_WORDS[i]}" =~ ^[0-9]+$ ]]; then
+            entered_ids="$entered_ids ${COMP_WORDS[i]}"
+        fi
+    done
+    echo "$entered_ids"
+}
+
+# Filter out already entered IDs from task ID list
+_rusk_filter_ids() {
+    local ids="$1"
+    local entered_ids="$2"
+    
+    if [ -z "$entered_ids" ]; then
+        echo "$ids"
+        return
+    fi
+    
+    local filtered_ids=""
+    for id in $ids; do
+        if [[ ! "$entered_ids" =~ (^|[[:space:]])"$id"([[:space:]]|$) ]]; then
+            filtered_ids="$filtered_ids $id"
+        fi
+    done
+    echo "$filtered_ids" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+# Count how many IDs have been entered
+_rusk_count_ids() {
+    local count=0
+    local i
+    for ((i=2; i<COMP_CWORD; i++)); do
+        if [[ "${COMP_WORDS[i]}" =~ ^[0-9]+$ ]]; then
+            ((count++))
+        fi
+    done
+    echo $count
+}
+
+# Complete task IDs with filtering
+_rusk_complete_task_ids() {
+    local ids=$(_rusk_get_task_ids)
+    if [ -z "$ids" ]; then
+        return 1
+    fi
+    
+    local entered_ids=$(_rusk_get_entered_ids)
+    local filtered_ids=$(_rusk_filter_ids "$ids" "$entered_ids")
+    
+    if [ -n "$filtered_ids" ]; then
+        COMPREPLY=($(compgen -W "$filtered_ids" -- "$cur"))
+        return 0
+    fi
+    return 1
+}
+
+# Complete date values
+_rusk_complete_date() {
+    local dates=$(_rusk_get_date_options)
+    COMPREPLY=($(compgen -W "$dates" -- "$cur"))
+    return 0
+}
+
+# Complete flags for add/edit commands
+_rusk_complete_add_edit_flags() {
+    COMPREPLY=($(compgen -W "--date -d --help -h" -- "$cur"))
+    return 0
+}
+
+# Complete flags for del command
+_rusk_complete_del_flags() {
+    COMPREPLY=($(compgen -W "--done --help -h" -- "$cur"))
+    return 0
 }
 
 _rusk_completion() {
@@ -66,167 +147,64 @@ _rusk_completion() {
         return 0
     fi
     
-    # Complete subcommands with aliases
+    # Complete subcommands
     case "$cmd" in
         add|a)
-            # Complete --date flag with date options
             if [[ "$prev" == "--date" ]] || [[ "$prev" == "-d" ]]; then
-                # Get all date options: today, tomorrow, week ahead, two weeks ahead
-                local today=$(date +%d-%m-%Y 2>/dev/null)
-                local tomorrow=$(date -d '+1 day' +%d-%m-%Y 2>/dev/null || date -v+1d +%d-%m-%Y 2>/dev/null || date +%d-%m-%Y)
-                local week_ahead=$(date -d '+1 week' +%d-%m-%Y 2>/dev/null || date -v+1w +%d-%m-%Y 2>/dev/null || date +%d-%m-%Y)
-                local two_weeks_ahead=$(date -d '+2 weeks' +%d-%m-%Y 2>/dev/null || date -v+2w +%d-%m-%Y 2>/dev/null || date +%d-%m-%Y)
-                COMPREPLY=($(compgen -W "$today $tomorrow $week_ahead $two_weeks_ahead" -- "$cur"))
-                return 0
+                _rusk_complete_date
+            elif [[ "$cur" == -* ]]; then
+                _rusk_complete_add_edit_flags
             fi
-            # Complete flags
-            if [[ "$cur" == -* ]]; then
-                COMPREPLY=($(compgen -W "--date -d --help -h" -- "$cur"))
-                return 0
-            fi
-            COMPREPLY=()
             ;;
             
         edit|e)
-            # If previous word is an ID and current is empty, suggest task text first
-            # This handles "rusk e 1 <tab>" case (with space after ID)
-            # But only if there's a single ID (not multiple IDs)
+            # Suggest task text if previous word is a single ID and current is empty
             if [[ "$prev" =~ ^[0-9]+$ ]] && [[ -z "$cur" ]]; then
-                # Count how many IDs have been entered
-                local id_count=0
-                local i
-                for ((i=2; i<COMP_CWORD; i++)); do
-                    if [[ "${COMP_WORDS[i]}" =~ ^[0-9]+$ ]]; then
-                        ((id_count++))
-                    fi
-                done
-                # Only suggest task text if there's exactly one ID
-                if [ $id_count -eq 1 ]; then
+                if [ $(_rusk_count_ids) -eq 1 ]; then
                     local task_text=$(_rusk_get_task_text "$prev")
                     if [ -n "$task_text" ]; then
-                        # Return task text as-is (bash will handle it)
-                        # Don't escape with printf '%q' as it makes the text unreadable
                         COMPREPLY=("$task_text")
                         return 0
                     fi
                 fi
             fi
             
-            # Complete task IDs (when at command or when typing ID)
-            # Only suggest IDs if we're at the command or typing a number
-            if [[ "$prev" == "edit" ]] || [[ "$prev" == "e" ]] || [[ "$cur" =~ ^[0-9]+$ ]]; then
-                local ids=$(_rusk_get_task_ids)
-                if [ -n "$ids" ]; then
-                    # Exclude already entered IDs from suggestions
-                    local entered_ids=""
-                    local i
-                    for ((i=2; i<COMP_CWORD; i++)); do
-                        if [[ "${COMP_WORDS[i]}" =~ ^[0-9]+$ ]]; then
-                            entered_ids="$entered_ids ${COMP_WORDS[i]}"
-                        fi
-                    done
-                    # Filter out entered IDs
-                    if [ -n "$entered_ids" ]; then
-                        local filtered_ids=""
-                        for id in $ids; do
-                            if [[ ! "$entered_ids" =~ (^|[[:space:]])"$id"([[:space:]]|$) ]]; then
-                                filtered_ids="$filtered_ids $id"
-                            fi
-                        done
-                        ids=$(echo "$filtered_ids" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-                    fi
-                    if [ -n "$ids" ]; then
-                        COMPREPLY=($(compgen -W "$ids" -- "$cur"))
-                        return 0
-                    fi
-                fi
-            fi
-            
-            # Complete --date flag with date options
+            # Complete date flag
             if [[ "$prev" == "--date" ]] || [[ "$prev" == "-d" ]]; then
-                # Get all date options: today, tomorrow, week ahead, two weeks ahead
-                local today=$(date +%d-%m-%Y 2>/dev/null)
-                local tomorrow=$(date -d '+1 day' +%d-%m-%Y 2>/dev/null || date -v+1d +%d-%m-%Y 2>/dev/null || date +%d-%m-%Y)
-                local week_ahead=$(date -d '+1 week' +%d-%m-%Y 2>/dev/null || date -v+1w +%d-%m-%Y 2>/dev/null || date +%d-%m-%Y)
-                local two_weeks_ahead=$(date -d '+2 weeks' +%d-%m-%Y 2>/dev/null || date -v+2w +%d-%m-%Y 2>/dev/null || date +%d-%m-%Y)
-                COMPREPLY=($(compgen -W "$today $tomorrow $week_ahead $two_weeks_ahead" -- "$cur"))
-                return 0
-            fi
-            
+                _rusk_complete_date
+            # Complete task IDs
+            elif [[ "$prev" == "edit" ]] || [[ "$prev" == "e" ]] || [[ "$cur" =~ ^[0-9]+$ ]]; then
+                _rusk_complete_task_ids && return 0
             # Complete flags
-            if [[ "$cur" == -* ]]; then
-                COMPREPLY=($(compgen -W "--date -d --help -h" -- "$cur"))
-                return 0
+            elif [[ "$cur" == -* ]]; then
+                _rusk_complete_add_edit_flags
             fi
-            
-            COMPREPLY=()
             ;;
             
         mark|m|del|d)
             # Complete task IDs
             if [[ "$cur" =~ ^[0-9]*$ ]] || [[ "$prev" == "$cmd" ]]; then
-                local ids=$(_rusk_get_task_ids)
-                if [ -n "$ids" ]; then
-                    # Exclude already entered IDs from suggestions
-                    # Get all words after the command
-                    local entered_ids=""
-                    local i
-                    for ((i=2; i<COMP_CWORD; i++)); do
-                        if [[ "${COMP_WORDS[i]}" =~ ^[0-9]+$ ]]; then
-                            entered_ids="$entered_ids ${COMP_WORDS[i]}"
-                        fi
-                    done
-                    # Filter out entered IDs
-                    if [ -n "$entered_ids" ]; then
-                        local filtered_ids=""
-                        for id in $ids; do
-                            if [[ ! "$entered_ids" =~ (^|[[:space:]])"$id"([[:space:]]|$) ]]; then
-                                filtered_ids="$filtered_ids $id"
-                            fi
-                        done
-                        ids=$(echo "$filtered_ids" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-                    fi
-                    if [ -n "$ids" ]; then
-                        COMPREPLY=($(compgen -W "$ids" -- "$cur"))
-                        return 0
-                    fi
-                fi
+                _rusk_complete_task_ids && return 0
             fi
             
-            # For del, complete --done flag
-            if [[ "$cmd" == "del" ]] || [[ "$cmd" == "d" ]]; then
-                if [[ "$cur" == -* ]]; then
-                    COMPREPLY=($(compgen -W "--done --help -h" -- "$cur"))
-                    return 0
-                fi
+            # For del, complete flags
+            if [[ ("$cmd" == "del" || "$cmd" == "d") && "$cur" == -* ]]; then
+                _rusk_complete_del_flags
             fi
-            
-            COMPREPLY=()
             ;;
             
         list|l|restore|r)
             # These commands don't take arguments
-            COMPREPLY=()
             ;;
             
         completions)
-            # Complete completions subcommands
             if [[ "$prev" == "completions" ]]; then
                 COMPREPLY=($(compgen -W "install show" -- "$cur"))
-                return 0
-            fi
-            if [[ "$prev" == "install" ]] || [[ "$prev" == "show" ]]; then
+            elif [[ "$prev" == "install" ]] || [[ "$prev" == "show" ]]; then
                 COMPREPLY=($(compgen -W "bash zsh fish nu powershell" -- "$cur"))
-                return 0
             fi
-            COMPREPLY=()
-            ;;
-            
-        *)
-            COMPREPLY=()
             ;;
     esac
 }
 
 complete -F _rusk_completion rusk
-

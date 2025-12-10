@@ -187,6 +187,8 @@ rusk r (restore)
 
 It provides autocomplete for commands, task IDs, and task text during editing by pressing `<tab>` button.
 
+> **Note**: Shell completions are currently in beta/testing stage. Completions are fully optimized and tested primarily for **Nu Shell**. Other shells (bash, zsh, fish, powershell) have basic completion support but may have limited functionality or edge cases.
+
 **Features:**
 - **Command completion**: Autocomplete commands (`add`, `edit`, `mark`, `del`, etc.) and their aliases
 - **Task ID completion**: Tab-complete task IDs for `edit`, `mark`, and `del` commands

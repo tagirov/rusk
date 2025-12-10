@@ -199,14 +199,18 @@ It provides autocomplete for commands, task IDs, and task text during editing by
 Use the built-in command to install completions automatically:
 
 ```bash
-# Install for your shell (auto-detects path)
+# Install for a single shell (auto-detects path)
 rusk completions install bash
 rusk completions install zsh
 rusk completions install fish
 rusk completions install nu
 rusk completions install powershell
 
-# Or specify custom path
+# Install for multiple shells at once
+rusk completions install bash zsh
+rusk completions install fish nu powershell
+
+# Or specify custom path (only works for single shell)
 rusk completions install bash --output ~/.bash_completion.d/rusk
 
 # Show completion script (for manual installation)

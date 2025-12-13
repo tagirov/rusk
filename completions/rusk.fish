@@ -12,6 +12,34 @@
 #      Completions will be automatically loaded by Fish shell
 
 # ============================================================================
+# Tab Completion Wrapper (removes backslash escaping for rusk edit)
+# ============================================================================
+
+# Custom Tab handler that removes backslash escaping for rusk edit command
+function __rusk_complete_and_unescape
+    # Get command line before completion
+    set -l cmd_before (commandline)
+    
+    # Perform standard completion
+    commandline -f complete
+    
+    # Get command line after completion
+    set -l cmd_after (commandline)
+    
+    # Check if command starts with "rusk e" or "rusk edit" and completion changed
+    if test "$cmd_before" != "$cmd_after"
+        if string match -qr '^rusk\s+(e|edit)\s+\d+\s+' -- "$cmd_after"
+            # Remove backslash escaping using string unescape
+            set -l unescaped (string unescape -- "$cmd_after")
+            commandline -r -- "$unescaped"
+        end
+    end
+end
+
+# Bind Tab to our custom function (only in rusk context, falls back to default otherwise)
+bind \t __rusk_complete_and_unescape
+
+# ============================================================================
 # Utility Functions
 # ============================================================================
 
@@ -89,14 +117,21 @@ function __rusk_get_task_text
     $rusk_cmd list 2>/dev/null | grep -E "^\s*[•✔]\s+$task_id\s+" | head -1 | sed -E 's/^[[:space:]]*[•✔][[:space:]]+[0-9]+[[:space:]]+[0-9-]*[[:space:]]*//'
 end
 
-# Quote text if it contains special characters
+# Quote text if it contains special characters requiring escaping (excluding spaces)
+# Spaces are handled by __rusk_complete_and_unescape which removes backslash escaping
 function __rusk_quote_text
     set -l text $argv[1]
-    if string match -qr '[ "\\$`]' -- "$text"
-        # Only escape double quotes to prevent breaking the string
-        set -l quoted_text (string replace -a '"' '\\"' "$text")
-        printf '"%s"\n' "$quoted_text"
+    # Check if text contains special characters that require escaping (excluding spaces)
+    # Special characters: | ; & > < ( ) [ ] { } $ " ' ` \ * ? ~ # @ ! % ^ = + - / : , .
+    # Note: - is placed at the end of character class to avoid range interpretation
+    if string match -qr '[|;&><()\[\]{}$"'"'"'`\\*?~#@!%^=+/:,.-]' -- "$text"
+        # Wrap in double quotes for special characters
+        # Escape any existing double quotes in the text
+        set -l escaped_text (string replace -a '"' '\\"' -- "$text")
+        printf '"%s"\n' "$escaped_text"
     else
+        # No special characters requiring escaping - return as-is
+        # Spaces will be unescaped by __rusk_complete_and_unescape
         printf '%s\n' "$text"
     end
 end
@@ -269,6 +304,8 @@ end
 function __rusk_should_complete_edit_flags
     __rusk_is_command edit e; or return 1
     __rusk_is_after_date_flag; and return 1
+    # Don't suggest flags if ID is already entered
+    __rusk_has_edit_id; and return 1
     set -l current_word (__rusk_get_current_word)
     __rusk_is_flag "$current_word"; or test -z "$current_word"
 end
@@ -343,9 +380,22 @@ function __rusk_should_complete_edit_id
         return 1
     end
     
-    # Don't complete ID if we're completing text (after an ID)
+    # Don't complete ID if there's text after an ID
     if test (count $cmdline) -ge 3
         set -l args $cmdline[3..-1]
+        set -l found_id false
+        for arg in $args
+            if __rusk_is_flag "$arg"
+                continue
+            end
+            if __rusk_is_number "$arg"
+                set found_id true
+            else if test "$found_id" = "true"
+                # Found text after ID - don't suggest more IDs
+                return 1
+            end
+        end
+        # If last arg is an ID, don't suggest more IDs (user is typing text next)
         if test (count $args) -ge 1
             set -l last_arg $args[-1]
             if __rusk_is_number "$last_arg"
@@ -487,6 +537,7 @@ complete -c rusk -f -n '__rusk_should_complete_date edit e' -a '(__rusk_get_two_
 complete -c rusk -f -n '__rusk_should_complete_edit_flags' -a '(__rusk_complete_edit_flags)'
 
 # Task text completion (before ID completion for priority)
+# Text is always wrapped in single quotes to prevent fish from escaping spaces with backslashes
 complete -c rusk -f \
     -n '__rusk_should_complete_edit_text' \
     -a '(__rusk_complete_edit_text)' \

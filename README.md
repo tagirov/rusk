@@ -23,13 +23,13 @@
   - [Aliases](#aliases)
 - [Configuration](#configuration)
   - [Shell Completion](#shell-completion)
-    - [Quick Install (Recommended)](#quick-install-recommended)
-    - [Manual Installation](#manual-installation)
-      - [Bash](#bash)
-      - [Zsh](#zsh)
-      - [Fish](#fish)
-      - [Nu Shell](#nu-shell)
-      - [PowerShell](#powershell)
+    - [Quick Install (Recommended)](completions/README.md#quick-install-recommended)
+    - [Manual Installation](completions/README.md#manual-installation)
+      - [Bash](completions/README.md#bash)
+      - [Zsh](completions/README.md#zsh)
+      - [Fish](completions/README.md#fish)
+      - [Nu Shell](completions/README.md#nu-shell)
+      - [PowerShell](completions/README.md#powershell)
   - [Database Location](#database-location)
 
 # Install
@@ -197,6 +197,12 @@ It provides autocomplete for commands, task IDs, and task text during editing by
 - **Flag completion**: Autocomplete `--date`, `--done`, etc.
 - **Date suggestions**: When using `--date<tab>` or `-d<tab>` flag, suggests default dates: Today, Tomorrow, One week ahead, Two weeks ahead
 
+**Windows Support:**
+- **Git Bash**: Works with `bash` completions (uses Unix-style paths)
+- **WSL**: Works with `bash`, `zsh`, `fish`, and `nu` completions
+- **Nu Shell**: Works natively on Windows (uses `%APPDATA%\nushell\completions\`)
+- **PowerShell**: Works natively on Windows (uses `Documents\PowerShell\rusk-completions.ps1`)
+- **CMD**: Basic commands work (add, list, mark, del, edit with text/date). Interactive editing (`rusk edit` without arguments) requires Windows 10+ and may have limited functionality. Tab completion is not supported. Colors work on Windows 10+ (build 1511 and later).
 
 ### Database Location
 

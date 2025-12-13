@@ -1,3 +1,7 @@
+<h1 align="center" id="rusk-completions">rusk completions</h1>
+
+<br />
+
 ## Quick Install (Recommended)
 
 Use the built-in command to install completions automatically:
@@ -20,13 +24,6 @@ rusk completions install bash --output ~/.bash_completion.d/rusk
 # Show completion script (for manual installation)
 rusk completions show zsh > ~/.zsh/completions/_rusk
 ```
-
-**Windows Support:**
-- **Git Bash**: Works with `bash` completions (uses Unix-style paths)
-- **WSL**: Works with `bash`, `zsh`, `fish`, and `nu` completions
-- **Nu Shell**: Works natively on Windows (uses `%APPDATA%\nushell\completions\`)
-- **PowerShell**: Works natively on Windows (uses `Documents\PowerShell\rusk-completions.ps1`)
-- **CMD**: Basic commands work (add, list, mark, del, edit with text/date). Interactive editing (`rusk edit` without arguments) requires Windows 10+ and may have limited functionality. Tab completion is not supported. Colors work on Windows 10+ (build 1511 and later).
 
 ## Manual Installation
 
@@ -118,4 +115,4 @@ rusk completions show powershell > ~/.config/powershell/rusk-completions.ps1
 Add-Content $PROFILE ". ~/.config/powershell/rusk-completions.ps1"
 ```
 
-<p align="right"><a href="#rusk">Back to top</a></p>
+<p align="right"><a href="#rusk-completions">Back to top</a></p>

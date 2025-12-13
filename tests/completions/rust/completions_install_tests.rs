@@ -524,8 +524,8 @@ fn test_cli_completions_install_multiple_shells() -> Result<()> {
     // Note: This test may fail if home directory structure doesn't exist,
     // but that's acceptable - the main thing is the command succeeds
     if let Some(home) = dirs::home_dir() {
-        let fish_path = home.join(".config").join("fish").join("completions").join("rusk.fish");
-        let nu_path = home.join(".config").join("nushell").join("completions").join("rusk.nu");
+        let _fish_path = home.join(".config").join("fish").join("completions").join("rusk.fish");
+        let _nu_path = home.join(".config").join("nushell").join("completions").join("rusk.nu");
         
         // Files may or may not exist depending on permissions, but command should succeed
         // We're mainly testing that the command accepts multiple shells

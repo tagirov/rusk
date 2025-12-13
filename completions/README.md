@@ -1,4 +1,4 @@
-<h1 align="center" id="rusk-completions">rusk completions</h1>
+<h1 align="center" id="rusk-completions">rusk Completions</h1>
 
 <br />
 

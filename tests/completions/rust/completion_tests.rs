@@ -1,5 +1,6 @@
 use rusk::{Task, TaskManager};
 
+#[path = "../../common/mod.rs"]
 mod common;
 use common::create_test_task;
 

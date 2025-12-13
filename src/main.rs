@@ -240,29 +240,29 @@ fn handle_completions_install(shells: Vec<Shell>, output: Option<PathBuf>) -> Re
 
     // Install all completions first
     for shell in &shells {
-        let script = shell.get_script();
+    let script = shell.get_script();
         let path = if use_custom_output {
             output.as_ref().unwrap().clone()
         } else {
             shell.get_default_path()?
-        };
+    };
 
-        // Create parent directory if it doesn't exist
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
-        }
+    // Create parent directory if it doesn't exist
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+    }
 
-        // Write completion script
-        std::fs::write(&path, script)
-            .with_context(|| format!("Failed to write completion file: {}", path.display()))?;
+    // Write completion script
+    std::fs::write(&path, script)
+        .with_context(|| format!("Failed to write completion file: {}", path.display()))?;
 
-        println!(
-            "{} {} {}",
-            "✓".green(),
+    println!(
+        "{} {} {}",
+        "✓".green(),
             format!("{} completion installed to:", shell_name(shell)).green(),
-            path.display()
-        );
+        path.display()
+    );
 
         installed_paths.push((shell, path));
     }

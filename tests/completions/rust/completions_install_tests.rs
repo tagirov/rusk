@@ -4,6 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
+#[path = "../../common/mod.rs"]
 mod common;
 
 // Helper function to test completion installation

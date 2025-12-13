@@ -40,11 +40,14 @@ function _rusk_get_task_ids {
     try {
         $output = & $rusk_cmd list 2>$null
         if ($output) {
-            $output | Where-Object { $_ -match '[•✔]' } | Select-String -Pattern '^\s+[•✔]\s+(\d+)\s+' | ForEach-Object {
-                if ($_.Matches.Success) {
-                    [int]$_.Matches.Groups[1].Value
+            $ids = @()
+            foreach ($line in $output) {
+                if ($line -match '[•✔]' -and $line -match '^\s+[•✔]\s+(\d+)\s+') {
+                    $id = [int]$matches[1]
+                    $ids += $id
                 }
-            } | Sort-Object | ForEach-Object { $_.ToString() }
+            }
+            $ids | Sort-Object | ForEach-Object { $_.ToString() }
         }
     } catch {
         return @()
@@ -58,11 +61,35 @@ function _rusk_get_task_text {
     try {
         $output = & $rusk_cmd list 2>$null
         if ($output) {
-            $line = $output | Where-Object { $_ -match '[•✔]' } | Select-String -Pattern "^\s+[•✔]\s+$taskId\s+"
-            if ($line) {
-                $parts = $line.Line -split '\s+', 4
-                if ($parts.Length -ge 4) {
-                    return $parts[3]
+            foreach ($line in $output) {
+                # Convert to string if needed
+                $lineStr = [string]$line
+                # Match lines with status symbol and our task ID
+                if ($lineStr -match "^\s+[•✔]\s+$taskId\s+") {
+                    # Remove leading whitespace
+                    $lineStr = $lineStr.TrimStart()
+                    # Remove status symbol (• or ✔) and following spaces
+                    $lineStr = $lineStr -replace '^[•✔]\s+', ''
+                    # Remove task ID and following spaces
+                    $lineStr = $lineStr -replace "^$taskId\s+", ''
+                    
+                    # Now line should contain: [date] text or just text
+                    # Check if it starts with a date (dd-mm-yyyy format)
+                    if ($lineStr -match '^(\d{2}-\d{2}-\d{4})\s+(.+)$') {
+                        # Has date, return text after date (only if text exists)
+                        $text = $matches[2].Trim()
+                        if ($text -and $text.Length -gt 0) {
+                            return $text
+                        }
+                        # Date exists but no text after it
+                        return $null
+                    } elseif ($lineStr -match '^(\d{2}-\d{2}-\d{4})\s*$') {
+                        # Only date, no text
+                        return $null
+                    } elseif ($lineStr -and $lineStr.Trim().Length -gt 0) {
+                        # No date, return remaining text
+                        return $lineStr.Trim()
+                    }
                 }
             }
         }
@@ -82,12 +109,25 @@ function _rusk_get_date_options {
 }
 
 # Get entered task IDs from tokens
+# Excludes the current word being completed (last token if wordToComplete is empty)
 function _rusk_get_entered_ids {
-    param($tokens)
+    param($tokens, $wordToComplete)
     $enteredIds = @()
-    for ($i = 2; $i -lt $tokens.Count; $i++) {
-        if ($tokens[$i].Value -match '^\d+$') {
-            $enteredIds += [int]$tokens[$i].Value
+    # Start from index 2 to skip "rusk" and command name
+    # Determine end index: exclude last token only if wordToComplete is empty AND last token is empty
+    $endIndex = $tokens.Count
+    if ([string]::IsNullOrEmpty($wordToComplete) -and $tokens.Count -gt 2) {
+        $lastTokenValue = $tokens[$tokens.Count - 1].Value
+        # Only exclude last token if it's empty (represents current word being completed)
+        if ([string]::IsNullOrEmpty($lastTokenValue)) {
+            $endIndex = $tokens.Count - 1
+        }
+    }
+    for ($i = 2; $i -lt $endIndex; $i++) {
+        $tokenValue = $tokens[$i].Value
+        # Only count non-empty tokens that are numeric IDs
+        if (-not [string]::IsNullOrEmpty($tokenValue) -and $tokenValue -match '^\d+$') {
+            $enteredIds += [int]$tokenValue
         }
     }
     return $enteredIds
@@ -102,29 +142,18 @@ function _rusk_filter_ids {
     return $ids | Where-Object { $enteredIds -notcontains [int]$_ }
 }
 
-# Check if previous token is a date flag
+# Check if previous token is a date flag (only check immediate previous token)
 function _rusk_is_after_date_flag {
     param($prev, $tokens, $commandAst)
+    # Only return true if the immediate previous token is a date flag
     if ($prev -eq '--date' -or $prev -eq '-d') {
         return $true
-    }
-    # Check all tokens for date flag
-    foreach ($token in $tokens) {
-        if ($token.Value -eq '--date' -or $token.Value -eq '-d') {
-            return $true
-        }
-    }
-    # Check command text
-    if ($commandAst) {
-        $commandText = $commandAst.Extent.Text
-        if ($commandText -match '\s-d\s' -or $commandText -match '\s--date\s' -or $commandText -match '\s-d$' -or $commandText -match '\s--date$') {
-            return $true
-        }
     }
     return $false
 }
 
 # Complete date values
+# NOTE: This function should ONLY be called when we're explicitly after a date flag
 function _rusk_complete_date {
     param($wordToComplete)
     $dates = _rusk_get_date_options
@@ -156,7 +185,7 @@ function _rusk_complete_task_ids {
         return @()
     }
     
-    $enteredIds = _rusk_get_entered_ids $tokens
+    $enteredIds = _rusk_get_entered_ids $tokens $wordToComplete
     $filteredIds = _rusk_filter_ids $ids $enteredIds
     
     if ([string]::IsNullOrEmpty($wordToComplete)) {
@@ -194,10 +223,17 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
     }
     if ($tokens.Count -gt 2) {
         if ([string]::IsNullOrEmpty($wordToComplete)) {
+            # When wordToComplete is empty, cursor is after the last token
+            # prev is the last token (which is the actual last argument)
             $prev = $tokens[$tokens.Count - 1].Value
         } else {
+            # When wordToComplete is not empty, we're typing the current word
+            # prev is the token before the current word
             $prev = $tokens[$tokens.Count - 2].Value
         }
+    } elseif ($tokens.Count -eq 2) {
+        # Only command and current word - prev is the command
+        $prev = $tokens[1].Value
     }
     
     # Complete commands (when only "rusk" is typed)
@@ -250,9 +286,46 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
         }
 
         { $_ -in 'edit', 'e' } {
+            # Get all entered IDs from tokens to check context (excluding current word)
+            $enteredIds = _rusk_get_entered_ids $tokens $wordToComplete
+            
+            # CRITICAL CHECK FIRST: If previous token is an ID and current word is empty,
+            # we MUST suggest task text ONLY, NOT dates or anything else
+            # This handles "rusk e 1 <tab>" case (with space after ID)
+            # This check MUST come FIRST, before ANY other logic, to prevent dates from being suggested
+            if ($prev -match '^\d+$' -and [string]::IsNullOrEmpty($cur)) {
+                # Only proceed if we have exactly one ID and it matches prev
+                if ($enteredIds.Count -eq 1 -and $prev -eq $enteredIds[0].ToString()) {
+                    $taskText = _rusk_get_task_text $prev
+                    if ($taskText -and -not [string]::IsNullOrWhiteSpace($taskText)) {
+                        # Return ONLY task text, nothing else - this prevents dates from being suggested
+                        # Use ListItemText and CompletionText explicitly to avoid path interpretation
+                        $completionResult = [System.Management.Automation.CompletionResult]::new(
+                            $taskText,           # completionText - what gets inserted
+                            $taskText,           # listItemText - what shows in list
+                            [System.Management.Automation.CompletionResultType]::ParameterValue,
+                            "Current task text"  # toolTip
+                        )
+                        return @($completionResult)
+                    }
+                    # If no task text found, return empty - do NOT suggest dates or anything else
+                    return @()
+                }
+                # If prev is an ID but condition above didn't match, still return empty to prevent dates
+                return @()
+            }
+            
+            # Check if we're immediately after a date flag - ONLY then suggest dates
+            # This check comes AFTER the ID check to ensure dates are never suggested after an ID
+            if ($prev -eq '--date' -or $prev -eq '-d') {
+                if ($wordToComplete -ne '-d' -and $wordToComplete -ne '--date') {
+                    return _rusk_complete_date $wordToComplete
+                }
+            }
+
             # Suggest task text if current word is a number (ID) and it's the first ID
+            # This handles "rusk e 1<tab>" case (without space after ID)
             if ($cur -match '^\d+$' -and ($prev -eq 'edit' -or $prev -eq 'e')) {
-                $enteredIds = _rusk_get_entered_ids $tokens
                 if ($enteredIds.Count -eq 0) {
                     $taskText = _rusk_get_task_text $cur
                     if ($taskText) {
@@ -261,27 +334,15 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
                 }
             }
 
-            # Suggest task text if previous word is a single ID and current is empty
-            if ($prev -match '^\d+$' -and [string]::IsNullOrEmpty($cur)) {
-                $enteredIds = _rusk_get_entered_ids $tokens
-                if ($enteredIds.Count -eq 1) {
-                    $taskText = _rusk_get_task_text $prev
-                    if ($taskText) {
-                        return @([System.Management.Automation.CompletionResult]::new($taskText, $taskText, [System.Management.Automation.CompletionResultType]::ParameterValue, "Current task text"))
+            # Complete task IDs (when at command or when typing ID)
+            # Only if we're NOT after a date flag and NOT after an ID
+            if ($prev -ne '--date' -and $prev -ne '-d' -and $enteredIds.Count -eq 0) {
+                if ($prev -in @('edit', 'e') -or $cur -match '^\d*$' -or [string]::IsNullOrEmpty($cur)) {
+                    $result = _rusk_complete_task_ids $tokens $wordToComplete
+                    if ($result) {
+                        return $result
                     }
                 }
-            }
-
-            # Complete date flag
-            if (_rusk_is_after_date_flag $prev $tokens $commandAst) {
-                if ($wordToComplete -ne '-d' -and $wordToComplete -ne '--date') {
-                    return _rusk_complete_date $wordToComplete
-                }
-            }
-
-            # Complete task IDs
-            if ($prev -in @('edit', 'e') -or $prev -match '^\d+$' -or $cur -match '^\d*$' -or [string]::IsNullOrEmpty($cur)) {
-                return _rusk_complete_task_ids $tokens $wordToComplete
             }
 
             # Complete flags

@@ -91,13 +91,13 @@ Each shell's test directory contains:
 
 Common test scenarios across all shells:
 
-1. **Command completion** - `rusk <tab>` should suggest available commands
-2. **Subcommand completion** - `rusk edit <tab>` should suggest task IDs
-3. **Task ID completion** - `rusk edit <tab>` should list available task IDs
-4. **Task text completion after ID** - `rusk edit 1 <tab>` should suggest task text (NOT dates)
-5. **Date completion after date flag** - `rusk add --date <tab>` should suggest dates
-6. **Flag completion** - `rusk edit 1 -<tab>` should suggest available flags
-7. **Multiple ID completion** - `rusk edit 1 2 <tab>` should handle multiple IDs correctly
+1. Command completion - `rusk <tab>` should suggest available commands
+2. Subcommand completion - `rusk edit <tab>` should suggest task IDs
+3. Task ID completion - `rusk edit <tab>` should list available task IDs
+4. Task text completion after ID - `rusk edit 1 <tab>` should suggest task text (NOT dates)
+5. Date completion after date flag - `rusk add --date <tab>` should suggest dates
+6. Flag completion - `rusk edit 1 -<tab>` should suggest available flags
+7. Multiple ID completion - `rusk edit 1 2 <tab>` should handle multiple IDs correctly
 
 ## Command Coverage
 
@@ -105,13 +105,13 @@ Common test scenarios across all shells:
 
 PowerShell tests provide complete coverage for all commands:
 
-- ✅ **add (a)** - Flag completion, date completion after `--date` flag
-- ✅ **edit (e)** - Task ID completion, task text after ID, flag completion, date after flag
-- ✅ **mark (m)** - Task ID completion, multiple IDs
-- ✅ **del (d)** - Task ID completion, flag completion (`--done`), multiple IDs
-- ✅ **list (l)** - No arguments (empty completion)
-- ✅ **restore (r)** - No arguments (empty completion)
-- ✅ **completions (c)** - Subcommand completion, shell completion
+- ✅ add (a) - Flag completion, date completion after `--date` flag
+- ✅ edit (e) - Task ID completion, task text after ID, flag completion, date after flag
+- ✅ mark (m) - Task ID completion, multiple IDs
+- ✅ del (d) - Task ID completion, flag completion (`--done`), multiple IDs
+- ✅ list (l) - No arguments (empty completion)
+- ✅ restore (r) - No arguments (empty completion)
+- ✅ completions (c) - Subcommand completion, shell completion
 
 All command aliases are tested: `a`, `e`, `m`, `d`, `l`, `r`, `c`
 
@@ -119,10 +119,10 @@ All command aliases are tested: `a`, `e`, `m`, `d`, `l`, `r`, `c`
 
 Comprehensive tests are now available for all shells:
 
-- **Bash**: 2 test files covering all commands and functionality
-- **Zsh**: 2 test files covering all commands and functionality  
-- **Fish**: 2 test files covering all commands and functionality
-- **Nu Shell**: 2 test files covering all commands and functionality
+- Bash: 2 test files covering all commands and functionality
+- Zsh: 2 test files covering all commands and functionality  
+- Fish: 2 test files covering all commands and functionality
+- Nu Shell: 2 test files covering all commands and functionality
 
 All shells have tests for:
 - Command completion

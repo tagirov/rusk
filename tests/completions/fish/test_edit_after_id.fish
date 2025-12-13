@@ -112,3 +112,4 @@ end
 
 get_test_summary
 exit $status
+

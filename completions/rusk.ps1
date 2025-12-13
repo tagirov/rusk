@@ -235,7 +235,7 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
         # Only command and current word - prev is the command
         $prev = $tokens[1].Value
     }
-    
+
     # Complete commands (when only "rusk" is typed)
     if ($tokens.Count -eq 1) {
         $commands = @('add', 'a', 'edit', 'e', 'mark', 'm', 'del', 'd', 'list', 'l', 'restore', 'r', 'completions')

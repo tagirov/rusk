@@ -63,3 +63,4 @@ fi
 
 get_test_summary
 exit $?
+

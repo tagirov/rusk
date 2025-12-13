@@ -87,3 +87,4 @@ if (assert_true true "Date flag detected, should return dates") {
 }
 
 get_test_summary $tests_passed $tests_failed
+

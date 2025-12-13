@@ -114,5 +114,5 @@ mkdir -p ~/.config/powershell
 rusk completions show powershell > ~/.config/powershell/rusk-completions.ps1
 Add-Content $PROFILE ". ~/.config/powershell/rusk-completions.ps1"
 ```
-
+<br />
 <p align="right"><a href="#rusk-completions">Back to top</a></p>

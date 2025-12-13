@@ -1,4 +1,5 @@
-# Shell Completion Tests
+<h1 align="center" id="shell-completions-tests">Shell Completion Tests</h1>
+<br />
 
 This directory contains tests for shell completion scripts. These tests are separate from the main application tests in `tests/` and focus specifically on validating completion behavior.
 
@@ -13,28 +14,34 @@ tests/completions/
 │   ├── completions_install_tests.rs  # Tests for completion installation
 │   └── nu_completion_tests.rs        # Nu Shell-specific completion tests
 ├── powershell/            # PowerShell completion tests
+│   ├── README.md          # PowerShell-specific test documentation
 │   ├── run_all.ps1        # PowerShell test runner
 │   ├── helpers.ps1        # Helper functions
 │   ├── test_basic_completion.ps1
+│   ├── test_all_commands.ps1
 │   └── test_edit_after_id.ps1
 ├── bash/                  # Bash completion tests
 │   ├── run_all.sh
 │   ├── helpers.sh
 │   ├── test_basic.sh
-│   └── test_all_commands.sh
+│   ├── test_all_commands.sh
+│   └── test_edit_after_id.sh
 ├── zsh/                   # Zsh completion tests
 │   ├── run_all.sh
 │   ├── helpers.zsh
 │   ├── test_basic.zsh
-│   └── test_all_commands.zsh
+│   ├── test_all_commands.zsh
+│   └── test_edit_after_id.zsh
 ├── fish/                  # Fish shell completion tests
 │   ├── run_all.fish
 │   ├── test_basic.fish
-│   └── test_all_commands.fish
+│   ├── test_all_commands.fish
+│   └── test_edit_after_id.fish
 └── nu/                    # Nu Shell completion tests
     ├── run_all.nu
     ├── test_basic.nu
-    └── test_all_commands.nu
+    ├── test_all_commands.nu
+    └── test_edit_after_id.nu
 ```
 
 **Note**: Rust tests are included via `tests/completions.rs` which references the files in `rust/` subdirectory.
@@ -84,7 +91,10 @@ nu tests/completions/nu/run_all.nu
 
 Each shell's test directory contains:
 - `run_all.{ext}` - Main test runner that executes all test files
-- `test_*.{ext}` - Individual test files for specific scenarios
+- `test_*.{ext}` - Individual test files for specific scenarios:
+  - `test_basic.{ext}` - Basic completion functionality tests
+  - `test_all_commands.{ext}` - Comprehensive tests for all commands
+  - `test_edit_after_id.{ext}` - Critical tests ensuring task text (not dates) after task ID
 - `helpers.{ext}` - Helper functions for tests (if applicable)
 
 ## Test Scenarios
@@ -101,43 +111,17 @@ Common test scenarios across all shells:
 
 ## Command Coverage
 
-### PowerShell Tests (Comprehensive)
 
-PowerShell tests provide complete coverage for all commands:
-
-- ✅ add (a) - Flag completion, date completion after `--date` flag
-- ✅ edit (e) - Task ID completion, task text after ID, flag completion, date after flag
-- ✅ mark (m) - Task ID completion, multiple IDs
-- ✅ del (d) - Task ID completion, flag completion (`--done`), multiple IDs
-- ✅ list (l) - No arguments (empty completion)
-- ✅ restore (r) - No arguments (empty completion)
-- ✅ completions (c) - Subcommand completion, shell completion
+- add (a) - Flag completion, date completion after `--date` flag
+- edit (e) - Task ID completion, task text after ID, flag completion, date after flag
+- mark (m) - Task ID completion, multiple IDs
+- del (d) - Task ID completion, flag completion (`--done`), multiple IDs
+- list (l) - No arguments (empty completion)
+- restore (r) - No arguments (empty completion)
+- completions (c) - Subcommand completion, shell completion
 
 All command aliases are tested: `a`, `e`, `m`, `d`, `l`, `r`, `c`
 
-### Other Shells
-
-Comprehensive tests are now available for all shells:
-
-- Bash: 2 test files covering all commands and functionality
-- Zsh: 2 test files covering all commands and functionality  
-- Fish: 2 test files covering all commands and functionality
-- Nu Shell: 2 test files covering all commands and functionality
-
-All shells have tests for:
-- Command completion
-- Subcommand completion
-- Task ID completion
-- Date completion
-- Flag completion
-- Function existence and syntax validation
-
-## PowerShell-Specific Tests
-
-PowerShell tests include more detailed scenarios:
-- **Critical test**: `rusk e 1 <tab>` must return ONLY task text, NO dates
-- Tests for edge cases with multiple IDs
-- Tests for date flag handling
 
 ## Adding New Tests
 
@@ -163,3 +147,9 @@ These tests can be integrated into CI/CD pipelines:
 - Completion tests require the completion scripts to be installed or available in the expected location
 - Some tests may require actual task data in the rusk database
 - Tests are designed to be run after building the project: `cargo build --release`
+- The `run_all.sh` script will automatically skip shells that are not installed on the system
+- Rust tests can be run independently: `cargo test --test completions`
+- Each shell's test runner can be executed individually for debugging specific shell issues
+
+<br />
+<p align="right"><a href="#shell-completion-tests">Back to top</a></p>

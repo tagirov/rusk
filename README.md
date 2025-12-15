@@ -142,7 +142,7 @@ rusk del 1,2,3
 rusk edit 1
 
 # Edit task text and date interactively
-rusk edit 1 -d
+rusk edit 1 --date
 
 # Interactive editing of tasks in sequence
 rusk edit 1,2,3

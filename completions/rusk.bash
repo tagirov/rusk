@@ -116,7 +116,8 @@ _rusk_complete_date() {
 
 # Complete flags for add/edit commands
 _rusk_complete_add_edit_flags() {
-    COMPREPLY=($(compgen -W "--date -d --help -h" -- "$cur"))
+    # Order: -d --date -h --help
+    COMPREPLY=($(compgen -W "-d --date -h --help" -- "$cur"))
     return 0
 }
 
@@ -124,6 +125,43 @@ _rusk_complete_add_edit_flags() {
 _rusk_complete_del_flags() {
     COMPREPLY=($(compgen -W "--done --help -h" -- "$cur"))
     return 0
+}
+
+# Get available shells for completions install/show, excluding already selected ones
+_rusk_get_available_shells() {
+    local all_shells=("bash" "zsh" "fish" "nu" "powershell")
+    local selected=()
+
+    # Find index of install/show in COMP_WORDS
+    local i install_idx=-1
+    for ((i=1; i<${#COMP_WORDS[@]}; i++)); do
+        if [[ "${COMP_WORDS[i]}" == "install" || "${COMP_WORDS[i]}" == "show" ]]; then
+            install_idx=$i
+            break
+        fi
+    done
+
+    # Collect already specified shells after install/show
+    if (( install_idx >= 0 )); then
+        for ((i=install_idx+1; i<${#COMP_WORDS[@]}; i++)); do
+            local w="${COMP_WORDS[i]}"
+            case " ${all_shells[*]} " in
+                *" $w "*)
+                    selected+=("$w")
+                    ;;
+            esac
+        done
+    fi
+
+    # Output shells that are not yet selected
+    local result=()
+    for sh in "${all_shells[@]}"; do
+        if [[ ! " ${selected[*]} " =~ (^|[[:space:]])"$sh"([[:space:]]|$) ]]; then
+            result+=("$sh")
+        fi
+    done
+
+    echo "${result[*]}"
 }
 
 _rusk_completion() {
@@ -152,7 +190,8 @@ _rusk_completion() {
         add|a)
             if [[ "$prev" == "--date" ]] || [[ "$prev" == "-d" ]]; then
                 _rusk_complete_date
-            elif [[ "$cur" == -* ]]; then
+            # For `rusk add <tab>` or when starting a flag, offer flags
+            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
                 _rusk_complete_add_edit_flags
             fi
             ;;
@@ -200,8 +239,12 @@ _rusk_completion() {
         completions)
             if [[ "$prev" == "completions" ]]; then
                 COMPREPLY=($(compgen -W "install show" -- "$cur"))
-            elif [[ "$prev" == "install" ]] || [[ "$prev" == "show" ]]; then
-                COMPREPLY=($(compgen -W "bash zsh fish nu powershell" -- "$cur"))
+            else
+                # After install/show, suggest only shells that haven't been used yet
+                local shells=$(_rusk_get_available_shells)
+                if [[ -n "$shells" ]]; then
+                    COMPREPLY=($(compgen -W "$shells" -- "$cur"))
+                fi
             fi
             ;;
     esac

@@ -133,8 +133,10 @@ _rusk() {
         add|a)
             if [[ "$prev" == "--date" ]] || [[ "$prev" == "-d" ]]; then
                 _rusk_complete_date
-            elif [[ "$cur" == -* ]]; then
-                compadd --date -d
+            # For `rusk add <tab>` or when starting a flag, offer flags
+            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+                # Offer flags: -d --date -h --help
+                compadd -- -d --date -h --help
             fi
             ;;
             
@@ -152,7 +154,8 @@ _rusk() {
                 fi
             # Complete flags
             elif [[ "$cur" == -* ]]; then
-                compadd --date -d
+                # Offer flags: -d --date -h --help
+                compadd -- -d --date -h --help
             # Complete task IDs
             else
                 _rusk_complete_task_ids
@@ -174,10 +177,52 @@ _rusk() {
             ;;
             
         completions)
+            # Third word: subcommands install/show
             if [ -n "$CURRENT" ] && [ "$CURRENT" -eq 3 ] 2>/dev/null; then
                 compadd install show
-            elif [ -n "$CURRENT" ] && [ "$CURRENT" -eq 4 ] 2>/dev/null; then
-                compadd bash zsh fish nu powershell
+            else
+                # After install/show: suggest shells that haven't been used yet
+                local -a all_shells=("bash" "zsh" "fish" "nu" "powershell")
+                local -a selected_shells=()
+
+                # Find index of install/show
+                local install_idx=-1
+                local i
+                for ((i=1; i<=${#words[@]}; i++)); do
+                    if [[ "${words[i]}" == "install" || "${words[i]}" == "show" ]]; then
+                        install_idx=$i
+                        break
+                    fi
+                done
+
+                if (( install_idx > 0 )); then
+                    for ((i=install_idx+1; i<=${#words[@]}; i++)); do
+                        local w="${words[i]}"
+                        for sh in "${all_shells[@]}"; do
+                            if [[ "$w" == "$sh" ]]; then
+                                selected_shells+=("$w")
+                            fi
+                        done
+                    done
+                fi
+
+                local -a remaining_shells=()
+                for sh in "${all_shells[@]}"; do
+                    local found=0
+                    for sel in "${selected_shells[@]}"; do
+                        if [[ "$sh" == "$sel" ]]; then
+                            found=1
+                            break
+                        fi
+                    done
+                    if (( ! found )); then
+                        remaining_shells+=("$sh")
+                    fi
+                done
+
+                if [ ${#remaining_shells[@]} -gt 0 ]; then
+                    compadd "${remaining_shells[@]}"
+                fi
             fi
             ;;
     esac

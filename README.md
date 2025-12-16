@@ -45,7 +45,7 @@ Make sure that these paths are added to your $PATH environment variable to use `
 
 #### Arch Linux (AUR)
 ```bash
-paru -S rusk
+yay -S rusk
 ```
 
 #### Manually

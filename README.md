@@ -221,10 +221,10 @@ export RUSK_DB="/path/to/your/project/"
 
 # Use different task lists for different projects
 cd ~/projects/website
-RUSK_DB="./tasks.json" rusk add Fix responsive layout
+RUSK_DB=. rusk add Fix responsive layout
 
 cd ~/projects/api
-RUSK_DB="./tasks.json" rusk add Add authentication endpoint
+RUSK_DB=. rusk add Add authentication endpoint
 
 # Each project has its own task list
 ```

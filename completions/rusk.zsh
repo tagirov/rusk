@@ -23,14 +23,46 @@ _rusk_cmd() {
 # Get list of task IDs from rusk list output
 _rusk_get_task_ids() {
     local rusk_cmd=$(_rusk_cmd)
-    "$rusk_cmd" list 2>/dev/null | grep -oE '^\s*[•✔]\s+[0-9]+' | grep -oE '[0-9]+' | sort -n
+    # Check if RUSK_DB is set in command line (use full command line buffer)
+    local rusk_db=""
+    local -a buffer_words
+    buffer_words=(${(z)LBUFFER})
+    for word in "${buffer_words[@]}"; do
+        if [[ "$word" =~ ^RUSK_DB=(.+)$ ]]; then
+            rusk_db="${match[1]}"
+            break
+        fi
+    done
+    
+    if [ -n "$rusk_db" ]; then
+        env RUSK_DB="$rusk_db" "$rusk_cmd" list 2>/dev/null | grep -oE '^\s*[•✔]\s+[0-9]+' | grep -oE '[0-9]+' | sort -n
+    else
+        "$rusk_cmd" list 2>/dev/null | grep -oE '^\s*[•✔]\s+[0-9]+' | grep -oE '[0-9]+' | sort -n
+    fi
 }
 
 # Get task text by ID
 _rusk_get_task_text() {
     local task_id="$1"
     local rusk_cmd=$(_rusk_cmd)
-    local task_line=$("$rusk_cmd" list 2>/dev/null | grep -E "^\s*[•✔]\s+$task_id\s+")
+    # Check if RUSK_DB is set in command line (use full command line buffer)
+    local rusk_db=""
+    local -a buffer_words
+    buffer_words=(${(z)LBUFFER})
+    for word in "${buffer_words[@]}"; do
+        if [[ "$word" =~ ^RUSK_DB=(.+)$ ]]; then
+            rusk_db="${match[1]}"
+            break
+        fi
+    done
+    
+    local task_line
+    if [ -n "$rusk_db" ]; then
+        task_line=$(env RUSK_DB="$rusk_db" "$rusk_cmd" list 2>/dev/null | grep -E "^\s*[•✔]\s+$task_id\s+")
+    else
+        task_line=$("$rusk_cmd" list 2>/dev/null | grep -E "^\s*[•✔]\s+$task_id\s+")
+    fi
+    
     if [ -n "$task_line" ]; then
         echo "$task_line" | sed -E 's/^[[:space:]]*[•✔][[:space:]]+[0-9]+[[:space:]]+[0-9-]*[[:space:]]*//'
     fi
@@ -49,7 +81,17 @@ _rusk_get_date_options() {
 _rusk_get_entered_ids() {
     local -a entered_ids
     local i
-    for ((i=2; i<${#words[@]}; i++)); do
+    # Find rusk command index
+    local rusk_idx=-1
+    for ((i=1; i<=${#words[@]}; i++)); do
+        if [[ "${words[i]}" == "rusk" ]]; then
+            rusk_idx=$i
+            break
+        fi
+    done
+    # Start from word after command (rusk_idx + 2: skip "rusk" and command like "edit")
+    local start_idx=$((rusk_idx + 2))
+    for ((i=start_idx; i<${#words[@]}; i++)); do
         if [[ "${words[i]}" =~ ^[0-9]+$ ]]; then
             entered_ids+=("${words[i]}")
         fi
@@ -87,7 +129,17 @@ _rusk_filter_ids() {
 _rusk_count_ids() {
     local count=0
     local i
-    for ((i=2; i<${#words[@]}; i++)); do
+    # Find rusk command index
+    local rusk_idx=-1
+    for ((i=1; i<=${#words[@]}; i++)); do
+        if [[ "${words[i]}" == "rusk" ]]; then
+            rusk_idx=$i
+            break
+        fi
+    done
+    # Start from word after command (rusk_idx + 2: skip "rusk" and command like "edit")
+    local start_idx=$((rusk_idx + 2))
+    for ((i=start_idx; i<${#words[@]}; i++)); do
         if [[ "${words[i]}" =~ ^[0-9]+$ ]]; then
             ((count++))
         fi
@@ -112,13 +164,28 @@ _rusk_complete_date() {
 }
 
 _rusk() {
-    # Complete commands
-    if [ -z "$CURRENT" ] || [ "$CURRENT" -eq 2 ] 2>/dev/null; then
+    # Find rusk command index
+    local rusk_idx=-1
+    local i
+    for ((i=1; i<=${#words[@]}; i++)); do
+        if [[ "${words[i]}" == "rusk" ]]; then
+            rusk_idx=$i
+            break
+        fi
+    done
+    
+    # Complete commands (if we're right after rusk command)
+    if [ $rusk_idx -ge 0 ] && [ -n "$CURRENT" ] && [ "$CURRENT" -eq $((rusk_idx + 1)) ] 2>/dev/null; then
         compadd add edit mark del list restore completions a e m d l r
         return
     fi
     
-    local cmd="$words[2]"
+    # Get command (word after rusk)
+    local cmd=""
+    if [ $rusk_idx -ge 0 ] && [ $((rusk_idx + 1)) -le ${#words[@]} ]; then
+        cmd="$words[$((rusk_idx + 1))]"
+    fi
+    
     local prev=""
     local cur=""
     

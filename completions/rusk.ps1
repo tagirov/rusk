@@ -38,7 +38,12 @@ function _rusk_get_cmd {
 function _rusk_get_task_ids {
     $rusk_cmd = _rusk_get_cmd
     try {
-        $output = & $rusk_cmd list 2>$null
+        # Check if RUSK_DB is set in environment
+        if ($env:RUSK_DB) {
+            $output = & $rusk_cmd list 2>$null
+        } else {
+            $output = & $rusk_cmd list 2>$null
+        }
         if ($output) {
             $ids = @()
             foreach ($line in $output) {
@@ -59,7 +64,12 @@ function _rusk_get_task_text {
     param([string]$taskId)
     $rusk_cmd = _rusk_get_cmd
     try {
-        $output = & $rusk_cmd list 2>$null
+        # Check if RUSK_DB is set in environment
+        if ($env:RUSK_DB) {
+            $output = & $rusk_cmd list 2>$null
+        } else {
+            $output = & $rusk_cmd list 2>$null
+        }
         if ($output) {
             foreach ($line in $output) {
                 # Convert to string if needed

@@ -24,14 +24,36 @@ _rusk_cmd() {
 # Get list of task IDs from rusk list output
 _rusk_get_task_ids() {
     local rusk_cmd=$(_rusk_cmd)
-    "$rusk_cmd" list 2>/dev/null | grep -E '[•✔]' | grep -oE '^\s+[•✔]\s+[0-9]+\s+' | grep -oE '[0-9]+' | sort -n | tr '\n' ' '
+    # Check if RUSK_DB is set in command line (use full command line)
+    local rusk_db=""
+    if [[ "$COMP_LINE" =~ RUSK_DB=([^\ ]+) ]]; then
+        rusk_db="${BASH_REMATCH[1]}"
+    fi
+    
+    if [ -n "$rusk_db" ]; then
+        ( export RUSK_DB="$rusk_db"; "$rusk_cmd" list 2>/dev/null ) | grep -E '[•✔]' | grep -oE '^\s+[•✔]\s+[0-9]+\s+' | grep -oE '[0-9]+' | sort -n | tr '\n' ' '
+    else
+        "$rusk_cmd" list 2>/dev/null | grep -E '[•✔]' | grep -oE '^\s+[•✔]\s+[0-9]+\s+' | grep -oE '[0-9]+' | sort -n | tr '\n' ' '
+    fi
 }
 
 # Get task text by ID
 _rusk_get_task_text() {
     local task_id="$1"
     local rusk_cmd=$(_rusk_cmd)
-    local task_line=$("$rusk_cmd" list 2>/dev/null | grep -E '[•✔]' | grep -E "^\s+[•✔]\s+$task_id\s+")
+    # Check if RUSK_DB is set in command line (use full command line)
+    local rusk_db=""
+    if [[ "$COMP_LINE" =~ RUSK_DB=([^\ ]+) ]]; then
+        rusk_db="${BASH_REMATCH[1]}"
+    fi
+    
+    local task_line
+    if [ -n "$rusk_db" ]; then
+        task_line=$( ( export RUSK_DB="$rusk_db"; "$rusk_cmd" list 2>/dev/null ) | grep -E '[•✔]' | grep -E "^\s+[•✔]\s+$task_id\s+")
+    else
+        task_line=$("$rusk_cmd" list 2>/dev/null | grep -E '[•✔]' | grep -E "^\s+[•✔]\s+$task_id\s+")
+    fi
+    
     if [ -n "$task_line" ]; then
         # Extract text after ID and date (remove status, ID, optional date)
         echo "$task_line" | sed -E 's/^\s+[•✔]\s+[0-9]+\s+([0-9]{2}-[0-9]{2}-[0-9]{4}\s+)?//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
@@ -51,7 +73,17 @@ _rusk_get_date_options() {
 _rusk_get_entered_ids() {
     local entered_ids=""
     local i
-    for ((i=2; i<COMP_CWORD; i++)); do
+    # Find rusk command index
+    local rusk_idx=-1
+    for ((i=0; i<${#COMP_WORDS[@]}; i++)); do
+        if [[ "${COMP_WORDS[i]}" == "rusk" ]]; then
+            rusk_idx=$i
+            break
+        fi
+    done
+    # Start from word after command (rusk_idx + 2: skip "rusk" and command like "edit")
+    local start_idx=$((rusk_idx + 2))
+    for ((i=start_idx; i<COMP_CWORD; i++)); do
         if [[ "${COMP_WORDS[i]}" =~ ^[0-9]+$ ]]; then
             entered_ids="$entered_ids ${COMP_WORDS[i]}"
         fi
@@ -82,7 +114,17 @@ _rusk_filter_ids() {
 _rusk_count_ids() {
     local count=0
     local i
-    for ((i=2; i<COMP_CWORD; i++)); do
+    # Find rusk command index
+    local rusk_idx=-1
+    for ((i=0; i<${#COMP_WORDS[@]}; i++)); do
+        if [[ "${COMP_WORDS[i]}" == "rusk" ]]; then
+            rusk_idx=$i
+            break
+        fi
+    done
+    # Start from word after command (rusk_idx + 2: skip "rusk" and command like "edit")
+    local start_idx=$((rusk_idx + 2))
+    for ((i=start_idx; i<COMP_CWORD; i++)); do
         if [[ "${COMP_WORDS[i]}" =~ ^[0-9]+$ ]]; then
             ((count++))
         fi
@@ -174,13 +216,23 @@ _rusk_completion() {
         prev="${COMP_WORDS[COMP_CWORD-1]}"
     fi
     
-    # Get command (second word) if available
-    if [ ${#COMP_WORDS[@]} -gt 1 ]; then
-        cmd="${COMP_WORDS[1]}"
+    # Find rusk command in COMP_WORDS (skip environment variables like RUSK_DB=./)
+    local rusk_idx=-1
+    local i
+    for ((i=0; i<${#COMP_WORDS[@]}; i++)); do
+        if [[ "${COMP_WORDS[i]}" == "rusk" ]]; then
+            rusk_idx=$i
+            break
+        fi
+    done
+    
+    # Get command (word after rusk) if available
+    if [ $rusk_idx -ge 0 ] && [ $((rusk_idx + 1)) -lt ${#COMP_WORDS[@]} ]; then
+        cmd="${COMP_WORDS[$((rusk_idx + 1))]}"
     fi
     
-    # Complete commands
-    if [ $COMP_CWORD -eq 1 ]; then
+    # Complete commands (if we're right after rusk command)
+    if [ $rusk_idx -ge 0 ] && [ $COMP_CWORD -eq $((rusk_idx + 1)) ]; then
         COMPREPLY=($(compgen -W "add edit mark del list restore completions a e m d l r" -- "$cur"))
         return 0
     fi

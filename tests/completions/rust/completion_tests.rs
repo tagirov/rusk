@@ -1,3 +1,4 @@
+use chrono::Datelike;
 use rusk::{Task, TaskManager};
 
 #[path = "../../common/mod.rs"]
@@ -21,12 +22,17 @@ fn capture_list_output(tasks: &[Task]) -> String {
             let status = if task.done { "✔" } else { "•" };
             let date_str = task
                 .date
-                .map(|d| d.format("%d-%m-%Y").to_string())
+                .map(|d| {
+                    let day = d.day();
+                    let month = d.format("%b").to_string().to_lowercase();
+                    let year = d.format("%y").to_string();
+                    format!("{}-{}-{}", day, month, year)
+                })
                 .unwrap_or_default();
             
             writeln!(
                 stdout,
-                "  {} {:>3} {:^10} {}",
+                "  {} {:>3} {:>10} {}",
                 status,
                 task.id,
                 date_str,
@@ -147,9 +153,9 @@ fn extract_task_text_from_output(output: &str, task_id: u8) -> Option<String> {
                 // But we need to handle missing dates
                 
                 if parts.len() > id_pos + 1 {
-                    // Check if next field is a date (DD-MM-YYYY format)
+                    // Check if next field is a date (D-mon-YY format, e.g., "1-jan-25")
                     let next_after_id = parts.get(id_pos + 1)?;
-                    let text_start = if next_after_id.contains('-') && next_after_id.len() == 10 {
+                    let text_start = if next_after_id.contains('-') && next_after_id.matches('-').count() == 2 {
                         // It's a date, text starts after it (field 4 in AWK: 1=status, 2=ID, 3=date, 4+=text)
                         id_pos + 2
                     } else {
@@ -326,8 +332,8 @@ fn test_completion_output_format_consistency() {
     // Should contain task ID
     assert!(output.contains("1"));
     
-    // Should contain date
-    assert!(output.contains("01-01-2025"));
+    // Should contain date (new format: 1-jan-25)
+    assert!(output.contains("1-jan-25"));
     
     // Should contain task text
     assert!(output.contains("Test task"));

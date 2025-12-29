@@ -110,11 +110,35 @@ def get-rusk-cmd [] {
   }
 }
 
+# Extract RUSK_DB from spans if present, or from environment
+def get-rusk-db-from-env [spans: list<string>] {
+  # First check spans for RUSK_DB=
+  for $span in $spans {
+    if ($span | str starts-with "RUSK_DB=") {
+      return ($span | str replace "RUSK_DB=" "")
+    }
+  }
+  # If not found in spans, check environment variable
+  try {
+    if ("RUSK_DB" in $env) {
+      return $env.RUSK_DB
+    }
+  }
+  null
+}
+
 # Extract task IDs from rusk list output
-def get-task-ids [] {
+def get-task-ids [spans: list<string>] {
   try {
     let rusk_cmd = (get-rusk-cmd)
-    let output = (do { ^$rusk_cmd list } | complete)
+    let rusk_db = (get-rusk-db-from-env $spans)
+    
+    let output = if ($rusk_db != null) {
+      with-env {RUSK_DB: $rusk_db} { ^$rusk_cmd list | complete }
+    } else {
+      ^$rusk_cmd list | complete
+    }
+    
     if ($output.exit_code == 0) {
       ($output.stdout
       | lines 
@@ -131,11 +155,18 @@ def get-task-ids [] {
 }
 
 # Get task text by ID
-def get-task-text [task_id: int] {
+def get-task-text [task_id: int, spans: list<string>] {
   try {
     let rusk_cmd = (get-rusk-cmd)
     let task_id_str = ($task_id | into string)
-    let output = (do { ^$rusk_cmd list } | complete)
+    let rusk_db = (get-rusk-db-from-env $spans)
+    
+    let output = if ($rusk_db != null) {
+      with-env {RUSK_DB: $rusk_db} { ^$rusk_cmd list | complete }
+    } else {
+      ^$rusk_cmd list | complete
+    }
+    
     if ($output.exit_code == 0) {
       ($output.stdout
       | lines 
@@ -183,7 +214,22 @@ def quote-if-needed [text: string] {
 # Get entered task IDs from spans (skip "rusk" and command)
 # Handles both space-separated and comma-separated IDs
 def get-entered-ids [spans: list<string>] {
-  let args = ($spans | skip 2 | where $it != "")
+  # Find rusk command index and skip past "rusk command"
+  let filtered_spans = ($spans | where $it != "")
+  
+  let rusk_idx = try {
+    ($filtered_spans | enumerate | where {|it| $it.item == "rusk"} | get 0.index)
+  } catch {
+    -1
+  }
+  
+  let args = if $rusk_idx >= 0 {
+    # Skip past "rusk" and command (2 elements after rusk_idx)
+    ($filtered_spans | skip ($rusk_idx + 2))
+  } else {
+    # Fallback to old behavior
+    ($filtered_spans | skip 2)
+  }
   
   ($args | reduce --fold [] {|arg, acc|
     if ($arg | str starts-with "-") {
@@ -212,7 +258,23 @@ def get-entered-ids [spans: list<string>] {
 
 # Check if task text has already been entered (after IDs and flags)
 def has-task-text [spans: list<string>] {
-  let args = ($spans | skip 2 | where $it != "")
+  # Find rusk command index and skip past "rusk command"
+  let filtered_spans = ($spans | where $it != "")
+  
+  let rusk_idx = try {
+    ($filtered_spans | enumerate | where {|it| $it.item == "rusk"} | get 0.index)
+  } catch {
+    -1
+  }
+  
+  let args = if $rusk_idx >= 0 {
+    # Skip past "rusk" and command (2 elements after rusk_idx)
+    ($filtered_spans | skip ($rusk_idx + 2))
+  } else {
+    # Fallback to old behavior
+    ($filtered_spans | skip 2)
+  }
+  
   if ($args | is-empty) {
     return false
   }
@@ -264,8 +326,8 @@ def get-date-options [] {
 }
 
 # Complete task IDs with descriptions
-def complete-task-ids [entered_ids: list<int>] {
-  let all_ids = (get-task-ids)
+def complete-task-ids [entered_ids: list<int>, spans: list<string>] {
+  let all_ids = (get-task-ids $spans)
   let filtered_ids = if ($entered_ids | is-empty) {
     $all_ids
   } else {
@@ -273,7 +335,7 @@ def complete-task-ids [entered_ids: list<int>] {
   }
   
   ($filtered_ids | reverse | each {|id| 
-    let task_text = (get-task-text $id)
+    let task_text = (get-task-text $id $spans)
     let id_str = ($id | into string)
     let description = if ($task_text != null) {
       let text_len = ($task_text | str length)
@@ -357,7 +419,7 @@ def extract-id [word: string] {
 }
 
 # Complete task IDs with comma handling
-def complete-task-ids-with-comma [entered_ids: list<int>, cur: string, prev: string] {
+def complete-task-ids-with-comma [entered_ids: list<int>, cur: string, prev: string, spans: list<string>] {
   let cur_ends_with_comma = (ends-with-comma $cur)
   let prev_ends_with_comma = (ends-with-comma $prev)
   let prev_id = (extract-id $prev)
@@ -365,7 +427,7 @@ def complete-task-ids-with-comma [entered_ids: list<int>, cur: string, prev: str
   
   if (($prev_ends_with_comma and (is-number $prev_id)) or ($cur_ends_with_comma and (is-number $cur_id))) {
     let prefix = if $cur_ends_with_comma { $cur } else { "" }
-    let completions = (complete-task-ids $entered_ids)
+    let completions = (complete-task-ids $entered_ids $spans)
     
     if ($prefix | str length) > 0 {
       ($completions | each {|item|
@@ -380,8 +442,8 @@ def complete-task-ids-with-comma [entered_ids: list<int>, cur: string, prev: str
 }
 
 # Get task text completion for edit command
-def get-task-text-completion [task_id: int] {
-  let task_text = (get-task-text $task_id)
+def get-task-text-completion [task_id: int, spans: list<string>] {
+  let task_text = (get-task-text $task_id $spans)
   if ($task_text != null) {
     let id_str = ($task_id | into string)
     let cyan_start = (char -u "001b") + "[36m"
@@ -444,7 +506,7 @@ def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_
   let cur_id = (extract-id $cur)
   
   # Case 1: Comma after ID - suggest next IDs
-  let comma_completions = (complete-task-ids-with-comma $entered_ids $cur $prev)
+  let comma_completions = (complete-task-ids-with-comma $entered_ids $cur $prev $spans)
   if ($comma_completions | length) > 0 {
     return $comma_completions
   }
@@ -453,13 +515,13 @@ def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_
   if ($cur == "") and (is-number $prev_id) and not $prev_ends_with_comma {
     if ($entered_ids | length) == 1 {
       let task_id = ($prev_id | into int)
-      return (get-task-text-completion $task_id)
+      return (get-task-text-completion $task_id $spans)
     }
   }
   
   # Case 3: Partial ID input
   if ($cur != "") and (is-number $cur) and ($prev == "edit" or $prev == "e") and not $has_trailing_space {
-    let all_ids = (get-task-ids)
+    let all_ids = (get-task-ids $spans)
     let matching_ids = ($all_ids | where {|id| 
       let id_str = ($id | into string)
       ($id_str | str starts-with $cur)
@@ -467,7 +529,7 @@ def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_
     
     if ($matching_ids | length) > 0 {
       return ($matching_ids | each {|id| 
-        let task_text = (get-task-text $id)
+        let task_text = (get-task-text $id $spans)
         let id_str = ($id | into string)
         let description = if ($task_text != null) {
           let text_len = ($task_text | str length)
@@ -486,7 +548,7 @@ def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_
       if ($entered_ids | length) == 0 {
         try {
           let current_id = ($cur | into int)
-          let task_text = (get-task-text $current_id)
+          let task_text = (get-task-text $current_id $spans)
           if ($task_text != null) {
             let id_str = ($current_id | into string)
             let quoted_text = (quote-if-needed $task_text)
@@ -499,9 +561,9 @@ def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_
   
   # Complete task IDs
   if ($cur == "") {
-    return (complete-task-ids $entered_ids)
+    return (complete-task-ids $entered_ids $spans)
   } else if ($cur != $command) and (not ($cur | str starts-with "-")) and (not (is-number $cur)) {
-    return (complete-task-ids $entered_ids)
+    return (complete-task-ids $entered_ids $spans)
   }
   
   # Complete flags
@@ -534,7 +596,7 @@ def complete-mark-del [spans: list<string>, cur: string, prev: string, command: 
   }
   
   if $should_suggest_ids {
-    let completions = (complete-task-ids $entered_ids)
+    let completions = (complete-task-ids $entered_ids $spans)
     
     if $cur_ends_with_comma {
       let prefix = $cur
@@ -731,25 +793,44 @@ def parse-spans [spans: list<string>] {
   
   let has_trailing_space = (($spans | last) == "")
   let filtered_spans = ($spans | where $it != "")
-  let word_count = ($filtered_spans | length)
-  let command = if $word_count > 1 {
-    try { ($filtered_spans | get 1) } catch { "" }
+  
+  # Find rusk command index (skip environment variables like RUSK_DB=./)
+  mut rusk_idx = -1
+  for $i in 0..<($filtered_spans | length) {
+    if ($filtered_spans | get $i) == "rusk" {
+      $rusk_idx = $i
+      break
+    }
+  }
+  
+  # Get spans after rusk command
+  let rusk_spans = if $rusk_idx >= 0 {
+    ($filtered_spans | skip ($rusk_idx + 1))
+  } else {
+    $filtered_spans
+  }
+  
+  let word_count = ($rusk_spans | length)
+  let command = if $word_count > 0 {
+    try { ($rusk_spans | get 0) } catch { "" }
   } else {
     ""
   }
   
   let prev = if $has_trailing_space and $word_count > 1 {
-    try { ($filtered_spans | last) } catch { "" }
+    try { ($rusk_spans | last) } catch { "" }
   } else if $word_count > 1 {
-    try { ($filtered_spans | get ($word_count - 2)) } catch { "" }
+    try { ($rusk_spans | get ($word_count - 2)) } catch { "" }
   } else {
     ""
   }
   
   let cur = if $has_trailing_space {
     ""
+  } else if $word_count > 0 {
+    try { ($rusk_spans | last) } catch { "" }
   } else {
-    try { ($filtered_spans | last) } catch { "" }
+    ""
   }
   
   {
@@ -757,8 +838,8 @@ def parse-spans [spans: list<string>] {
     filtered_spans: $filtered_spans
     word_count: $word_count
     command: $command
-    prev: $prev
-    cur: $cur
+    prev: ($prev | default "")
+    cur: ($cur | default "")
   }
 }
 
@@ -770,9 +851,10 @@ def complete-root [ctx: record] {
     return (complete-flags $all_flags $ctx.cur)
   }
   
-  # Complete commands when only "rusk" is typed
+  # Complete commands when only "rusk" is typed (or partial command without trailing space)
   # When cur is empty or equals "rusk", return all options
-  if $ctx.word_count <= 1 {
+  # But NOT if there's already a command and trailing space (word_count == 1 with trailing space means we're after the command)
+  if ($ctx.word_count == 0) or ($ctx.word_count == 1 and not $ctx.has_trailing_space) {
     let commands = (get-commands)
     let all_options = ($commands | each {|cmd| 
       [
@@ -809,15 +891,15 @@ def complete-root [ctx: record] {
 export def rusk-completions-main [spans: list<string>] {
   let ctx = (parse-spans $spans)
   
-  # Handle empty spans
-  if ($ctx.word_count == 0) {
-    return []
-  }
-  
   # Complete root-level commands
   let root_completions = (complete-root $ctx)
   if ($root_completions | length) > 0 {
     return $root_completions
+  }
+  
+  # Handle empty spans (no command yet)
+  if ($ctx.word_count == 0) {
+    return []
   }
   
   # Handle subcommands

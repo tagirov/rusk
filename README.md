@@ -238,4 +238,7 @@ In debug mode, the `RUSK_DB` environment variable is ignored, and the database p
 
 <br />
 
+<p align="center"><img src="rusky.png" alt="rusky the crab"></p>
+
+
 <p align="right"><a href="#rusk">Back to top</a></p>

@@ -1,5 +1,6 @@
 use crate::{Task, TaskManager, normalize_date_string};
 use anyhow::{Context, Result};
+use chrono::Datelike;
 use colored::*;
 use crossterm::{
     QueueableCommand,
@@ -16,7 +17,12 @@ pub struct HandlerCLI;
 impl HandlerCLI {
     /// Get the maximum line width for text wrapping
     /// Returns the minimum of 80 and terminal width, or 80 if terminal width cannot be determined
-    fn get_max_line_width() -> usize {
+    #[doc(hidden)]
+    pub fn get_max_line_width() -> usize {
+        Self::get_max_line_width_impl()
+    }
+
+    fn get_max_line_width_impl() -> usize {
         const DEFAULT_WIDTH: usize = 80;
         match size() {
             Ok((width, _)) => {
@@ -117,7 +123,12 @@ impl HandlerCLI {
     }
 
     /// Format date for display (returns "empty" if None)
-    fn format_date_for_display(date: Option<chrono::NaiveDate>) -> String {
+    #[doc(hidden)]
+    pub fn format_date_for_display(date: Option<chrono::NaiveDate>) -> String {
+        Self::format_date_for_display_impl(date)
+    }
+
+    fn format_date_for_display_impl(date: Option<chrono::NaiveDate>) -> String {
         date.map(|d| d.format("%d-%m-%Y").to_string())
             .unwrap_or_else(|| "empty".to_string())
     }
@@ -212,7 +223,7 @@ impl HandlerCLI {
 
         // initial render
         stdout.queue(Print(prompt))?;
-        let ghost_suffix = Self::calculate_ghost_suffix(ghost_active, cursor_index, &normalized_prefill);
+        let ghost_suffix = Self::calculate_ghost_suffix_impl(ghost_active, cursor_index, &normalized_prefill);
         Self::render_buffer(&mut stdout, &buffer, validate.as_ref(), ghost_suffix)?;
         Self::move_cursor_to(&mut stdout, prompt, &buffer, cursor_index)?;
         stdout.flush().ok();
@@ -260,10 +271,10 @@ impl HandlerCLI {
                             return Ok(buffer);
                         }
                         (KeyCode::Left, KeyModifiers::CONTROL) => {
-                            cursor_index = Self::jump_prev_word(&buffer, cursor_index);
+                            cursor_index = Self::jump_prev_word_impl(&buffer, cursor_index);
                         }
                         (KeyCode::Right, KeyModifiers::CONTROL) => {
-                            cursor_index = Self::jump_next_word(&buffer, cursor_index);
+                            cursor_index = Self::jump_next_word_impl(&buffer, cursor_index);
                         }
                         (KeyCode::Tab, _) | (KeyCode::Up, KeyModifiers::CONTROL) => {
                             if !normalized_prefill.is_empty() {
@@ -279,23 +290,23 @@ impl HandlerCLI {
                         }
                         (KeyCode::Char('w'), KeyModifiers::CONTROL) => {
                             if cursor_index > 0 {
-                                let new_index = Self::jump_prev_word(&buffer, cursor_index);
+                                let new_index = Self::jump_prev_word_impl(&buffer, cursor_index);
                                 buffer.drain(new_index..cursor_index);
                                 cursor_index = new_index;
                             }
                         }
                         (KeyCode::Backspace, KeyModifiers::CONTROL) => {
                             if cursor_index > 0 {
-                                let new_index = Self::jump_prev_word(&buffer, cursor_index);
+                                let new_index = Self::jump_prev_word_impl(&buffer, cursor_index);
                                 buffer.drain(new_index..cursor_index);
                                 cursor_index = new_index;
                             }
                         }
                         (KeyCode::Left, _) => {
-                            cursor_index = Self::prev_char_boundary(&buffer, cursor_index);
+                            cursor_index = Self::prev_char_boundary_impl(&buffer, cursor_index);
                         }
                         (KeyCode::Right, _) => {
-                            cursor_index = Self::next_char_boundary(&buffer, cursor_index);
+                            cursor_index = Self::next_char_boundary_impl(&buffer, cursor_index);
                         }
                         (KeyCode::Home, _) => {
                             cursor_index = 0;
@@ -305,7 +316,7 @@ impl HandlerCLI {
                         }
                         (KeyCode::Backspace, _) => {
                             if cursor_index > 0 {
-                                let prev = Self::prev_char_boundary(&buffer, cursor_index);
+                                let prev = Self::prev_char_boundary_impl(&buffer, cursor_index);
                                 buffer.drain(prev..cursor_index);
                                 cursor_index = prev;
                             } else if ghost_active {
@@ -314,7 +325,7 @@ impl HandlerCLI {
                         }
                         (KeyCode::Delete, _) => {
                             if cursor_index < buffer.len() {
-                                let next = Self::next_char_boundary(&buffer, cursor_index);
+                                let next = Self::next_char_boundary_impl(&buffer, cursor_index);
                                 buffer.drain(cursor_index..next);
                             }
                         }
@@ -325,7 +336,7 @@ impl HandlerCLI {
                                 cursor_index = 0;
                             }
                             buffer.insert(cursor_index, c);
-                            cursor_index = Self::next_char_boundary(&buffer, cursor_index);
+                            cursor_index = Self::next_char_boundary_impl(&buffer, cursor_index);
                         }
                         _ => {}
                     }
@@ -342,7 +353,7 @@ impl HandlerCLI {
                     stdout.queue(Print(" ".repeat(total_len)))?;
                     stdout.queue(Print("\r"))?;
                     stdout.queue(Print(prompt))?;
-                    let ghost_suffix = Self::calculate_ghost_suffix(ghost_active, cursor_index, &normalized_prefill);
+                    let ghost_suffix = Self::calculate_ghost_suffix_impl(ghost_active, cursor_index, &normalized_prefill);
                     Self::render_buffer(&mut stdout, &buffer, validate.as_ref(), ghost_suffix)?;
                     Self::move_cursor_to(&mut stdout, prompt, &buffer, cursor_index)?;
                     stdout.flush().ok();
@@ -362,7 +373,7 @@ impl HandlerCLI {
         // Use current row
         let (_x, y) = crossterm::cursor::position().unwrap_or((0, 0));
         // Count characters (not bytes) up to cursor_index
-        let char_count = Self::byte_idx_to_char_count(buffer, cursor_index);
+        let char_count = Self::byte_idx_to_char_count_impl(buffer, cursor_index);
         let x = (prompt.len() + char_count) as u16;
         stdout.queue(MoveTo(x, y))?;
         Ok(())
@@ -395,7 +406,12 @@ impl HandlerCLI {
     }
 
     /// Get the byte index of the previous character boundary, or 0 if at start
-    fn prev_char_boundary(s: &str, byte_idx: usize) -> usize {
+    #[doc(hidden)]
+    pub fn prev_char_boundary(s: &str, byte_idx: usize) -> usize {
+        Self::prev_char_boundary_impl(s, byte_idx)
+    }
+
+    fn prev_char_boundary_impl(s: &str, byte_idx: usize) -> usize {
         if byte_idx == 0 {
             return 0;
         }
@@ -422,7 +438,12 @@ impl HandlerCLI {
     }
 
     /// Get the byte index of the next character boundary, or s.len() if at end
-    fn next_char_boundary(s: &str, byte_idx: usize) -> usize {
+    #[doc(hidden)]
+    pub fn next_char_boundary(s: &str, byte_idx: usize) -> usize {
+        Self::next_char_boundary_impl(s, byte_idx)
+    }
+
+    fn next_char_boundary_impl(s: &str, byte_idx: usize) -> usize {
         let len = s.len();
         if byte_idx >= len {
             return len;
@@ -435,7 +456,16 @@ impl HandlerCLI {
     }
 
     /// Calculate ghost suffix for ghost prefill display
-    fn calculate_ghost_suffix(
+    #[doc(hidden)]
+    pub fn calculate_ghost_suffix(
+        ghost_active: bool,
+        cursor_index: usize,
+        normalized_prefill: &str,
+    ) -> Option<&str> {
+        Self::calculate_ghost_suffix_impl(ghost_active, cursor_index, normalized_prefill)
+    }
+
+    fn calculate_ghost_suffix_impl(
         ghost_active: bool,
         cursor_index: usize,
         normalized_prefill: &str,
@@ -452,7 +482,7 @@ impl HandlerCLI {
             {
                 cursor_index
             } else {
-                Self::next_char_boundary(
+                Self::next_char_boundary_impl(
                     normalized_prefill,
                     cursor_index.min(normalized_prefill.len()),
                 )
@@ -466,15 +496,30 @@ impl HandlerCLI {
     }
 
     /// Count characters up to byte index
-    fn byte_idx_to_char_count(s: &str, byte_idx: usize) -> usize {
+    #[doc(hidden)]
+    pub fn byte_idx_to_char_count(s: &str, byte_idx: usize) -> usize {
+        Self::byte_idx_to_char_count_impl(s, byte_idx)
+    }
+
+    fn byte_idx_to_char_count_impl(s: &str, byte_idx: usize) -> usize {
         s.char_indices().take_while(|(i, _)| *i < byte_idx).count()
     }
 
-    fn is_word_char(c: char) -> bool {
+    #[doc(hidden)]
+    pub fn is_word_char(c: char) -> bool {
+        Self::is_word_char_impl(c)
+    }
+
+    fn is_word_char_impl(c: char) -> bool {
         c.is_alphanumeric() || c == '_' || c == '-'
     }
 
-    fn jump_prev_word(buffer: &str, cursor: usize) -> usize {
+    #[doc(hidden)]
+    pub fn jump_prev_word(buffer: &str, cursor: usize) -> usize {
+        Self::jump_prev_word_impl(buffer, cursor)
+    }
+
+    fn jump_prev_word_impl(buffer: &str, cursor: usize) -> usize {
         if cursor == 0 {
             return 0;
         }
@@ -482,7 +527,7 @@ impl HandlerCLI {
         // First, ensure we're at a char boundary
         let mut pos = cursor;
         if !buffer.is_char_boundary(pos) {
-            pos = Self::prev_char_boundary(buffer, pos);
+            pos = Self::prev_char_boundary_impl(buffer, pos);
         }
 
         // Get all char indices before cursor
@@ -498,16 +543,16 @@ impl HandlerCLI {
         // Find word boundary going backwards
         let mut i = chars.len() - 1;
         // Skip word chars
-        while i > 0 && Self::is_word_char(chars[i].1) {
+        while i > 0 && Self::is_word_char_impl(chars[i].1) {
             i -= 1;
         }
         // Skip non-word chars
-        while i > 0 && !Self::is_word_char(chars[i].1) {
+        while i > 0 && !Self::is_word_char_impl(chars[i].1) {
             i -= 1;
         }
         // If we stopped on a word char, move to its start
-        if i < chars.len() && Self::is_word_char(chars[i].1) {
-            while i > 0 && Self::is_word_char(chars[i - 1].1) {
+        if i < chars.len() && Self::is_word_char_impl(chars[i].1) {
+            while i > 0 && Self::is_word_char_impl(chars[i - 1].1) {
                 i -= 1;
             }
             chars[i].0
@@ -521,7 +566,12 @@ impl HandlerCLI {
         }
     }
 
-    fn jump_next_word(buffer: &str, cursor: usize) -> usize {
+    #[doc(hidden)]
+    pub fn jump_next_word(buffer: &str, cursor: usize) -> usize {
+        Self::jump_next_word_impl(buffer, cursor)
+    }
+
+    fn jump_next_word_impl(buffer: &str, cursor: usize) -> usize {
         let len = buffer.len();
         if cursor >= len {
             return len;
@@ -530,7 +580,7 @@ impl HandlerCLI {
         // First, ensure we're at a char boundary
         let mut pos = cursor;
         if !buffer.is_char_boundary(pos) {
-            pos = Self::next_char_boundary(buffer, pos);
+            pos = Self::next_char_boundary_impl(buffer, pos);
         }
 
         // Get all char indices from cursor
@@ -546,11 +596,11 @@ impl HandlerCLI {
         // Find word boundary going forwards
         let mut i = 0;
         // Skip word chars
-        while i < chars.len() && Self::is_word_char(chars[i].1) {
+        while i < chars.len() && Self::is_word_char_impl(chars[i].1) {
             i += 1;
         }
         // Skip non-word chars
-        while i < chars.len() && !Self::is_word_char(chars[i].1) {
+        while i < chars.len() && !Self::is_word_char_impl(chars[i].1) {
             i += 1;
         }
 
@@ -841,8 +891,8 @@ impl HandlerCLI {
                     // Date was provided in command
                     if new_date != old_date {
                         // Date changed
-                        let old_date_str = Self::format_date_for_display(old_date);
-                        let new_date_str = Self::format_date_for_display(new_date);
+                        let old_date_str = Self::format_date_for_display_impl(old_date);
+                        let new_date_str = Self::format_date_for_display_impl(new_date);
                         if old_date_str == "empty" {
                             println!(
                                 " {} {} {} {} {} {}",
@@ -865,7 +915,7 @@ impl HandlerCLI {
                         }
                     } else {
                         // Date didn't change
-                        let date_str = Self::format_date_for_display(new_date);
+                        let date_str = Self::format_date_for_display_impl(new_date);
                         println!(" {} {}", "- date:".cyan(), date_str.bold());
                     }
                 }
@@ -888,7 +938,7 @@ impl HandlerCLI {
 
                 // Print date information if date was provided
                 if parsed_new_date.is_some() {
-                    let date_str = Self::format_date_for_display(current_date);
+                    let date_str = Self::format_date_for_display_impl(current_date);
                     println!(" {} {}", "- date:".cyan(), date_str.bold());
                 }
             }
@@ -905,7 +955,7 @@ impl HandlerCLI {
     /// If prompt fits on the same line, it's already printed and empty string is returned
     /// Text has 4 spaces left and right margin
     fn print_delete_confirmation_dialog(task_text: &str, task_id: u8) -> String {
-        let max_line_width = Self::get_max_line_width();
+        let max_line_width = Self::get_max_line_width_impl();
         const LEFT_MARGIN: usize = 4;
         const RIGHT_MARGIN: usize = 4;
         const PROMPT_RIGHT_MARGIN: usize = 4;
@@ -920,7 +970,7 @@ impl HandlerCLI {
             .saturating_sub(RIGHT_MARGIN);
         
         // Wrap task text
-        let wrapped_lines = Self::wrap_text_by_words(task_text, available_width_for_text);
+        let wrapped_lines = Self::wrap_text_by_words_impl(task_text, available_width_for_text);
         
         // Check if prompt fits on last line
         let empty_string = String::new();
@@ -1012,21 +1062,21 @@ impl HandlerCLI {
     /// Header is printed on first line, text starts on second line
     /// Text has 4 spaces left and right margin
     fn print_task_text_with_wrapping(prefix: &str, text: &str) {
-        let max_line_width = Self::get_max_line_width();
+        let max_line_width = Self::get_max_line_width_impl();
         const LEFT_MARGIN: usize = 4;
         const RIGHT_MARGIN: usize = 4;
         
         // Strip ANSI codes from text for width calculation
-        let text_plain = Self::strip_ansi_codes(text);
+        let text_plain = Self::strip_ansi_codes_impl(text);
         
         // Extract ANSI codes from the beginning of the original text (for formatting)
-        let (ansi_prefix, ansi_suffix) = Self::extract_ansi_codes(text);
+        let (ansi_prefix, ansi_suffix) = Self::extract_ansi_codes_impl(text);
         
         // Calculate available width for text (with left and right margins)
         let available_width = max_line_width.saturating_sub(LEFT_MARGIN).saturating_sub(RIGHT_MARGIN);
         
         // Wrap plain text (without ANSI codes) to get correct line breaks
-        let wrapped_lines_plain = Self::wrap_text_by_words(&text_plain, available_width);
+        let wrapped_lines_plain = Self::wrap_text_by_words_impl(&text_plain, available_width);
         
         // Print header on first line
         println!("{}", prefix);
@@ -1041,7 +1091,12 @@ impl HandlerCLI {
     /// Extract ANSI codes from the beginning and end of a string
     /// Returns (prefix_codes, suffix_codes) where prefix_codes are codes at the start
     /// and suffix_codes are reset codes at the end
-    fn extract_ansi_codes(s: &str) -> (String, String) {
+    #[doc(hidden)]
+    pub fn extract_ansi_codes(s: &str) -> (String, String) {
+        Self::extract_ansi_codes_impl(s)
+    }
+
+    fn extract_ansi_codes_impl(s: &str) -> (String, String) {
         let mut prefix = String::new();
         let mut suffix = String::new();
         let mut chars = s.chars().peekable();
@@ -1081,7 +1136,12 @@ impl HandlerCLI {
     }
     
     /// Strip ANSI color codes from a string to get plain text length
-    fn strip_ansi_codes(s: &str) -> String {
+    #[doc(hidden)]
+    pub fn strip_ansi_codes(s: &str) -> String {
+        Self::strip_ansi_codes_impl(s)
+    }
+
+    fn strip_ansi_codes_impl(s: &str) -> String {
         // Simple ANSI code stripper - removes escape sequences
         let mut result = String::new();
         let mut chars = s.chars().peekable();
@@ -1105,7 +1165,12 @@ impl HandlerCLI {
     }
 
     /// Wrap text by words to fit within a given width
-    fn wrap_text_by_words(text: &str, width: usize) -> Vec<String> {
+    #[doc(hidden)]
+    pub fn wrap_text_by_words(text: &str, width: usize) -> Vec<String> {
+        Self::wrap_text_by_words_impl(text, width)
+    }
+
+    fn wrap_text_by_words_impl(text: &str, width: usize) -> Vec<String> {
         if text.is_empty() {
             return vec![String::new()];
         }
@@ -1179,7 +1244,7 @@ impl HandlerCLI {
         println!("  ──────────────────────────────────────────────");
 
         // Maximum line width is terminal width (max 80 characters)
-        let max_line_width = Self::get_max_line_width();
+        let max_line_width = Self::get_max_line_width_impl();
         
         // Calculate prefix width: "  " (2) + status (1) + " " (1) + id (3) + " " (1) + date (10) + " " (1) = 19
         // The prefix is: "  " + status + " " + id + " " + date + " " = 19 characters
@@ -1196,7 +1261,12 @@ impl HandlerCLI {
 
             let date_str = task
                 .date
-                .map(|d| d.format("%d-%m-%Y").to_string())
+                .map(|d| {
+                    let day = d.day();
+                    let month = d.format("%b").to_string().to_lowercase();
+                    let year = d.format("%y").to_string();
+                    format!("{}-{}-{}", day, month, year)
+                })
                 .unwrap_or_default();
 
             let date_colored = if let Some(d) = task.date {
@@ -1210,12 +1280,12 @@ impl HandlerCLI {
             };
 
             // Wrap task text by words
-            let wrapped_lines = Self::wrap_text_by_words(&task.text, available_width);
+            let wrapped_lines = Self::wrap_text_by_words_impl(&task.text, available_width);
 
             // Print first line with status, id, and date
             if let Some(first_line) = wrapped_lines.first() {
                 println!(
-                    "  {} {:>3} {:^10} {}",
+                    "  {} {:>2}  {:>9}  {}",
                     status,
                     task.id.to_string().bold(),
                     date_colored,
@@ -1227,7 +1297,7 @@ impl HandlerCLI {
             for line in wrapped_lines.iter().skip(1) {
                 // Indent continuation lines to align with task text start
                 println!(
-                    "  {} {:>3} {:^10} {}",
+                    "  {} {:>3} {:>10} {}",
                     " ", // Empty status space
                     " ", // Empty id space
                     " ", // Empty date space

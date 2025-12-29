@@ -15,7 +15,7 @@
 # Tab Completion Wrapper (removes backslash escaping for rusk edit)
 # ============================================================================
 
-# Custom Tab handler that removes backslash escaping for rusk edit command
+# Custom Tab handler that removes backslash escaping and unnecessary quotes for rusk edit command
 function __rusk_complete_and_unescape
     # Get command line before completion
     set -l cmd_before (commandline)
@@ -26,11 +26,89 @@ function __rusk_complete_and_unescape
     # Get command line after completion
     set -l cmd_after (commandline)
     
-    # Check if command starts with "rusk e" or "rusk edit" and completion changed
+    # Check if command contains "rusk e" or "rusk edit" followed by ID and completion changed
+    # This pattern works with or without environment variables (e.g., "RUSK_DB=./ rusk e 7")
     if test "$cmd_before" != "$cmd_after"
-        if string match -qr '^rusk\s+(e|edit)\s+\d+\s+' -- "$cmd_after"
+        if string match -qr '\brusk\s+(e|edit)\s+\d+\s+' -- "$cmd_after"
             # Remove backslash escaping using string unescape
             set -l unescaped (string unescape -- "$cmd_after")
+            
+            # Remove unnecessary quotes that fish may have added when using environment variables
+            # Extract everything before the task text and the task text itself
+            # Pattern: everything up to and including "rusk e <id> " or "rusk edit <id> "
+            set -l match_result (string match -r '(.*\brusk\s+(e|edit)\s+\d+)\s+(.*)' -- "$unescaped")
+            if test (count $match_result) -ge 4
+                # match_result[1] is the full match
+                # match_result[2] is everything up to and including the ID
+                # match_result[3] is the command (e or edit) 
+                # match_result[4] is the text after the ID
+                set -l prefix "$match_result[2] "
+                set -l text_after_id $match_result[4]
+                set -l original_text $text_after_id
+                
+                # First, remove escaped quotes (\" becomes ")
+                set text_after_id (string replace -a '\\"' '"' -- "$text_after_id")
+                set text_after_id (string replace -a "\\'" "'" -- "$text_after_id")
+                
+                # Remove surrounding quotes if present (both single and double quotes)
+                # Check for double quotes first
+                if string match -qr '^".*"$' -- "$text_after_id"
+                    # Remove surrounding double quotes
+                    set text_after_id (string replace -r '^"(.*)"$' '$1' -- "$text_after_id")
+                else
+                    # Check for single quotes by checking first and last character
+                    set -l first_char (string sub -s 1 -l 1 -- "$text_after_id")
+                    set -l last_char (string sub -s -1 -l 1 -- "$text_after_id")
+                    if test "$first_char" = "'" -a "$last_char" = "'"
+                        # Remove surrounding single quotes
+                        set text_after_id (string sub -s 2 -e -2 -- "$text_after_id")
+                    end
+                end
+                
+                # Remove any trailing whitespace and extra characters that fish may have added
+                # This fixes issues where fish adds extra characters like "e" at the end
+                set text_after_id (string trim -- "$text_after_id")
+                
+                # Remove any trailing single characters that might be command aliases (e, a, m, d, etc.)
+                # Fish may add these when using environment variables
+                # Command aliases: e (edit), a (add), m (mark), d (del), l (list), r (restore), c (completions)
+                set -l command_aliases "e" "a" "m" "d" "l" "r" "c"
+                
+                # Only remove trailing command aliases if they are preceded by a space
+                # This prevents removing letters from words like "Editor" (r), "Code" (e), etc.
+                while test (string length -- "$text_after_id") -gt 1
+                    set -l last_char (string sub -s -1 -l 1 -- "$text_after_id")
+                    set -l second_last_char (string sub -s -2 -l 1 -- "$text_after_id")
+                    
+                    # Only consider it an alias if it's preceded by a space
+                    if test "$second_last_char" != " "
+                        # Not preceded by space, so it's part of a word - don't remove
+                        break
+                    end
+                    
+                    # Check if last char is a command alias
+                    set -l is_alias false
+                    for alias in $command_aliases
+                        if test "$last_char" = "$alias"
+                            set is_alias true
+                            break
+                        end
+                    end
+                    
+                    if test "$is_alias" = "true"
+                        # Remove the alias character and the space before it
+                        set text_after_id (string sub -s 1 -e -2 -- "$text_after_id" | string trim)
+                    else
+                        # Not an alias, stop removing
+                        break
+                    end
+                end
+                
+                # Simply reconstruct the command without adding extra escaping
+                # Fish will handle quoting as needed
+                set unescaped "$prefix$text_after_id"
+            end
+            
             commandline -r -- "$unescaped"
         end
     end
@@ -121,19 +199,9 @@ end
 # Spaces are handled by __rusk_complete_and_unescape which removes backslash escaping
 function __rusk_quote_text
     set -l text $argv[1]
-    # Check if text contains special characters that require escaping (excluding spaces)
-    # Special characters: | ; & > < ( ) [ ] { } $ " ' ` \ * ? ~ # @ ! % ^ = + - / : , .
-    # Note: - is placed at the end of character class to avoid range interpretation
-    if string match -qr '[|;&><()\[\]{}$"'"'"'`\\*?~#@!%^=+/:,.-]' -- "$text"
-        # Wrap in double quotes for special characters
-        # Escape any existing double quotes in the text
-        set -l escaped_text (string replace -a '"' '\\"' -- "$text")
-        printf '"%s"\n' "$escaped_text"
-    else
-        # No special characters requiring escaping - return as-is
-        # Spaces will be unescaped by __rusk_complete_and_unescape
-        printf '%s\n' "$text"
-    end
+    # When using environment variables, fish may add extra processing
+    # Return text as-is without adding quotes - let __rusk_complete_and_unescape handle cleanup
+    printf '%s\n' "$text"
 end
 
 # ============================================================================
@@ -321,14 +389,37 @@ function __rusk_complete_edit_text
         return
     end
     
-    # Check if we're after edit/e command
-    set -l cmd $cmdline[2]
+    # Find rusk command index (skip environment variables)
+    set -l rusk_idx -1
+    for i in (seq 1 (count $cmdline))
+        if test "$cmdline[$i]" = "rusk"
+            set rusk_idx $i
+            break
+        end
+    end
+    
+    if test $rusk_idx -lt 1
+        return
+    end
+    
+    # Get command after rusk (should be "edit" or "e")
+    set -l cmd_idx (math $rusk_idx + 1)
+    if test $cmd_idx -gt (count $cmdline)
+        return
+    end
+    
+    set -l cmd $cmdline[$cmd_idx]
     if test "$cmd" != "edit" -a "$cmd" != "e"
         return
     end
     
     # Get arguments after edit/e command
-    set -l args $cmdline[3..-1]
+    set -l args_start_idx (math $cmd_idx + 1)
+    if test $args_start_idx -gt (count $cmdline)
+        return
+    end
+    
+    set -l args $cmdline[$args_start_idx..-1]
     if test (count $args) -lt 1
         return
     end

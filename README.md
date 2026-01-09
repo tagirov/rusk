@@ -207,8 +207,8 @@ It provides autocomplete for commands, task IDs, and task text during editing by
 ### Database Location
 
 By default, rusk stores tasks to:
-- Linux/MacOS: `$HOME/.rusk/tasks.json`
-- Windows: `%USERPROFILE%\.rusk\tasks.json`
+- Linux/MacOS: `./.rusk/tasks.json`
+- Windows: `.\.rusk\tasks.json`
 
 You can customize the database location using the `RUSK_DB` environment variable:
 
@@ -221,12 +221,12 @@ export RUSK_DB="/path/to/your/project/"
 
 # Use different task lists for different projects
 cd ~/projects/website
-RUSK_DB=. rusk add Fix responsive layout
+rusk add Fix responsive layout
 
 cd ~/projects/api
-RUSK_DB=. rusk add Add authentication endpoint
+rusk add Add authentication endpoint
 
-# Each project has its own task list
+# Each project has its own task list because Rusk uses a relative default database path (`./.rusk`).
 ```
 
 **Debug Mode:**

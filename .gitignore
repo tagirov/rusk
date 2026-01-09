@@ -2,3 +2,4 @@ target/
 .rusk/
 .cursor/
 context
+.aur/

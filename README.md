@@ -226,7 +226,7 @@ rusk add Fix responsive layout
 cd ~/projects/api
 rusk add Add authentication endpoint
 
-# Each project has its own task list because Rusk uses a relative default database path (`./.rusk`).
+# Each project has its own task list because Rusk uses a relative default database path.
 ```
 
 **Debug Mode:**

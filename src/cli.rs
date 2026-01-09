@@ -143,7 +143,10 @@ impl HandlerCLI {
         let task = tm.tasks().last().unwrap();
         let prefix = if let Some(date) = task.date {
             let today = chrono::Local::now().date_naive();
-            let date_str = date.format("%d-%m-%Y").to_string();
+            let day = date.day();
+            let month = date.format("%b").to_string().to_lowercase();
+            let year = date.format("%y").to_string();
+            let date_str = format!("{}-{}-{}", day, month, year);
             let colored_date = if date < today {
                 date_str.red()
             } else {

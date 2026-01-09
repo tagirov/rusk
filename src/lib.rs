@@ -461,10 +461,7 @@ impl TaskManager {
                     path
                 }
             } else {
-                dirs::home_dir()
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join(".rusk")
-                    .join("tasks.json")
+                PathBuf::from(".rusk").join("tasks.json")
             }
         }
     }

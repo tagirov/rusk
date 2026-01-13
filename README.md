@@ -222,7 +222,7 @@ You can customize the database location using the `RUSK_DB` environment variable
 
 ```bash
 # Use a custom database file
-export RUSK_DB="/path/to/your/tasks.json"
+export RUSK_DB="/path/to/your/db.json"
 
 # Use a custom directory (tasks.json will be created inside)
 export RUSK_DB="/path/to/your/project/"

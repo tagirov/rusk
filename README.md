@@ -14,7 +14,7 @@
 <br />
 
 - [Install](#install)
-- [Basic Usage](#basic-usage)
+- [Usage](#usage)
   - [Working with Multiple Tasks](#working-with-multiple-tasks)
   - [Interactive Editing](#interactive-editing)
   - [Data Safety & Backup](#data-safety--backup)
@@ -70,7 +70,7 @@ copy .\target\release\rusk.exe "%USERPROFILE%\AppData\Local\Microsoft\WindowsApp
 
 
 
-# Basic Usage
+# Usage
 
 ```bash
 # Add a new task
@@ -194,7 +194,7 @@ It provides autocomplete for commands, task IDs, and task text during editing by
 - Command completion: Autocomplete commands (`add`, `edit`, `mark`, `del`, etc.) and their aliases
 - Task ID completion: Tab-complete task IDs for `edit`, `mark`, and `del` commands
 - Smart text completion: When typing `rusk edit 3 <tab>`, automatically suggests the current task text for easy editing. (`rusk edit 3<tab>` will complete the ID)
-- Flag completion: Autocomplete `--date`, `--done`, etc.
+- Flag completion: Autocomplete `--date`, `--done`, etc
 - Date suggestions: When using `--date<tab>` or `-d<tab>` flag, suggests default dates: Today, Tomorrow, One week ahead, Two weeks ahead
 
 **Windows Support:**
@@ -202,7 +202,7 @@ It provides autocomplete for commands, task IDs, and task text during editing by
 - WSL: Works with `bash`, `zsh`, `fish`, and `nu` completions
 - Nu Shell: Works natively on Windows (uses `%APPDATA%\nushell\completions\`)
 - PowerShell: Works natively on Windows (uses `Documents\PowerShell\rusk-completions.ps1`)
-- CMD: Basic commands work (add, list, mark, del, edit with text/date). Interactive editing (`rusk edit` without arguments) requires Windows 10+ and may have limited functionality. Tab completion is not supported. Colors work on Windows 10+ (build 1511 and later).
+- CMD: Basic commands work (add, list, mark, del, edit with text/date). Interactive editing (`rusk edit` without arguments) requires Windows 10+ and may have limited functionality. Tab completion is not supported. Colors work on Windows 10+ (build 1511 and later)
 
 ### Database Location
 
@@ -229,7 +229,7 @@ export RUSK_DB="/path/to/your/project/"
 ```
 
 **Debug Mode:**
-When running in debug mode (`cargo run` or debug builds), rusk uses a temporary database location to avoid affecting your production data:
+When running in debug mode (`cargo run` or debug builds), Rusk uses a temporary database location to avoid affecting your production data:
 - Linux/MacOS: `$TMPDIR/rusk_debug/tasks.json` (usually `/tmp/rusk_debug/tasks.json`)
 - Windows: `%TEMP%\rusk_debug\tasks.json` (usually `C:\Users\<user>\AppData\Local\Temp\rusk_debug\tasks.json`)
 

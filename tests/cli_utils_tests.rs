@@ -315,10 +315,33 @@ fn test_format_date_for_display_different_date() {
 
 #[test]
 fn test_get_max_line_width() {
-    // This test just verifies the function doesn't panic
-    // Actual width depends on terminal, but should return at least a reasonable value
     let result = HandlerCLI::get_max_line_width();
     assert!(result > 0);
-    assert!(result <= 80 || result > 80); // Either default 80 or terminal width
+    assert!(result <= 80);
+}
+
+#[test]
+fn test_normalize_terminal_width_zero_returns_default() {
+    assert_eq!(HandlerCLI::normalize_terminal_width(0), 80);
+}
+
+#[test]
+fn test_normalize_terminal_width_small() {
+    assert_eq!(HandlerCLI::normalize_terminal_width(40), 40);
+}
+
+#[test]
+fn test_normalize_terminal_width_exact_default() {
+    assert_eq!(HandlerCLI::normalize_terminal_width(80), 80);
+}
+
+#[test]
+fn test_normalize_terminal_width_large() {
+    assert_eq!(HandlerCLI::normalize_terminal_width(200), 80);
+}
+
+#[test]
+fn test_normalize_terminal_width_one() {
+    assert_eq!(HandlerCLI::normalize_terminal_width(1), 1);
 }
 

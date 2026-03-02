@@ -23,18 +23,18 @@ impl HandlerCLI {
     }
 
     fn get_max_line_width_impl() -> usize {
+        let raw = match size() {
+            Ok((width, _)) => width,
+            Err(_) => 0,
+        };
+        Self::normalize_terminal_width(raw)
+    }
+
+    #[doc(hidden)]
+    pub fn normalize_terminal_width(raw: u16) -> usize {
         const DEFAULT_WIDTH: usize = 80;
-        match size() {
-            Ok((width, _)) => {
-                let terminal_width = width as usize;
-                if terminal_width < DEFAULT_WIDTH {
-                    terminal_width
-                } else {
-                    DEFAULT_WIDTH
-                }
-            }
-            Err(_) => DEFAULT_WIDTH,
-        }
+        let w = raw as usize;
+        if w == 0 { DEFAULT_WIDTH } else { w.min(DEFAULT_WIDTH) }
     }
 
     /// Read confirmation (y/n) with immediate response on key press (no Enter required)

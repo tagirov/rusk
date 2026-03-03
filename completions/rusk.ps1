@@ -59,48 +59,32 @@ function _rusk_get_task_ids {
     }
 }
 
-# Get task text by ID
+# Get task text by ID (supports multi-line tasks via rusk list --for-completion)
 function _rusk_get_task_text {
     param([string]$taskId)
     $rusk_cmd = _rusk_get_cmd
     try {
-        # Check if RUSK_DB is set in environment
-        if ($env:RUSK_DB) {
-            $output = & $rusk_cmd list 2>$null
-        } else {
-            $output = & $rusk_cmd list 2>$null
-        }
+        $output = & $rusk_cmd list --for-completion 2>$null
         if ($output) {
+            $text = ""
+            $collecting = $false
             foreach ($line in $output) {
-                # Convert to string if needed
                 $lineStr = [string]$line
-                # Match lines with status symbol and our task ID
-                if ($lineStr -match "^\s+[•✔]\s+$taskId\s+") {
-                    # Remove leading whitespace
-                    $lineStr = $lineStr.TrimStart()
-                    # Remove status symbol (• or ✔) and following spaces
-                    $lineStr = $lineStr -replace '^[•✔]\s+', ''
-                    # Remove task ID and following spaces
-                    $lineStr = $lineStr -replace "^$taskId\s+", ''
-                    
-                    # Now line should contain: [date] text or just text
-                    # Check if it starts with a date (dd-mm-yyyy format)
-                    if ($lineStr -match '^(\d{2}-\d{2}-\d{4})\s+(.+)$') {
-                        # Has date, return text after date (only if text exists)
-                        $text = $matches[2].Trim()
-                        if ($text -and $text.Length -gt 0) {
-                            return $text
-                        }
-                        # Date exists but no text after it
-                        return $null
-                    } elseif ($lineStr -match '^(\d{2}-\d{2}-\d{4})\s*$') {
-                        # Only date, no text
-                        return $null
-                    } elseif ($lineStr -and $lineStr.Trim().Length -gt 0) {
-                        # No date, return remaining text
-                        return $lineStr.Trim()
+                if ($lineStr -match "^(\d+)`t(.*)") {
+                    $id = $matches[1]
+                    $rest = $matches[2]
+                    if ($id -eq $taskId) {
+                        $text = $rest
+                        $collecting = $true
+                    } else {
+                        $collecting = $false
                     }
+                } elseif ($collecting) {
+                    $text = $text + "`n" + $lineStr
                 }
+            }
+            if ($text.Trim()) {
+                return $text.Trim()
             }
         }
     } catch {

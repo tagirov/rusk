@@ -37,26 +37,40 @@ _rusk_get_task_ids() {
     fi
 }
 
-# Get task text by ID
+# Get task text by ID (supports multi-line tasks via rusk list --for-completion)
 _rusk_get_task_text() {
     local task_id="$1"
     local rusk_cmd=$(_rusk_cmd)
-    # Check if RUSK_DB is set in command line (use full command line)
     local rusk_db=""
     if [[ "$COMP_LINE" =~ RUSK_DB=([^\ ]+) ]]; then
         rusk_db="${BASH_REMATCH[1]}"
     fi
     
-    local task_line
+    local output
     if [ -n "$rusk_db" ]; then
-        task_line=$( ( export RUSK_DB="$rusk_db"; "$rusk_cmd" list 2>/dev/null ) | grep -E '[•✔]' | grep -E "^\s+[•✔]\s+$task_id\s+")
+        output=$( ( export RUSK_DB="$rusk_db"; "$rusk_cmd" list --for-completion 2>/dev/null ) )
     else
-        task_line=$("$rusk_cmd" list 2>/dev/null | grep -E '[•✔]' | grep -E "^\s+[•✔]\s+$task_id\s+")
+        output=$("$rusk_cmd" list --for-completion 2>/dev/null)
     fi
     
-    if [ -n "$task_line" ]; then
-        # Extract text after ID and date (remove status, ID, optional date)
-        echo "$task_line" | sed -E 's/^\s+[•✔]\s+[0-9]+\s+([0-9]{2}-[0-9]{2}-[0-9]{4}\s+)?//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+    local text="" collecting=0 id rest
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^([0-9]+)$'\t'(.*)$ ]]; then
+            id="${BASH_REMATCH[1]}"
+            rest="${BASH_REMATCH[2]}"
+            if [[ "$id" == "$task_id" ]]; then
+                text="$rest"
+                collecting=1
+            else
+                collecting=0
+            fi
+        elif [[ $collecting -eq 1 ]]; then
+            text="${text}"$'\n'"${line}"
+        fi
+    done <<< "$output"
+    
+    if [ -n "$text" ]; then
+        echo "$text"
     fi
 }
 

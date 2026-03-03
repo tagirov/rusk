@@ -154,7 +154,7 @@ def get-task-ids [spans: list<string>] {
   }
 }
 
-# Get task text by ID
+# Get task text by ID (supports multi-line tasks via rusk list --for-completion)
 def get-task-text [task_id: int, spans: list<string>] {
   try {
     let rusk_cmd = (get-rusk-cmd)
@@ -162,20 +162,31 @@ def get-task-text [task_id: int, spans: list<string>] {
     let rusk_db = (get-rusk-db-from-env $spans)
     
     let output = if ($rusk_db != null) {
-      with-env {RUSK_DB: $rusk_db} { ^$rusk_cmd list | complete }
+      with-env {RUSK_DB: $rusk_db} { ^$rusk_cmd list --for-completion | complete }
     } else {
-      ^$rusk_cmd list | complete
+      ^$rusk_cmd list --for-completion | complete
     }
     
     if ($output.exit_code == 0) {
-      ($output.stdout
-      | lines 
-      | where ($it | str contains "•") or ($it | str contains "✔")
-      | parse -r '^\s+[•✔]\s+(?<id>\d+)\s+(?<date>[0-9]{2}-[0-9]{2}-[0-9]{4}\s+)?(?<text>.*)$'
-      | where id == $task_id_str
-      | get text 
-      | first
-      | str trim)
+      mut text = ""
+      mut collecting = false
+      for line in ($output.stdout | lines) {
+        let parts = ($line | split row (char tab) -n 2)
+        if ($parts | length) >= 2 {
+          let id = $parts.0
+          let rest = $parts.1
+          if $id == $task_id_str {
+            $text = $rest
+            $collecting = true
+          } else {
+            $collecting = false
+          }
+        } else if $collecting {
+          $text = $text + (char newline) + $line
+        }
+      }
+      let trimmed = ($text | str trim)
+      if $trimmed != "" { $trimmed } else { null }
     } else {
       null
     }

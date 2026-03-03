@@ -1384,6 +1384,21 @@ impl HandlerCLI {
         println!("\n");
     }
 
+    /// Output tasks in parseable format for shell completion (id<TAB>text, continuation lines without id prefix)
+    pub fn handle_list_tasks_for_completion(tasks: &[Task]) {
+        for task in tasks {
+            let lines: Vec<&str> = task.text.lines().collect();
+            if let Some(first) = lines.first() {
+                println!("{}\t{}", task.id, first);
+                for line in lines.iter().skip(1) {
+                    println!("{}", line);
+                }
+            } else {
+                println!("{}\t", task.id);
+            }
+        }
+    }
+
     /// Handle restoring database from backup
     pub fn handle_restore(tm: &mut TaskManager) -> Result<()> {
         tm.restore_from_backup()

@@ -58,7 +58,10 @@ enum Command {
         alias = "l",
         about = "List all tasks with their status, id, date, and text (alias: \x1b[1ml\x1b[0m)"
     )]
-    List,
+    List {
+        #[arg(long, hide = true, default_value_t = false)]
+        for_completion: bool,
+    },
     #[command(
         alias = "r",
         about = "Restore database from backup file (.json.backup) (alias: \x1b[1mr\x1b[0m)"
@@ -194,7 +197,14 @@ fn main() -> Result<()> {
                 (Some(text), _) => HandlerCLI::handle_edit_tasks(&mut tm, ids, Some(text), None)?,
             }
         }
-        Some(Command::List) | None => {
+        Some(Command::List { for_completion }) => {
+            if for_completion {
+                HandlerCLI::handle_list_tasks_for_completion(tm.tasks());
+            } else {
+                HandlerCLI::handle_list_tasks(tm.tasks());
+            }
+        }
+        None => {
             HandlerCLI::handle_list_tasks(tm.tasks());
         }
         Some(Command::Restore) => {

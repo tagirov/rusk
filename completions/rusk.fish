@@ -188,11 +188,29 @@ function __rusk_get_task_ids
     end
 end
 
-# Get task text by ID
+# Get task text by ID (supports multi-line tasks via rusk list --for-completion)
 function __rusk_get_task_text
     set -l task_id $argv[1]
     set -l rusk_cmd (__rusk_cmd)
-    $rusk_cmd list 2>/dev/null | grep -E "^\s*[•✔]\s+$task_id\s+" | head -1 | sed -E 's/^[[:space:]]*[•✔][[:space:]]+[0-9]+[[:space:]]+[0-9-]*[[:space:]]*//'
+    set -l output ($rusk_cmd list --for-completion 2>/dev/null)
+    set -l text ""
+    set -l collecting false
+    for line in $output
+        if string match -qr "^\d+\t" -- "$line"
+            set -l id (echo $line | cut -f1)
+            if test "$id" = "$task_id"
+                set text (echo $line | cut -f2-)
+                set collecting true
+            else
+                set collecting false
+            end
+        else if test "$collecting" = true
+            set text "$text\n$line"
+        end
+    end
+    if test -n "$text"
+        printf '%s\n' "$text"
+    end
 end
 
 # Quote text if it contains special characters requiring escaping (excluding spaces)

@@ -7,7 +7,9 @@ use crossterm::{
     cursor::MoveTo,
     event::{Event, KeyCode, KeyEvent, KeyModifiers, read},
     style::Print,
-    terminal::{disable_raw_mode, enable_raw_mode, size},
+    terminal::{
+        Clear, ClearType, DisableLineWrap, EnableLineWrap, disable_raw_mode, enable_raw_mode, size,
+    },
 };
 use std::io::{self, Write};
 
@@ -208,6 +210,16 @@ impl HandlerCLI {
     ) -> Result<String> {
         let mut stdout = io::stdout();
         enable_raw_mode().context("Failed to enable raw mode")?;
+        stdout.queue(DisableLineWrap)?;
+        stdout.flush().ok();
+        let (term_cols_u16, term_rows_u16) = size().unwrap_or((0, 0));
+        let _term_cols = term_cols_u16 as usize;
+        let editor_row_raw = crossterm::cursor::position().unwrap_or((0, 0)).1;
+        let editor_row = if term_rows_u16 > 0 && editor_row_raw + 1 >= term_rows_u16 {
+            editor_row_raw.saturating_sub(1)
+        } else {
+            editor_row_raw
+        };
 
         // buffer and cursor
         // For single-line editor, normalize prefill to first line only (remove newlines)
@@ -225,10 +237,25 @@ impl HandlerCLI {
         let mut ghost_active: bool = use_ghost_prefill && !normalized_prefill.is_empty();
 
         // initial render
+        stdout.queue(MoveTo(0, editor_row))?;
+        stdout.queue(Clear(ClearType::CurrentLine))?;
         stdout.queue(Print(prompt))?;
-        let ghost_suffix = Self::calculate_ghost_suffix_impl(ghost_active, cursor_index, &normalized_prefill);
-        Self::render_buffer(&mut stdout, &buffer, validate.as_ref(), ghost_suffix)?;
-        Self::move_cursor_to(&mut stdout, prompt, &buffer, cursor_index)?;
+        let current_cols = size().unwrap_or((term_cols_u16, term_rows_u16)).0 as usize;
+        // Keep one spare cell to avoid terminal auto-wrap on exact-width output.
+        let visible_width = current_cols
+            .saturating_sub(prompt.len().saturating_add(1))
+            .max(1);
+        let (visible_buffer, visible_cursor_char, _viewport_start_char) =
+            Self::single_line_view_impl(&buffer, cursor_index, visible_width);
+        let mut ghost_suffix =
+            Self::calculate_ghost_suffix_impl(ghost_active, cursor_index, &normalized_prefill);
+        if let Some(gs) = ghost_suffix {
+            if visible_buffer.chars().count() + gs.chars().count() > visible_width {
+                ghost_suffix = None;
+            }
+        }
+        Self::render_buffer(&mut stdout, &visible_buffer, validate.as_ref(), ghost_suffix)?;
+        Self::move_cursor_to(&mut stdout, prompt, visible_cursor_char, editor_row)?;
         stdout.flush().ok();
 
         loop {
@@ -240,17 +267,23 @@ impl HandlerCLI {
                     match (code, modifiers) {
                         (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                             // Ctrl+C: interrupt and exit
+                            stdout.queue(EnableLineWrap).ok();
+                            stdout.flush().ok();
                             disable_raw_mode().ok();
                             println!("\n");
                             std::process::exit(130);
                         }
                         (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
                             // Ctrl+D: EOF, exit
+                            stdout.queue(EnableLineWrap).ok();
+                            stdout.flush().ok();
                             disable_raw_mode().ok();
                             println!("\n");
                             std::process::exit(0);
                         }
                         (KeyCode::Esc, _) => {
+                            stdout.queue(EnableLineWrap).ok();
+                            stdout.flush().ok();
                             disable_raw_mode().ok();
                             if allow_skip {
                                 println!("\n{}", "Skipping task.".yellow());
@@ -269,6 +302,8 @@ impl HandlerCLI {
                                     continue;
                                 }
                             }
+                            stdout.queue(EnableLineWrap).ok();
+                            stdout.flush().ok();
                             disable_raw_mode().ok();
                             println!();
                             return Ok(buffer);
@@ -345,23 +380,37 @@ impl HandlerCLI {
                     }
 
                     // redraw line
-                    let (_cx, cy) = crossterm::cursor::position().unwrap_or((0, 0));
-                    stdout.queue(MoveTo(0, cy))?;
-                    // clear line manually by printing carriage return + spaces + return
-                    // Account for ghost text length when calculating total length to clear
-                    // Use maximum of current buffer length and normalized prefill length to ensure complete clearing
-                    let max_len = std::cmp::max(buffer.len(), normalized_prefill.len());
-                    let total_len = prompt.len() + max_len + 16; // extra to wipe colors and ghost text
-                    stdout.queue(Print("\r"))?;
-                    stdout.queue(Print(" ".repeat(total_len)))?;
-                    stdout.queue(Print("\r"))?;
+                    stdout.queue(MoveTo(0, editor_row))?;
+                    stdout.queue(Clear(ClearType::CurrentLine))?;
                     stdout.queue(Print(prompt))?;
-                    let ghost_suffix = Self::calculate_ghost_suffix_impl(ghost_active, cursor_index, &normalized_prefill);
-                    Self::render_buffer(&mut stdout, &buffer, validate.as_ref(), ghost_suffix)?;
-                    Self::move_cursor_to(&mut stdout, prompt, &buffer, cursor_index)?;
+                    let current_cols = size().unwrap_or((term_cols_u16, term_rows_u16)).0 as usize;
+                    // Keep one spare cell to avoid terminal auto-wrap on exact-width output.
+                    let visible_width = current_cols
+                        .saturating_sub(prompt.len().saturating_add(1))
+                        .max(1);
+                    let (visible_buffer, visible_cursor_char, _viewport_start_char) =
+                        Self::single_line_view_impl(&buffer, cursor_index, visible_width);
+                    let mut ghost_suffix =
+                        Self::calculate_ghost_suffix_impl(ghost_active, cursor_index, &normalized_prefill);
+                    if let Some(gs) = ghost_suffix {
+                        if visible_buffer.chars().count() + gs.chars().count() > visible_width {
+                            ghost_suffix = None;
+                        }
+                    }
+                    Self::render_buffer(&mut stdout, &visible_buffer, validate.as_ref(), ghost_suffix)?;
+                    Self::move_cursor_to(&mut stdout, prompt, visible_cursor_char, editor_row)?;
                     stdout.flush().ok();
                 }
-                _ => {}
+                Event::Paste(pasted) => {
+                    if ghost_active {
+                        buffer.clear();
+                        ghost_active = false;
+                        cursor_index = 0;
+                    }
+                    buffer.insert_str(cursor_index, &pasted);
+                    cursor_index = (cursor_index + pasted.len()).min(buffer.len());
+                }
+                _other => {}
             }
         }
     }
@@ -369,17 +418,40 @@ impl HandlerCLI {
     fn move_cursor_to(
         stdout: &mut io::Stdout,
         prompt: &str,
+        visible_cursor_char: usize,
+        editor_row: u16,
+    ) -> Result<()> {
+        // We always keep editing on a fixed row to avoid cursor jumps when terminal reports unstable position.
+        let requested_x = prompt.len() + visible_cursor_char;
+        let mut x = requested_x as u16;
+        if let Ok((cols, _)) = size() {
+            if cols > 0 && x >= cols {
+                x = cols.saturating_sub(1);
+            }
+        }
+        stdout.queue(MoveTo(x, editor_row))?;
+        Ok(())
+    }
+
+    fn single_line_view_impl(
         buffer: &str,
         cursor_index: usize,
-    ) -> Result<()> {
-        // We assume single-line input; compute the x position as prompt width + character count up to cursor
-        // Use current row
-        let (_x, y) = crossterm::cursor::position().unwrap_or((0, 0));
-        // Count characters (not bytes) up to cursor_index
-        let char_count = Self::byte_idx_to_char_count_impl(buffer, cursor_index);
-        let x = (prompt.len() + char_count) as u16;
-        stdout.queue(MoveTo(x, y))?;
-        Ok(())
+        visible_width: usize,
+    ) -> (String, usize, usize) {
+        let total_chars = buffer.chars().count();
+        let cursor_char = Self::byte_idx_to_char_count_impl(buffer, cursor_index).min(total_chars);
+        if total_chars <= visible_width {
+            return (buffer.to_string(), cursor_char, 0);
+        }
+        let start_char = cursor_char.saturating_sub(visible_width.saturating_sub(1));
+        let end_char = (start_char + visible_width).min(total_chars);
+        let visible: String = buffer
+            .chars()
+            .skip(start_char)
+            .take(end_char.saturating_sub(start_char))
+            .collect();
+        let visible_cursor = cursor_char.saturating_sub(start_char);
+        (visible, visible_cursor, start_char)
     }
 
     fn render_buffer(

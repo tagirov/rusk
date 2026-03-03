@@ -368,8 +368,7 @@ fn test_completion_scripts_are_readable() {
 fn test_cli_completions_show() -> Result<()> {
     use std::process::Command;
     
-    let rusk_bin = std::env::var("CARGO_BIN_EXE_rusk")
-        .unwrap_or_else(|_| "target/debug/rusk".to_string());
+    let rusk_bin = common::require_rusk_bin()?;
     
     for shell_name in ["bash", "zsh", "fish", "nu", "powershell"] {
         let output = Command::new(&rusk_bin)
@@ -394,8 +393,7 @@ fn test_cli_completions_show() -> Result<()> {
 fn test_cli_completions_install_to_temp_dir() -> Result<()> {
     use std::process::Command;
     
-    let rusk_bin = std::env::var("CARGO_BIN_EXE_rusk")
-        .unwrap_or_else(|_| "target/debug/rusk".to_string());
+    let rusk_bin = common::require_rusk_bin()?;
     
     let temp_dir = TempDir::new()?;
     let test_path = temp_dir.path().join("test_completion");
@@ -431,8 +429,7 @@ fn test_cli_completions_install_to_temp_dir() -> Result<()> {
 fn test_cli_completions_install_creates_directories() -> Result<()> {
     use std::process::Command;
     
-    let rusk_bin = std::env::var("CARGO_BIN_EXE_rusk")
-        .unwrap_or_else(|_| "target/debug/rusk".to_string());
+    let rusk_bin = common::require_rusk_bin()?;
     
     let temp_dir = TempDir::new()?;
     let deep_path = temp_dir.path()
@@ -466,8 +463,7 @@ fn test_cli_completions_install_creates_directories() -> Result<()> {
 fn test_cli_completions_install_overwrites_existing() -> Result<()> {
     use std::process::Command;
     
-    let rusk_bin = std::env::var("CARGO_BIN_EXE_rusk")
-        .unwrap_or_else(|_| "target/debug/rusk".to_string());
+    let rusk_bin = common::require_rusk_bin()?;
     
     let temp_dir = TempDir::new()?;
     let test_path = temp_dir.path().join("existing_completion");
@@ -495,8 +491,7 @@ fn test_cli_completions_install_overwrites_existing() -> Result<()> {
 fn test_cli_completions_install_multiple_shells() -> Result<()> {
     use std::process::Command;
     
-    let rusk_bin = std::env::var("CARGO_BIN_EXE_rusk")
-        .unwrap_or_else(|_| "target/debug/rusk".to_string());
+    let rusk_bin = common::require_rusk_bin()?;
     
     // Install completions for multiple shells (without --output, uses default paths)
     let output = Command::new(&rusk_bin)
@@ -538,8 +533,7 @@ fn test_cli_completions_install_multiple_shells() -> Result<()> {
 fn test_cli_completions_invalid_shell() -> Result<()> {
     use std::process::Command;
     
-    let rusk_bin = std::env::var("CARGO_BIN_EXE_rusk")
-        .unwrap_or_else(|_| "target/debug/rusk".to_string());
+    let rusk_bin = common::require_rusk_bin()?;
     
     // Test with invalid shell name
     let output = Command::new(&rusk_bin)
@@ -556,8 +550,7 @@ fn test_cli_completions_invalid_shell() -> Result<()> {
 fn test_cli_completions_help() -> Result<()> {
     use std::process::Command;
     
-    let rusk_bin = std::env::var("CARGO_BIN_EXE_rusk")
-        .unwrap_or_else(|_| "target/debug/rusk".to_string());
+    let rusk_bin = common::require_rusk_bin()?;
     
     // Test help command
     let output = Command::new(&rusk_bin)

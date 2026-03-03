@@ -402,9 +402,7 @@ fn test_completion_real_rusk_list_output() {
     // This test verifies that completion scripts can parse the actual output format
     use std::process::Command;
     
-    // Try to use cargo-provided binary path, or fallback to relative path
-    let rusk_bin = std::env::var("CARGO_BIN_EXE_rusk")
-        .unwrap_or_else(|_| "target/debug/rusk".to_string());
+    let rusk_bin = common::require_rusk_bin().expect("rusk binary not found, run cargo build");
     
     // Create a temporary database for testing
     let temp_dir = tempfile::tempdir().unwrap();

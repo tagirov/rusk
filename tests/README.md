@@ -1,4 +1,4 @@
-<h1 align="center" id="rusk-tests">rusk Tests</h1>
+<h1 align="center" id="rusk-tests">Rusk Tests</h1>
 <br />
 
 This directory contains comprehensive unit and integration tests for the rusk task management application. These tests validate core functionality, edge cases, data persistence, and CLI behavior.
@@ -7,26 +7,28 @@ This directory contains comprehensive unit and integration tests for the rusk ta
 
 ```
 tests/
-├── README.md                      # This file
-├── common/                        # Shared test utilities
-│   └── mod.rs                     # Helper functions for creating test tasks
-├── completions/                   # Shell completion tests (see completions/README.md)
+├── README.md                       # This file
+├── common/                         # Shared test utilities
+│   └── mod.rs                      # Helper functions for creating test tasks
+├── completions/                    # Shell completion tests (see completions/README.md)
 │   └── ...
-├── cli_tests.rs                   # CLI command tests
-├── lib_tests.rs                   # Core library function tests
-├── database_corruption_tests.rs   # Database corruption handling tests
-├── directory_structure_tests.rs   # Directory creation and structure tests
-├── edge_case_tests.rs             # Edge cases and boundary condition tests
-├── edit_mode_tests.rs             # Edit command mode tests
+├── cli_tests.rs                    # CLI command tests
+├── cli_utils_tests.rs              # CLI utility function tests
+├── lib_tests.rs                    # Core library function tests
+├── database_corruption_tests.rs    # Database corruption handling tests
+├── directory_structure_tests.rs    # Directory creation and structure tests
+├── edge_case_tests.rs              # Edge cases and boundary condition tests
+├── edit_mode_tests.rs              # Edit command mode tests
 ├── edit_parsing_tests.rs           # Edit command argument parsing tests
 ├── environment_tests.rs            # Environment variable tests
-├── mark_success_tests.rs          # Mark command success/failure tests
-├── parse_flexible_ids_tests.rs    # Flexible ID parsing tests (comma-separated, etc.)
-├── path_migration_tests.rs        # Database path migration tests
+├── integration_main_tests.rs       # Integration tests for main flow
+├── mark_success_tests.rs           # Mark command success/failure tests
+├── parse_flexible_ids_tests.rs     # Flexible ID parsing tests (comma-separated, etc.)
+├── path_migration_tests.rs         # Database path migration tests
 ├── persistence_tests.rs            # Data persistence and save/load tests
 ├── restore_tests.rs                # Backup restore functionality tests
 ├── unchanged_detection_tests.rs    # Unchanged task detection tests
-└── completions.rs                 # Completion test entry point
+└── completions.rs                  # Completion test entry point
 ```
 
 ## Running Tests
@@ -41,7 +43,9 @@ cargo test
 Run tests from a specific file:
 ```bash
 cargo test --test cli_tests
+cargo test --test cli_utils_tests
 cargo test --test lib_tests
+cargo test --test integration_main_tests
 cargo test --test persistence_tests
 ```
 
@@ -85,6 +89,18 @@ Tests for CLI command behavior:
 - `del` command - Deleting tasks
 - `list` command - Listing and filtering tasks
 - `restore` command - Restoring from backups
+
+#### `cli_utils_tests.rs`
+Tests for CLI utility functions:
+- Text wrapping by words (`wrap_text_by_words`)
+- Output formatting helpers
+- Other CLI helper functions
+
+#### `integration_main_tests.rs`
+Integration tests for the rusk binary:
+- Main argument parsing
+- Flag filtering
+- End-to-end binary execution
 
 ### Data Persistence Tests
 
@@ -271,4 +287,4 @@ These tests are designed to run in CI/CD pipelines:
 - Completion tests are in a separate directory (`completions/`) with their own README
 
 <br />
-<p align="right"><a href="#rusk-tests">Back to top</a></p>
+<p align="center"><a href="#rusk-tests">Back to top</a></p>

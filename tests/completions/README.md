@@ -1,4 +1,4 @@
-<h1 align="center" id="shell-completions-tests">Shell Completion Tests</h1>
+<h1 align="center" id="rusk-shell-completions-tests">Rusk Shell Completion Tests</h1>
 <br />
 
 This directory contains tests for shell completion scripts. These tests are separate from the main application tests in `tests/` and focus specifically on validating completion behavior.
@@ -7,41 +7,42 @@ This directory contains tests for shell completion scripts. These tests are sepa
 
 ```
 tests/completions/
-├── README.md              # This file
-├── run_all.sh             # Run all completion tests for all shells
-├── rust/                  # Rust unit tests for completion code
+├── README.md                    # This file
+├── run_all.sh                   # Run all completion tests for all shells
+├── rust/                        # Rust unit tests for completion code
+│   ├── mod.rs                   # Module entry point
 │   ├── completion_tests.rs           # Tests for parsing rusk list output
 │   ├── completions_install_tests.rs  # Tests for completion installation
 │   └── nu_completion_tests.rs        # Nu Shell-specific completion tests
-├── powershell/            # PowerShell completion tests
-│   ├── README.md          # PowerShell-specific test documentation
-│   ├── run_all.ps1        # PowerShell test runner
-│   ├── helpers.ps1        # Helper functions
-│   ├── test_basic_completion.ps1
-│   ├── test_all_commands.ps1
-│   └── test_edit_after_id.ps1
-├── bash/                  # Bash completion tests
-│   ├── run_all.sh
-│   ├── helpers.sh
-│   ├── test_basic.sh
-│   ├── test_all_commands.sh
-│   └── test_edit_after_id.sh
-├── zsh/                   # Zsh completion tests
-│   ├── run_all.sh
-│   ├── helpers.zsh
-│   ├── test_basic.zsh
-│   ├── test_all_commands.zsh
-│   └── test_edit_after_id.zsh
-├── fish/                  # Fish shell completion tests
-│   ├── run_all.fish
-│   ├── test_basic.fish
-│   ├── test_all_commands.fish
-│   └── test_edit_after_id.fish
-└── nu/                    # Nu Shell completion tests
-    ├── run_all.nu
-    ├── test_basic.nu
-    ├── test_all_commands.nu
-    └── test_edit_after_id.nu
+├── powershell/                  # PowerShell completion tests
+│   ├── README.md                     # PowerShell-specific test documentation
+│   ├── run_all.ps1                   # PowerShell test runner
+│   ├── helpers.ps1                   # Helper functions
+│   ├── test_basic_completion.ps1     # Basic completion tests
+│   ├── test_all_commands.ps1         # All commands tests
+│   └── test_edit_after_id.ps1        # Edit after ID tests
+├── bash/                        # Bash completion tests
+│   ├── run_all.sh                    # Bash test runner
+│   ├── helpers.sh                    # Helper functions
+│   ├── test_basic.sh                 # Basic completion tests
+│   ├── test_all_commands.sh          # All commands tests
+│   └── test_edit_after_id.sh         # Edit after ID tests
+├── zsh/                         # Zsh completion tests
+│   ├── run_all.sh                    # Zsh test runner
+│   ├── helpers.zsh                   # Helper functions
+│   ├── test_basic.zsh                # Basic completion tests
+│   ├── test_all_commands.zsh         # All commands tests
+│   └── test_edit_after_id.zsh        # Edit after ID tests
+├── fish/                        # Fish shell completion tests
+│   ├── run_all.fish                  # Fish test runner
+│   ├── test_basic.fish               # Basic completion tests
+│   ├── test_all_commands.fish        # All commands tests
+│   └── test_edit_after_id.fish       # Edit after ID tests
+└── nu/                          # Nu Shell completion tests
+    ├── run_all.nu                    # Nu test runner
+    ├── test_basic.nu                 # Basic completion tests
+    ├── test_all_commands.nu          # All commands tests
+    └── test_edit_after_id.nu         # Edit after ID tests
 ```
 
 **Note**: Rust tests are included via `tests/completions.rs` which references the files in `rust/` subdirectory.
@@ -152,4 +153,4 @@ These tests can be integrated into CI/CD pipelines:
 - Each shell's test runner can be executed individually for debugging specific shell issues
 
 <br />
-<p align="right"><a href="#shell-completion-tests">Back to top</a></p>
+<p align="center"><a href="#rusk-shell-completions-tests">Back to top</a></p>

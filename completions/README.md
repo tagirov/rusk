@@ -1,4 +1,4 @@
-<h1 align="center" id="rusk-completions">rusk Completions</h1>
+<h1 align="center" id="rusk-shell-completions">Rusk Shell Completions</h1>
 
 <br />
 
@@ -115,4 +115,4 @@ rusk completions show powershell > ~/.config/powershell/rusk-completions.ps1
 Add-Content $PROFILE ". ~/.config/powershell/rusk-completions.ps1"
 ```
 <br />
-<p align="right"><a href="#rusk-completions">Back to top</a></p>
+<p align="center"><a href="#rusk-shell-completions">Back to top</a></p>

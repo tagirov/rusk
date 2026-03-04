@@ -1,8 +1,7 @@
 # Test: rusk e <id> <tab> should return ONLY task text, NO dates
 # This is the critical test for the reported issue
 
-let script_dir = ($env.PWD | path join "tests" "completions" "nu")
-let project_root = ($env.PWD | path join "tests" "completions" ".." "..")
+let project_root = ($env.PWD | path join ".." "..")
 let completion_file = ($project_root | path join "completions" "rusk.nu")
 
 # Test counters

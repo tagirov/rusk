@@ -1,6 +1,7 @@
 # Basic completion tests for Nu Shell
 
-let completion_file = ($env.PWD | path join "completions" "rusk.nu")
+let project_root = ($env.PWD | path join ".." "..")
+let completion_file = ($project_root | path join "completions" "rusk.nu")
 
 print "Nu Shell Completion Tests - Basic"
 print "============================================================"

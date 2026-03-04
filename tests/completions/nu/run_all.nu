@@ -1,7 +1,7 @@
 # Run all Nu Shell completion tests
 
 # Get script directory
-let script_dir = ($env.PWD | path join "tests" "completions" "nu")
+let script_dir = ($env.PWD | path join "nu")
 let test_files = (try {
     ls $script_dir | where name =~ "test_" | get name
 } catch {

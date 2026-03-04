@@ -228,7 +228,8 @@ export RUSK_DB="/path/to/your/db.json"
 export RUSK_DB="/path/to/your/project/"
 ```
 
-**Debug Mode:**
+**Debug Mode**
+
 When running in debug mode (`cargo run` or debug builds), Rusk uses a temporary database location to avoid affecting your production data:
 - Linux/MacOS: `$TMPDIR/rusk_debug/tasks.json` (usually `/tmp/rusk_debug/tasks.json`)
 - Windows: `%TEMP%\rusk_debug\tasks.json` (usually `C:\Users\<user>\AppData\Local\Temp\rusk_debug\tasks.json`)

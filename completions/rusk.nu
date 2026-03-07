@@ -206,8 +206,9 @@ def is-number [str: string] {
 }
 
 # Check if text needs to be quoted (contains special characters that require escaping)
+# Special chars: | ; & > < ( ) [ ] { } $ " ' ` \ * ? ~ # @ ! % ^ = + - / : ,
 def needs-quotes [text: string] {
-  let special_chars = ["|", ";", "&", ">", "<", "(", ")", "[", "]", "{", "}", "$", '"', "'", "`", "\\", "*", "?", "~", "#", "@", "!", "%", "^", "=", "+", "-", "/", ":", ",", "."]
+  let special_chars = ["|", ";", "&", ">", "<", "(", ")", "[", "]", "{", "}", "$", '"', "'", "`", "\\", "*", "?", "~", "#", "@", "!", "%", "^", "=", "+", "-", "/", ":", ","]
   let chars = ($text | split chars)
   ($chars | any {|char| $char in $special_chars})
 }

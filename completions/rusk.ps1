@@ -34,6 +34,30 @@ function _rusk_get_cmd {
     return "rusk"
 }
 
+# Check if text contains special characters that require quoting
+# Special chars: | ; & > < ( ) [ ] { } $ " ' ` \ * ? ~ # @ ! % ^ = + - / : ,
+function _rusk_needs_quotes {
+    param([string]$text)
+    return $text -match '[|;\&><\(\)\[\]\{\}\$"\''`\\\*\?\~\#\@\!\%\^\=\+\-\/\:\,]'
+}
+
+# Quote text if it contains special characters
+function _rusk_quote_text {
+    param([string]$text)
+    if (_rusk_needs_quotes $text) {
+        # Escape double quotes
+        $escaped = $text -replace '"', '\"'
+        # Escape backticks to prevent command substitution
+        $escaped = $escaped -replace '`', '\`'
+        # Escape dollar signs to prevent variable expansion
+        $escaped = $escaped -replace '\$', '\$'
+        # Escape backslashes at the end
+        $escaped = $escaped -replace '\\', '\\\\'
+        return '"' + $escaped + '"'
+    }
+    return $text
+}
+
 # Get list of task IDs from rusk list output
 function _rusk_get_task_ids {
     $rusk_cmd = _rusk_get_cmd
@@ -292,11 +316,13 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
                 if ($enteredIds.Count -eq 1 -and $prev -eq $enteredIds[0].ToString()) {
                     $taskText = _rusk_get_task_text $prev
                     if ($taskText -and -not [string]::IsNullOrWhiteSpace($taskText)) {
+                        # Quote the text if it contains special characters
+                        $quotedText = _rusk_quote_text $taskText
                         # Return ONLY task text, nothing else - this prevents dates from being suggested
                         # Use ListItemText and CompletionText explicitly to avoid path interpretation
                         $completionResult = [System.Management.Automation.CompletionResult]::new(
-                            $taskText,           # completionText - what gets inserted
-                            $taskText,           # listItemText - what shows in list
+                            $quotedText,         # completionText - what gets inserted
+                            $taskText,           # listItemText - what shows in list (unquoted for display)
                             [System.Management.Automation.CompletionResultType]::ParameterValue,
                             "Current task text"  # toolTip
                         )
@@ -323,7 +349,8 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
                 if ($enteredIds.Count -eq 0) {
                     $taskText = _rusk_get_task_text $cur
                     if ($taskText) {
-                        return @([System.Management.Automation.CompletionResult]::new("$cur $taskText", "$cur $taskText", [System.Management.Automation.CompletionResultType]::ParameterValue, "Append task text"))
+                        $quotedText = _rusk_quote_text $taskText
+                        return @([System.Management.Automation.CompletionResult]::new("$cur $quotedText", "$cur $taskText", [System.Management.Automation.CompletionResultType]::ParameterValue, "Append task text"))
                     }
                 }
             }

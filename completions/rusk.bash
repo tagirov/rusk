@@ -37,6 +37,37 @@ _rusk_get_task_ids() {
     fi
 }
 
+# Check if text contains special characters that require quoting
+_rusk_needs_quotes() {
+    local text="$1"
+    # Special chars: | ; & > < ( ) [ ] { } $ " ' ` \ * ? ~ # @ ! % ^ = + - / : ,
+    # Using case statement for portability and reliability
+    case "$text" in
+        *[\|\;\&\>\<\(\)\[\]\{\}\$\"\`\\*\?\~\#\@\!\%\^\=\+\-\/\:\,]*)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+# Quote text if it contains special characters
+_rusk_quote_text() {
+    local text="$1"
+    if _rusk_needs_quotes "$text"; then
+        # Escape double quotes inside the text
+        local escaped="${text//\"/\\\"}"
+        # Escape backticks to prevent command substitution
+        escaped="${escaped//\`/\\\`}"
+        # Escape dollar signs to prevent variable expansion
+        escaped="${escaped//\$/\\$}"
+        # Escape backslashes at the end
+        escaped="${escaped//\\/\\\\}"
+        echo "\"$escaped\""
+    else
+        echo "$text"
+    fi
+}
+
 # Get task text by ID (supports multi-line tasks via rusk list --for-completion)
 _rusk_get_task_text() {
     local task_id="$1"
@@ -70,7 +101,7 @@ _rusk_get_task_text() {
     done <<< "$output"
     
     if [ -n "$text" ]; then
-        echo "$text"
+        _rusk_quote_text "$text"
     fi
 }
 

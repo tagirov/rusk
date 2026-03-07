@@ -213,13 +213,33 @@ function __rusk_get_task_text
     end
 end
 
-# Quote text if it contains special characters requiring escaping (excluding spaces)
-# Spaces are handled by __rusk_complete_and_unescape which removes backslash escaping
+# Check if text contains special characters that require quoting
+# Special chars: | ; & > < ( ) [ ] { } $ " ' ` \ * ? ~ # @ ! % ^ = + - / : ,
+function __rusk_needs_quotes
+    set -l text $argv[1]
+    if string match -qr '[|;\&><\(\)\[\]\{\}\$"\'`\\\*\?\~\#\@\!\%\^\=\+\-\/\:\,]' -- "$text"
+        return 0
+    end
+    return 1
+end
+
+# Quote text if it contains special characters
 function __rusk_quote_text
     set -l text $argv[1]
-    # When using environment variables, fish may add extra processing
-    # Return text as-is without adding quotes - let __rusk_complete_and_unescape handle cleanup
-    printf '%s\n' "$text"
+    if __rusk_needs_quotes "$text"
+        # Escape double quotes
+        set text (string replace -a '"' '\\"' -- "$text")
+        # Escape backticks to prevent command substitution
+        set text (string replace -a '`' '\\`' -- "$text")
+        # Escape dollar signs to prevent variable expansion
+        set text (string replace -a '$' '\\$' -- "$text")
+        # Escape backslashes
+        set text (string replace -a '\\' '\\\\' -- "$text")
+        # Wrap in double quotes
+        printf '"%s"\n' "$text"
+    else
+        printf '%s\n' "$text"
+    end
 end
 
 # ============================================================================

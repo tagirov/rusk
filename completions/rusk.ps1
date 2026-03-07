@@ -41,11 +41,25 @@ function _rusk_needs_quotes {
     return $text -match '[|;\&><\(\)\[\]\{\}\$"\''`\\\*\?\~\#\@\!\%\^\=\+\-\/\:\,]'
 }
 
+# Check if text contains single quote
+function _rusk_contains_single_quote {
+    param([string]$text)
+    return $text -contains "'"
+}
+
 # Quote text if it contains special characters
+# Use single quotes if no single quote in text, otherwise use double quotes with escaping
 function _rusk_quote_text {
     param([string]$text)
-    if (_rusk_needs_quotes $text) {
-        # Escape double quotes
+    if (-not (_rusk_needs_quotes $text)) {
+        return $text
+    }
+    
+    # If no single quote in text, use single quotes (no escaping needed)
+    if (-not (_rusk_contains_single_quote $text)) {
+        return "'" + $text + "'"
+    } else {
+        # Use double quotes with escaping
         $escaped = $text -replace '"', '\"'
         # Escape backticks to prevent command substitution
         $escaped = $escaped -replace '`', '\`'
@@ -55,7 +69,6 @@ function _rusk_quote_text {
         $escaped = $escaped -replace '\\', '\\\\'
         return '"' + $escaped + '"'
     }
-    return $text
 }
 
 # Get list of task IDs from rusk list output

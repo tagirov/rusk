@@ -223,10 +223,28 @@ function __rusk_needs_quotes
     return 1
 end
 
+# Check if text contains single quote
+function __rusk_contains_single_quote
+    set -l text $argv[1]
+    if string match -q "*'*" -- "$text"
+        return 0
+    end
+    return 1
+end
+
 # Quote text if it contains special characters
+# Use single quotes if no single quote in text, otherwise use double quotes with escaping
 function __rusk_quote_text
     set -l text $argv[1]
-    if __rusk_needs_quotes "$text"
+    if not __rusk_needs_quotes "$text"
+        printf '%s\n' "$text"
+        return
+    end
+    
+    # If no single quote in text, use single quotes (no escaping needed)
+    if not __rusk_contains_single_quote "$text"
+        printf "'%s'\n" "$text"
+    else
         # Escape double quotes
         set text (string replace -a '"' '\\"' -- "$text")
         # Escape backticks to prevent command substitution
@@ -237,8 +255,6 @@ function __rusk_quote_text
         set text (string replace -a '\\' '\\\\' -- "$text")
         # Wrap in double quotes
         printf '"%s"\n' "$text"
-    else
-        printf '%s\n' "$text"
     end
 end
 

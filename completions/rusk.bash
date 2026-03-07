@@ -43,7 +43,17 @@ _rusk_needs_quotes() {
     # Special chars: | ; & > < ( ) [ ] { } $ " ' ` \ * ? ~ # @ ! % ^ = + - / : ,
     # Using case statement for portability and reliability
     case "$text" in
-        *[\|\;\&\>\<\(\)\[\]\{\}\$\"\`\\*\?\~\#\@\!\%\^\=\+\-\/\:\,]*)
+        *[\|\;\&\>\<\(\)\[\]\{\}\$\"\'\`\\*\?\~\#\@\!\%\^\=\+\-\/\:\,]*)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+# Check if text contains single quote
+_rusk_contains_single_quote() {
+    case "$1" in
+        *"'"*)
             return 0
             ;;
     esac
@@ -51,20 +61,27 @@ _rusk_needs_quotes() {
 }
 
 # Quote text if it contains special characters
+# Use single quotes if no single quote in text, otherwise use double quotes with escaping
 _rusk_quote_text() {
     local text="$1"
-    if _rusk_needs_quotes "$text"; then
-        # Escape double quotes inside the text
+    if ! _rusk_needs_quotes "$text"; then
+        echo "$text"
+        return
+    fi
+    
+    # If no single quote in text, use single quotes (no escaping needed)
+    if ! _rusk_contains_single_quote "$text"; then
+        echo "'$text'"
+    else
+        # Use double quotes with escaping
         local escaped="${text//\"/\\\"}"
         # Escape backticks to prevent command substitution
         escaped="${escaped//\`/\\\`}"
         # Escape dollar signs to prevent variable expansion
         escaped="${escaped//\$/\\$}"
-        # Escape backslashes at the end
+        # Escape backslashes
         escaped="${escaped//\\/\\\\}"
         echo "\"$escaped\""
-    else
-        echo "$text"
     fi
 }
 

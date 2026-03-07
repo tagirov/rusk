@@ -54,21 +54,38 @@ _rusk_needs_quotes() {
     return 1
 }
 
+# Check if text contains single quote
+_rusk_contains_single_quote() {
+    case "$1" in
+        *"'"*)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
 # Quote text if it contains special characters
+# Use single quotes if no single quote in text, otherwise use double quotes with escaping
 _rusk_quote_text() {
     local text="$1"
-    if _rusk_needs_quotes "$text"; then
-        # Escape double quotes inside the text
-        local escaped="${text//\"/\\\"}"
+    if ! _rusk_needs_quotes "$text"; then
+        echo "$text"
+        return
+    fi
+    
+    # If no single quote in text, use single quotes (no escaping needed)
+    if ! _rusk_contains_single_quote "$text"; then
+        echo "'$text'"
+    else
+        # Use double quotes with escaping
+        local escaped="${text//\"/\"}"
         # Escape backticks to prevent command substitution
         escaped="${escaped//\`/\\\`}"
         # Escape dollar signs to prevent variable expansion
-        escaped="${escaped//\$/\\$}"
+        escaped="${escaped//\$/\$}"
         # Escape backslashes
         escaped="${escaped//\\/\\\\}"
         echo "\"$escaped\""
-    else
-        echo "$text"
     fi
 }
 
@@ -111,6 +128,48 @@ _rusk_get_task_text() {
     
     if [ -n "$text" ]; then
         _rusk_quote_text "$text"
+    fi
+}
+
+# Get raw task text by ID (no quoting) - for zsh completion which uses (q) itself
+_rusk_get_task_text_raw() {
+    local task_id="$1"
+    local rusk_cmd=$(_rusk_cmd)
+    local rusk_db=""
+    local -a buffer_words
+    buffer_words=(${(z)LBUFFER})
+    for word in "${buffer_words[@]}"; do
+        if [[ "$word" =~ ^RUSK_DB=(.+)$ ]]; then
+            rusk_db="${match[1]}"
+            break
+        fi
+    done
+    
+    local output
+    if [ -n "$rusk_db" ]; then
+        output=$(env RUSK_DB="$rusk_db" "$rusk_cmd" list --for-completion 2>/dev/null)
+    else
+        output=$("$rusk_cmd" list --for-completion 2>/dev/null)
+    fi
+    
+    local text="" collecting=0 id rest
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[0-9]+$'\t' ]]; then
+            id="${line%%$'\t'*}"
+            rest="${line#*$'\t'}"
+            if [[ "$id" == "$task_id" ]]; then
+                text="$rest"
+                collecting=1
+            else
+                collecting=0
+            fi
+        elif (( collecting )); then
+            text="${text}"$'\n'"${line}"
+        fi
+    done <<< "$output"
+    
+    if [ -n "$text" ]; then
+        echo "$text"
     fi
 }
 
@@ -260,9 +319,21 @@ _rusk() {
             # Suggest task text if previous word is a single ID and current is empty
             elif [[ "$prev" =~ ^[0-9]+$ ]] && [[ -z "$cur" ]]; then
                 if [ $(_rusk_count_ids) -eq 1 ]; then
-                    local task_text=$(_rusk_get_task_text "$prev")
-                    if [ -n "$task_text" ]; then
-                        compadd -- "$task_text"
+                    local raw_text=$(_rusk_get_task_text_raw "$prev")
+                    if [ -n "$raw_text" ]; then
+                        # Only wrap in quotes when text contains special chars (not for spaces alone)
+                        local needs_q=0
+                        _rusk_needs_quotes "$raw_text" && needs_q=1
+                        if (( needs_q )); then
+                            if [[ "$raw_text" == *"'"* ]]; then
+                                local to_insert="'${raw_text//\'/\'\\\'\'}'"
+                                compadd -Q -S '' -- "$to_insert"
+                            else
+                                compadd -Q -S '' -- "'${raw_text}'"
+                            fi
+                        else
+                            compadd -Q -S '' -- "$raw_text"
+                        fi
                     fi
                 fi
             # Complete flags

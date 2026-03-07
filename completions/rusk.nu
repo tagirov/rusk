@@ -213,13 +213,25 @@ def needs-quotes [text: string] {
   ($chars | any {|char| $char in $special_chars})
 }
 
+# Check if text contains single quote
+def contains-single-quote [text: string] {
+  ($text | str contains "'")
+}
+
 # Wrap text in quotes if it contains special characters
+# Use single quotes if no single quote in text, otherwise use double quotes with escaping
 def quote-if-needed [text: string] {
-  if (needs-quotes $text) {
+  if not (needs-quotes $text) {
+    return $text
+  }
+  
+  # If no single quote in text, use single quotes (no escaping needed)
+  if not (contains-single-quote $text) {
+    return $"'($text)'"
+  } else {
+    # Use double quotes with escaping
     let escaped = ($text | str replace '"' '\\"')
     $"\"($escaped)\""
-  } else {
-    $text
   }
 }
 

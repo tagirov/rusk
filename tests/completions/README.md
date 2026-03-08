@@ -15,7 +15,6 @@ tests/completions/
 │   ├── completions_install_tests.rs  # Tests for completion installation
 │   └── nu_completion_tests.rs        # Nu Shell-specific completion tests
 ├── powershell/                  # PowerShell completion tests
-│   ├── README.md                     # PowerShell-specific test documentation
 │   ├── run_all.ps1                   # PowerShell test runner
 │   ├── helpers.ps1                   # Helper functions
 │   ├── test_basic_completion.ps1     # Basic completion tests
@@ -100,28 +99,37 @@ Each shell's test directory contains:
 
 ## Test Scenarios
 
-Common test scenarios across all shells:
+Common scenarios covered across all shells (bash, zsh, fish, powershell, nu):
 
-1. Command completion - `rusk <tab>` should suggest available commands
-2. Subcommand completion - `rusk edit <tab>` should suggest task IDs
-3. Task ID completion - `rusk edit <tab>` should list available task IDs
-4. Task text completion after ID - `rusk edit 1 <tab>` should suggest task text (NOT dates)
-5. Date completion after date flag - `rusk add --date <tab>` should suggest dates
-6. Flag completion - `rusk edit 1 -<tab>` should suggest available flags
-7. Multiple ID completion - `rusk edit 1 2 <tab>` should handle multiple IDs correctly
+| Scenario | Input | Expected |
+|----------|--------|----------|
+| **Root commands** | `rusk <tab>` | Commands: add, del, edit, list, mark, restore, completions (and aliases a, d, e, l, m, r, c) |
+| **Task ID completion** | `rusk edit <tab>`, `rusk mark <tab>`, `rusk del <tab>` | Task IDs from `rusk list` (parseable) |
+| **Task text after single ID** | `rusk edit 1 <tab>` (space after ID) | Task text only — **not** dates (critical for edit) |
+| **Multiple IDs** | `rusk edit 1,2 <tab>`, `rusk mark 1,2 <tab>`, `rusk del 1,2 <tab>` | Remaining task IDs (exclude already entered) |
+| **Date after flag** | `rusk add --date <tab>`, `rusk edit 1 --date <tab>` | Date options (e.g. today, formats) |
+| **Flag completion** | `rusk add <tab>`, `rusk add -<tab>`, `rusk edit 1 -<tab>`, `rusk del -<tab>` | Flags (e.g. --date, -d, --done, --help, -h) |
+| **Completions subcommands** | `rusk completions <tab>`, `rusk c <tab>` | install, show |
+| **Completions shells** | `rusk completions install <tab>`, `rusk completions show <tab>` | bash, zsh, fish, nu, powershell |
+| **List / Restore** | `rusk list <tab>`, `rusk restore <tab>`, `rusk l <tab>`, `rusk r <tab>` | Empty (no arguments) |
+| **Aliases** | `rusk a <tab>`, `rusk e <tab>`, `rusk m <tab>`, `rusk d <tab>`, etc. | Same as full command |
+
+**Edit-after-ID (test_edit_after_id):**
+- `rusk e 1 <tab>` → task text only, **no dates**.
+- `rusk e 1,2 <tab>` → task IDs (multiple IDs, not text).
+- `rusk e 1 --date <tab>` → dates (after date flag).
 
 ## Command Coverage
 
+- **add** (a) — flag completion, date completion after `--date`
+- **edit** (e) — task ID completion (comma-separated), task text after ID, flag completion, date after `--date`
+- **mark** (m) — task ID completion, multiple IDs (comma-separated: 1,2,3)
+- **del** (d) — task ID completion, `--done`, multiple IDs (comma-separated)
+- **list** (l) — no arguments (empty completion)
+- **restore** (r) — no arguments (empty completion)
+- **completions** (c) — subcommands: `install` (shells: bash, zsh, fish, nu, powershell; optional `--output` for single shell), `show` (shell)
 
-- add (a) - Flag completion, date completion after `--date` flag
-- edit (e) - Task ID completion, task text after ID, flag completion, date after flag
-- mark (m) - Task ID completion, multiple IDs
-- del (d) - Task ID completion, flag completion (`--done`), multiple IDs
-- list (l) - No arguments (empty completion)
-- restore (r) - No arguments (empty completion)
-- completions (c) - Subcommand completion, shell completion
-
-All command aliases are tested: `a`, `e`, `m`, `d`, `l`, `r`, `c`
+All aliases are tested: `a`, `e`, `m`, `d`, `l`, `r`, `c`.
 
 
 ## Adding New Tests

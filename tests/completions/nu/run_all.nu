@@ -20,9 +20,10 @@ mut failed = 0
 
 for test_file in $test_files {
     let test_name = ($test_file | path basename)
+    let test_path = ($script_dir | path join $test_file)
     print $"Running: ($test_name)"
     let result = (try {
-        nu $test_file
+        nu $test_path
         {status: "passed", name: $test_name}
     } catch {|err|
         {status: "failed", name: $test_name, error: $err}

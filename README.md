@@ -182,7 +182,7 @@ rusk r (restore)
 
 ### Shell Completion
 
-> For detailed installation instructions, see [completions/README.md](completions/README.md).
+> For installation instructions, see [completions/README.md](completions/README.md).
 
 It provides autocomplete for commands, task IDs, and task text during editing by pressing `<tab>` button.
 

@@ -325,12 +325,8 @@ _rusk() {
                         local needs_q=0
                         _rusk_needs_quotes "$raw_text" && needs_q=1
                         if (( needs_q )); then
-                            if [[ "$raw_text" == *"'"* ]]; then
-                                local to_insert="'${raw_text//\'/\'\\\'\'}'"
-                                compadd -Q -S '' -- "$to_insert"
-                            else
-                                compadd -Q -S '' -- "'${raw_text}'"
-                            fi
+                            local to_insert=$(_rusk_quote_text "$raw_text")
+                            compadd -Q -S '' -- "$to_insert"
                         else
                             compadd -Q -S '' -- "$raw_text"
                         fi

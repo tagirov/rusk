@@ -44,7 +44,7 @@ function _rusk_needs_quotes {
 # Check if text contains single quote
 function _rusk_contains_single_quote {
     param([string]$text)
-    return $text -contains "'"
+    return $text.Contains("'")
 }
 
 # Quote text if it contains special characters

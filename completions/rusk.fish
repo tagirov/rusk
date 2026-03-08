@@ -106,7 +106,8 @@ function __rusk_complete_and_unescape
                 
                 # Simply reconstruct the command without adding extra escaping
                 # Fish will handle quoting as needed
-                set unescaped "$prefix$text_after_id"
+                set -l quoted (__rusk_quote_text "$text_after_id" | string collect | string trim)
+                set unescaped "$prefix$quoted"
             end
             
             commandline -r -- "$unescaped"
@@ -492,7 +493,8 @@ function __rusk_complete_edit_text
         if __rusk_is_number "$last_arg"
             set -l task_text (__rusk_get_task_text $last_arg)
             if test -n "$task_text"
-                __rusk_quote_text "$task_text"
+                # Output raw text; wrapper will add proper quoting after insert
+                printf '%s\n' (string join \n $task_text)
             end
         end
     end

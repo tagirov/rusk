@@ -325,9 +325,6 @@ _rusk_completion() {
             # Complete date flag
             if [[ "$prev" == "--date" ]] || [[ "$prev" == "-d" ]]; then
                 _rusk_complete_date
-            # Complete task IDs
-            elif [[ "$prev" == "edit" ]] || [[ "$prev" == "e" ]] || [[ "$cur" =~ ^[0-9]+$ ]]; then
-                _rusk_complete_task_ids && return 0
             # Complete flags
             elif [[ "$cur" == -* ]]; then
                 _rusk_complete_add_edit_flags
@@ -335,11 +332,6 @@ _rusk_completion() {
             ;;
             
         mark|m|del|d)
-            # Complete task IDs
-            if [[ "$cur" =~ ^[0-9]*$ ]] || [[ "$prev" == "$cmd" ]]; then
-                _rusk_complete_task_ids && return 0
-            fi
-            
             # For del, complete flags
             if [[ ("$cmd" == "del" || "$cmd" == "d") && "$cur" == -* ]]; then
                 _rusk_complete_del_flags

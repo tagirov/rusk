@@ -519,38 +519,8 @@ end
 # Check if we should complete edit ID
 function __rusk_should_complete_edit_id
     __rusk_is_command edit e; or return 1
-    set -l cmdline (__rusk_get_cmdline)
-    
-    # Don't complete ID if we're after a flag
-    set -l last_token $cmdline[-1]
-    if __rusk_is_flag "$last_token"
-        return 1
-    end
-    
-    # Don't complete ID if there's text after an ID
-    if test (count $cmdline) -ge 3
-        set -l args $cmdline[3..-1]
-        set -l found_id false
-        for arg in $args
-            if __rusk_is_flag "$arg"
-                continue
-            end
-            if __rusk_is_number "$arg"
-                set found_id true
-            else if test "$found_id" = "true"
-                # Found text after ID - don't suggest more IDs
-                return 1
-            end
-        end
-        # If last arg is an ID, don't suggest more IDs (user is typing text next)
-        if test (count $args) -ge 1
-            set -l last_arg $args[-1]
-            if __rusk_is_number "$last_arg"
-                return 1
-            end
-        end
-    end
-    return 0
+    # IDs should never be suggested; task text completion is handled separately.
+    return 1
 end
 
 # ============================================================================
@@ -560,24 +530,8 @@ end
 # Check if we should complete task IDs for mark/del commands
 function __rusk_should_complete_mark_del_id
     __rusk_is_command mark m del d; or return 1
-    set -l cmdline (__rusk_get_cmdline)
-    
-    # Don't complete ID if we're after a flag
-    set -l last_token $cmdline[-1]
-    if __rusk_is_flag "$last_token"
-        return 1
-    end
-    
-    # Check if there are any ID arguments after the command
-    if test (count $cmdline) -ge 3
-        set -l args $cmdline[3..-1]
-        for arg in $args
-            if not __rusk_is_flag "$arg"
-                return 1
-            end
-        end
-    end
-    return 0
+    # IDs should never be suggested; mark/del keep only flag completion.
+    return 1
 end
 
 # ============================================================================

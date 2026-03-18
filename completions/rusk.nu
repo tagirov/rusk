@@ -529,12 +529,6 @@ def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_
   let prev_id = (extract-id $prev)
   let cur_id = (extract-id $cur)
   
-  # Case 1: Comma after ID - suggest next IDs
-  let comma_completions = (complete-task-ids-with-comma $entered_ids $cur $prev $spans)
-  if ($comma_completions | length) > 0 {
-    return $comma_completions
-  }
-  
   # Case 2: Space after single ID - suggest task text
   if ($cur == "") and (is-number $prev_id) and not $prev_ends_with_comma {
     if ($entered_ids | length) == 1 {
@@ -543,51 +537,20 @@ def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_
     }
   }
   
-  # Case 3: Partial ID input
+  # Case 3: Append task text when ID is immediately followed by <tab> (no space).
+  # IDs themselves must not be suggested, so we only append task text for the ID the user already typed.
   if ($cur != "") and (is-number $cur) and ($prev == "edit" or $prev == "e") and not $has_trailing_space {
-    let all_ids = (get-task-ids $spans)
-    let matching_ids = ($all_ids | where {|id| 
-      let id_str = ($id | into string)
-      ($id_str | str starts-with $cur)
-    })
-    
-    if ($matching_ids | length) > 0 {
-      return ($matching_ids | each {|id| 
-        let task_text = (get-task-text $id $spans)
-        let id_str = ($id | into string)
-        let description = if ($task_text != null) {
-          let text_len = ($task_text | str length)
-          let text = if $text_len > 80 {
-            ($task_text | split chars | first 80 | str join "") + "..."
-          } else {
-            $task_text
-          }
-          $"Task ID ($id_str): ($text)"
-        } else {
-          $"Task ID ($id_str)"
+    if ($entered_ids | length) == 0 {
+      try {
+        let current_id = ($cur | into int)
+        let task_text = (get-task-text $current_id $spans)
+        if ($task_text != null) {
+          let id_str = ($current_id | into string)
+          let quoted_text = (quote-if-needed $task_text)
+          return [{value: $"($id_str) ($quoted_text)", description: "Append task text"}]
         }
-        {value: $id_str, description: $description}
-      })
-    } else {
-      if ($entered_ids | length) == 0 {
-        try {
-          let current_id = ($cur | into int)
-          let task_text = (get-task-text $current_id $spans)
-          if ($task_text != null) {
-            let id_str = ($current_id | into string)
-            let quoted_text = (quote-if-needed $task_text)
-            return [{value: $"($id_str) ($quoted_text)", description: "Append task text"}]
-          }
-        } catch {}
-      }
+      } catch {}
     }
-  }
-  
-  # Complete task IDs
-  if ($cur == "") {
-    return (complete-task-ids $entered_ids $spans)
-  } else if ($cur != $command) and (not ($cur | str starts-with "-")) and (not (is-number $cur)) {
-    return (complete-task-ids $entered_ids $spans)
   }
   
   # Complete flags
@@ -619,17 +582,9 @@ def complete-mark-del [spans: list<string>, cur: string, prev: string, command: 
     false
   }
   
+  # IDs should never be suggested for mark/del.
   if $should_suggest_ids {
-    let completions = (complete-task-ids $entered_ids $spans)
-    
-    if $cur_ends_with_comma {
-      let prefix = $cur
-      return ($completions | each {|item|
-        {value: $"($prefix)($item.value)", description: $item.description}
-      })
-    } else {
-      return $completions
-    }
+    return []
   }
   
   # Complete flags

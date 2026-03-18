@@ -104,9 +104,9 @@ Common scenarios covered across all shells (bash, zsh, fish, powershell, nu):
 | Scenario | Input | Expected |
 |----------|--------|----------|
 | **Root commands** | `rusk <tab>` | Commands: add, del, edit, list, mark, restore, completions (and aliases a, d, e, l, m, r, c) |
-| **Task ID completion** | `rusk edit <tab>`, `rusk mark <tab>`, `rusk del <tab>` | Task IDs from `rusk list` (parseable) |
+| **Task ID completion** | `rusk edit <tab>`, `rusk mark <tab>`, `rusk del <tab>` | Empty (no task ID suggestions) |
 | **Task text after single ID** | `rusk edit 1 <tab>` (space after ID) | Task text only — **not** dates (critical for edit) |
-| **Multiple IDs** | `rusk edit 1,2 <tab>`, `rusk mark 1,2 <tab>`, `rusk del 1,2 <tab>` | Remaining task IDs (exclude already entered) |
+| **Multiple IDs** | `rusk edit 1,2 <tab>`, `rusk mark 1,2 <tab>`, `rusk del 1,2 <tab>` | Empty (no task ID suggestions) |
 | **Date after flag** | `rusk add --date <tab>`, `rusk edit 1 --date <tab>` | Date options (e.g. today, formats) |
 | **Flag completion** | `rusk add <tab>`, `rusk add -<tab>`, `rusk edit 1 -<tab>`, `rusk del -<tab>` | Flags (e.g. --date, -d, --done, --help, -h) |
 | **Completions subcommands** | `rusk completions <tab>`, `rusk c <tab>` | install, show |
@@ -116,15 +116,15 @@ Common scenarios covered across all shells (bash, zsh, fish, powershell, nu):
 
 **Edit-after-ID (test_edit_after_id):**
 - `rusk e 1 <tab>` → task text only, **no dates**.
-- `rusk e 1,2 <tab>` → task IDs (multiple IDs, not text).
+- `rusk e 1,2 <tab>` → empty (IDs are not suggested).
 - `rusk e 1 --date <tab>` → dates (after date flag).
 
 ## Command Coverage
 
 - **add** (a) — flag completion, date completion after `--date`
-- **edit** (e) — task ID completion (comma-separated), task text after ID, flag completion, date after `--date`
-- **mark** (m) — task ID completion, multiple IDs (comma-separated: 1,2,3)
-- **del** (d) — task ID completion, `--done`, multiple IDs (comma-separated)
+- **edit** (e) — task text after ID, flag completion, date after `--date`
+- **mark** (m) — flag completion (task IDs are typed manually)
+- **del** (d) — `--done` flag, flag completion (task IDs are typed manually)
 - **list** (l) — no arguments (empty completion)
 - **restore** (r) — no arguments (empty completion)
 - **completions** (c) — subcommands: `install` (shells: bash, zsh, fish, nu, powershell; optional `--output` for single shell), `show` (shell)

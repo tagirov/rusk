@@ -189,8 +189,7 @@ It provides autocomplete for commands, task IDs, and task text during editing by
 
 **Features**
 - Command completion: Autocomplete commands (`add`, `edit`, `mark`, `del`, etc.) and their aliases
-- Task ID completion: Tab-complete task IDs for `edit`, `mark`, and `del` commands
-- Task text completion: When typing `rusk edit 3 <tab>`, automatically suggests the current task text for easy editing. (`rusk edit 3<tab>` will complete the ID). If the text contains shell-special characters (``| ; & > < ( ) [ ] { } $ " ' \` * ? ~ # @ ! % ^ = + - / : ,``), it is automatically wrapped in single quotes when completing (double quotes if the text has `'`)
+- Task text completion: When typing `rusk edit 3 <tab>`, automatically suggests the current task text for easy editing. If the text contains shell-special characters (``| ; & > < ( ) [ ] { } $ " ' \` * ? ~ # @ ! % ^ = + - / : ,``), it is automatically wrapped in single quotes when completing (double quotes if the text has `'`)
 - Flag completion: Autocomplete `--date`, `--done`, etc
 - Date suggestions: When using `--date<tab>` or `-d<tab>` flag, suggests default dates: Today, Tomorrow, One week ahead, Two weeks ahead
 

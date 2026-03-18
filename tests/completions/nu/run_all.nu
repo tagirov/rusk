@@ -34,7 +34,7 @@ for test_file in $test_files {
         print $"✓ ($test_name) passed"
     } else {
         $failed = ($failed + 1)
-        print $"✗ ($test_name) failed: ($result.error | default "unknown error")"
+        print $"✗ ($test_name) failed: ($result.error | default 'unknown error')"
     }
     print ""
 }

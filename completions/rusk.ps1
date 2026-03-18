@@ -368,17 +368,6 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
                 }
             }
 
-            # Complete task IDs (when at command or when typing ID)
-            # Only if we're NOT after a date flag and NOT after an ID
-            if ($prev -ne '--date' -and $prev -ne '-d' -and $enteredIds.Count -eq 0) {
-                if ($prev -in @('edit', 'e') -or $cur -match '^\d*$' -or [string]::IsNullOrEmpty($cur)) {
-                    $result = _rusk_complete_task_ids $tokens $wordToComplete
-                    if ($result) {
-                        return $result
-                    }
-                }
-            }
-
             # Complete flags
             if ($cur -like '-*') {
                 return @(
@@ -393,11 +382,6 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
         }
 
         { $_ -in 'mark', 'm', 'del', 'd' } {
-            # Complete task IDs
-            if ($prev -eq $command -or $cur -match '^\d*$' -or [string]::IsNullOrEmpty($cur)) {
-                return _rusk_complete_task_ids $tokens $wordToComplete
-            }
-
             # For del, complete flags
             if ($command -in @('del', 'd') -and $cur -like '-*') {
                 return @(

@@ -336,19 +336,16 @@ _rusk() {
             elif [[ "$cur" == -* ]]; then
                 # Offer flags: -d --date -h --help
                 compadd -- -d --date -h --help
-            # Complete task IDs
-            else
-                _rusk_complete_task_ids
             fi
+            # No task ID completion for edit
             ;;
             
         mark|m|del|d)
             # For del, complete flags first
             if [[ ("$cmd" == "del" || "$cmd" == "d") && "$cur" == -* ]]; then
                 compadd --done
-            # Complete task IDs
             else
-                _rusk_complete_task_ids
+                :
             fi
             ;;
             

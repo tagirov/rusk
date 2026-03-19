@@ -42,15 +42,19 @@ source /etc/bash_completion.d/rusk ## In your .bashrc
 ```
 
 ### Zsh
+The completion file **must** be named `_rusk` (leading underscore). Put it on `fpath` **before** `compinit` runs, otherwise custom completions are ignored.
+
 ```bash
 # Get script from rusk and save it
 mkdir -p ~/.zsh/completions
 rusk completions show zsh > ~/.zsh/completions/_rusk
 
-# Add to your ~/.zshrc
+# Add to your ~/.zshrc (order matters: fpath first, then compinit)
 echo 'fpath=(~/.zsh/completions $fpath)' >> ~/.zshrc
-echo 'autoload -U compinit && compinit' >> ~/.zshrc
+echo 'autoload -Uz compinit && compinit' >> ~/.zshrc
 ```
+
+If you use **Powerlevel10k instant prompt** (or similar), define `fpath=(~/.zsh/completions $fpath)` *above* the instant-prompt block so `rusk` completion is available on the first Tab in a new session.
 
 ### Fish
 ```bash

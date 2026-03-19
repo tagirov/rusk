@@ -3,6 +3,8 @@
 
 This directory contains tests for shell completion scripts. These tests are separate from the main application tests in `tests/` and focus specifically on validating completion behavior.
 
+Zsh tests source `completions/rusk.zsh` with `_RUSK_ZSH_SKIP_ENTRY=1` so the file only defines functions and does not run the completer once on load (avoids invoking the real `rusk` binary before stubs override helpers).
+
 ## Structure
 
 ```

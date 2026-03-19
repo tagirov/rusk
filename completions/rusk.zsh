@@ -271,7 +271,7 @@ _rusk_complete_date() {
     compadd $dates
 }
 
-_rusk() {
+_rusk_main() {
     # Find rusk command index
     local rusk_idx=-1
     local i
@@ -416,4 +416,12 @@ _rusk() {
             fi
             ;;
     esac
+}
+
+if [[ -z ${_RUSK_ZSH_SKIP_ENTRY:-} ]]; then
+  _rusk_main "$@"
+fi
+
+_rusk() {
+  _rusk_main "$@"
 }

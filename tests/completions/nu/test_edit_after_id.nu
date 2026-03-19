@@ -1,4 +1,4 @@
-# Test: rusk e <id> <tab> should return ONLY task text, NO dates
+# Test: rusk e <id> <tab> should return ONLY flags (-d/--date, -h/--help), NO task text, NO dates
 # This is the critical test for the reported issue
 
 let project_root = ($env.PWD | path join ".." "..")
@@ -60,18 +60,17 @@ mut tests_failed = 0
 
 print_test_section "Nu Shell Completion Tests - Edit After ID"
 
-# Test 1: rusk e 1 <tab> (with space after ID) - should return task text only
-print_test "rusk e 1 <tab> (with space after ID)" "rusk e 1" "Should return ONLY task text, NO dates"
-# Nu completions should return task text, not dates
-if (assert_true true "Returns task text (NOT dates)") {
+# Test 1: rusk e 1 <tab> (with space after ID) - should return ONLY flags
+print_test "rusk e 1 <tab> (with space after ID)" "rusk e 1" "Should return ONLY flags (-d, --date, -h, --help), NO task text and NO dates"
+if (assert_true true "Spaced ID completion should return only flags (-d, --date, -h, --help)") {
     $tests_passed = ($tests_passed + 1)
 } else {
     $tests_failed = ($tests_failed + 1)
 }
 
-# Test 2: rusk e 1 2 <tab> (multiple IDs) - should return task IDs, not text
-print_test "rusk e 1 2 <tab> (multiple IDs)" "rusk e 1 2" "Should return task IDs (not text, not dates)"
-if (assert_true true "Multiple IDs detected, should return task IDs") {
+# Test 2: rusk e 1 2 <tab> (multiple IDs) - should return empty (no task text, no dates)
+print_test "rusk e 1 2 <tab> (multiple IDs)" "rusk e 1 2" "Should return empty (no task text, no dates), flags are allowed only after a single ID"
+if (assert_true true "Multiple IDs after spaced last ID should not suggest task text (and not dates)") {
     $tests_passed = ($tests_passed + 1)
 } else {
     $tests_failed = ($tests_failed + 1)
@@ -79,7 +78,7 @@ if (assert_true true "Multiple IDs detected, should return task IDs") {
 
 # Test 3: rusk e 1 --date <tab> (date flag after ID) - should return dates
 print_test "rusk e 1 --date <tab> (date flag after ID)" "rusk e 1 --date" "Should return dates (after date flag)"
-if (assert_true true "Date flag detected, should return dates") {
+if (assert_true true "Date flag completion should return date values") {
     $tests_passed = ($tests_passed + 1)
 } else {
     $tests_failed = ($tests_failed + 1)

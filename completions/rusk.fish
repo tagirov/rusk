@@ -29,7 +29,15 @@ function __rusk_complete_and_unescape
     # Check if command contains "rusk e" or "rusk edit" followed by ID and completion changed
     # This pattern works with or without environment variables (e.g., "RUSK_DB=./ rusk e 7")
     if test "$cmd_before" != "$cmd_after"
-        if string match -qr '\brusk\s+(e|edit)\s+\d+\s+' -- "$cmd_after"
+        # fish sometimes escapes the space after the id as `22\ <text>`
+        # but matching the exact escape pattern is brittle, so just check
+        # for "rusk (e|edit) <id>" and rely on later parsing after unescape.
+        set -l __rusk_match1 0
+        if string match -qr 'rusk\s+(e|edit)\s+\d+' -- "$cmd_after"
+            set __rusk_match1 1
+        end
+
+        if test $__rusk_match1 -eq 1
             # Remove backslash escaping using string unescape
             set -l unescaped (string unescape -- "$cmd_after")
             
@@ -46,68 +54,72 @@ function __rusk_complete_and_unescape
                 set -l text_after_id $match_result[4]
                 set -l original_text $text_after_id
                 
-                # First, remove escaped quotes (\" becomes ")
-                set text_after_id (string replace -a '\\"' '"' -- "$text_after_id")
-                set text_after_id (string replace -a "\\'" "'" -- "$text_after_id")
-                
-                # Remove surrounding quotes if present (both single and double quotes)
-                # Check for double quotes first
-                if string match -qr '^".*"$' -- "$text_after_id"
-                    # Remove surrounding double quotes
-                    set text_after_id (string replace -r '^"(.*)"$' '$1' -- "$text_after_id")
-                else
-                    # Check for single quotes by checking first and last character
-                    set -l first_char (string sub -s 1 -l 1 -- "$text_after_id")
-                    set -l last_char (string sub -s -1 -l 1 -- "$text_after_id")
-                    if test "$first_char" = "'" -a "$last_char" = "'"
-                        # Remove surrounding single quotes
-                        set text_after_id (string sub -s 2 -e -2 -- "$text_after_id")
-                    end
-                end
-                
-                # Remove any trailing whitespace and extra characters that fish may have added
-                # This fixes issues where fish adds extra characters like "e" at the end
-                set text_after_id (string trim -- "$text_after_id")
-                
-                # Remove any trailing single characters that might be command aliases (e, a, m, d, etc.)
-                # Fish may add these when using environment variables
-                # Command aliases: e (edit), a (add), m (mark), d (del), l (list), r (restore), c (completions)
-                set -l command_aliases "e" "a" "m" "d" "l" "r" "c"
-                
-                # Only remove trailing command aliases if they are preceded by a space
-                # This prevents removing letters from words like "Editor" (r), "Code" (e), etc.
-                while test (string length -- "$text_after_id") -gt 1
-                    set -l last_char (string sub -s -1 -l 1 -- "$text_after_id")
-                    set -l second_last_char (string sub -s -2 -l 1 -- "$text_after_id")
+                # Do not rewrite flag completion after ID (e.g. "-", "-d", "--date").
+                # Rewriting here can produce "'-'" instead of flag suggestions.
+                if not string match -qr '^-' -- "$text_after_id"
+                    # First, remove escaped quotes (\" becomes ")
+                    set text_after_id (string replace -a '\\"' '"' -- "$text_after_id")
+                    set text_after_id (string replace -a "\\'" "'" -- "$text_after_id")
                     
-                    # Only consider it an alias if it's preceded by a space
-                    if test "$second_last_char" != " "
-                        # Not preceded by space, so it's part of a word - don't remove
-                        break
+                    # Remove surrounding quotes if present (both single and double quotes)
+                    # Check for double quotes first
+                    if string match -qr '^".*"$' -- "$text_after_id"
+                        # Remove surrounding double quotes
+                        set text_after_id (string replace -r '^"(.*)"$' '$1' -- "$text_after_id")
+                    else
+                        # Check for single quotes by checking first and last character
+                        set -l first_char (string sub -s 1 -l 1 -- "$text_after_id")
+                        set -l last_char (string sub -s -1 -l 1 -- "$text_after_id")
+                        if test "$first_char" = "'" -a "$last_char" = "'"
+                            # Remove surrounding single quotes
+                            set text_after_id (string sub -s 2 -e -2 -- "$text_after_id")
+                        end
                     end
                     
-                    # Check if last char is a command alias
-                    set -l is_alias false
-                    for alias in $command_aliases
-                        if test "$last_char" = "$alias"
-                            set is_alias true
+                    # Remove any trailing whitespace and extra characters that fish may have added
+                    # This fixes issues where fish adds extra characters like "e" at the end
+                    set text_after_id (string trim -- "$text_after_id")
+                    
+                    # Remove any trailing single characters that might be command aliases (e, a, m, d, etc.)
+                    # Fish may add these when using environment variables
+                    # Command aliases: e (edit), a (add), m (mark), d (del), l (list), r (restore), c (completions)
+                    set -l command_aliases "e" "a" "m" "d" "l" "r" "c"
+                    
+                    # Only remove trailing command aliases if they are preceded by a space
+                    # This prevents removing letters from words like "Editor" (r), "Code" (e), etc.
+                    while test (string length -- "$text_after_id") -gt 1
+                        set -l last_char (string sub -s -1 -l 1 -- "$text_after_id")
+                        set -l second_last_char (string sub -s -2 -l 1 -- "$text_after_id")
+                        
+                        # Only consider it an alias if it's preceded by a space
+                        if test "$second_last_char" != " "
+                            # Not preceded by space, so it's part of a word - don't remove
+                            break
+                        end
+                        
+                        # Check if last char is a command alias
+                        set -l is_alias false
+                        for alias in $command_aliases
+                            if test "$last_char" = "$alias"
+                                set is_alias true
+                                break
+                            end
+                        end
+                        
+                        if test "$is_alias" = "true"
+                            # Remove the alias character and the space before it
+                            set text_after_id (string sub -s 1 -e -2 -- "$text_after_id" | string trim)
+                        else
+                            # Not an alias, stop removing
                             break
                         end
                     end
                     
-                    if test "$is_alias" = "true"
-                        # Remove the alias character and the space before it
-                        set text_after_id (string sub -s 1 -e -2 -- "$text_after_id" | string trim)
-                    else
-                        # Not an alias, stop removing
-                        break
-                    end
+                    # Simply reconstruct the command without adding extra escaping
+                    # Fish will handle quoting as needed
+                    set -l quoted (__rusk_quote_text "$text_after_id" | string collect | string trim)
+                    set unescaped "$prefix$quoted"
                 end
-                
-                # Simply reconstruct the command without adding extra escaping
-                # Fish will handle quoting as needed
-                set -l quoted (__rusk_quote_text "$text_after_id" | string collect | string trim)
-                set unescaped "$prefix$quoted"
             end
             
             commandline -r -- "$unescaped"
@@ -130,6 +142,27 @@ end
 # Get command line arguments
 function __rusk_get_cmdline
     commandline -opc
+end
+
+# Get command line arguments including current word under cursor.
+# Fish's `commandline -opc` excludes the current token, which breaks cases like:
+#   rusk edit 22<tab>
+function __rusk_get_cmdline_with_current
+    set -l cmdline (__rusk_get_cmdline)
+    set -l current_word (__rusk_get_current_word)
+    if test -n "$current_word"
+        if test (count $cmdline) -eq 0
+            set -a cmdline "$current_word"
+        else
+            set -l last_token $cmdline[-1]
+            if test "$last_token" != "$current_word"
+                set -a cmdline "$current_word"
+            end
+        end
+    end
+    for arg in $cmdline
+        echo $arg
+    end
 end
 
 # Get current word being typed
@@ -411,24 +444,16 @@ end
 # Complete flags for edit command
 function __rusk_complete_edit_flags
     set -l current_word (__rusk_get_current_word)
-    
-    if __rusk_has_edit_id
-        # Only suggest date flag after ID
-        set -l date_flags -d --date
-        __rusk_complete_flags $date_flags
-    else
-        # All available flags when no ID is present
-        set -l all_flags -d --date -h --help
-        __rusk_complete_flags $all_flags
-    end
+
+    # After task ID completion point, we always suggest only flags.
+    set -l all_flags -d --date -h --help
+    __rusk_complete_flags $all_flags
 end
 
 # Check if we should complete flags for edit command
 function __rusk_should_complete_edit_flags
     __rusk_is_command edit e; or return 1
     __rusk_is_after_date_flag; and return 1
-    # Don't suggest flags if ID is already entered
-    __rusk_has_edit_id; and return 1
     set -l current_word (__rusk_get_current_word)
     __rusk_is_flag "$current_word"; or test -z "$current_word"
 end
@@ -439,7 +464,7 @@ end
 
 # Complete task text after ID
 function __rusk_complete_edit_text
-    set -l cmdline (__rusk_get_cmdline)
+    set -l cmdline (__rusk_get_cmdline_with_current)
     if test (count $cmdline) -lt 3
         return
     end
@@ -493,8 +518,16 @@ function __rusk_complete_edit_text
         if __rusk_is_number "$last_arg"
             set -l task_text (__rusk_get_task_text $last_arg)
             if test -n "$task_text"
-                # Output raw text; wrapper will add proper quoting after insert
-                printf '%s\n' (string join \n $task_text)
+                # When completing without a space after ID (e.g. "rusk edit 22<tab>"),
+                # fish filters candidates by current token ("22").
+                # Emit "<id> <text>" so candidate matches and expands in place.
+                set -l current_word (__rusk_get_current_word)
+                if test "$current_word" = "$last_arg"
+                    printf '%s %s\n' "$last_arg" (string join \n $task_text)
+                else
+                    # Output raw text; wrapper will add proper quoting after insert
+                    printf '%s\n' (string join \n $task_text)
+                end
             end
         end
     end
@@ -503,7 +536,7 @@ end
 # Check if we should complete task text after ID
 function __rusk_should_complete_edit_text
     __rusk_is_command edit e; or return 1
-    set -l cmdline (__rusk_get_cmdline)
+    set -l cmdline (__rusk_get_cmdline_with_current)
     test (count $cmdline) -ge 3; or return 1
     
     set -l args $cmdline[3..-1]
@@ -513,7 +546,8 @@ function __rusk_should_complete_edit_text
     __rusk_is_number "$last_arg"; or return 1
     
     set -l current_word (__rusk_get_current_word)
-    test -z "$current_word"; or test "$current_word" = "$last_arg"
+    # Only when ID is immediately followed by <tab> (no space).
+    test "$current_word" = "$last_arg"
 end
 
 # Check if we should complete edit ID

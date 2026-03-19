@@ -131,7 +131,7 @@ _rusk_get_task_text() {
     fi
 }
 
-# Get raw task text by ID (no quoting) - for zsh completion which uses (q) itself
+# Get raw task text by ID (no quoting) - quoting is applied later for zsh
 _rusk_get_task_text_raw() {
     local task_id="$1"
     local rusk_cmd=$(_rusk_cmd)
@@ -243,8 +243,11 @@ _rusk_count_ids() {
         fi
     done
     # Start from word after command (rusk_idx + 2: skip "rusk" and command like "edit")
+    # Stop before CURRENT (word being completed), matching bash COMP_CWORD semantics:
+    # `rusk edit 5<TAB>` → count 0 → task text; `rusk edit 5 <TAB>` → count 1 → flags
     local start_idx=$((rusk_idx + 2))
-    for ((i=start_idx; i<${#words[@]}; i++)); do
+    local end_idx=${CURRENT:-${#words[@]}}
+    for ((i=start_idx; i<end_idx; i++)); do
         if [[ "${words[i]}" =~ ^[0-9]+$ ]]; then
             ((count++))
         fi
@@ -316,20 +319,30 @@ _rusk() {
             # Complete date flag
             if [[ "$prev" == "--date" ]] || [[ "$prev" == "-d" ]]; then
                 _rusk_complete_date
-            # Suggest task text if previous word is a single ID and current is empty
+            # After single ID with a space: suggest ONLY flags
             elif [[ "$prev" =~ ^[0-9]+$ ]] && [[ -z "$cur" ]]; then
                 if [ $(_rusk_count_ids) -eq 1 ]; then
-                    local raw_text=$(_rusk_get_task_text_raw "$prev")
+                    compadd -- -d --date -h --help
+                fi
+            # Support completion without a space after ID: `rusk edit <id><TAB>`
+            # Here `$cur` is the numeric ID being edited; we append task text after it.
+            elif [[ "$cur" =~ ^[0-9]+$ ]] && [[ ("$prev" == "edit" || "$prev" == "e") ]]; then
+                local count_ids=$(_rusk_count_ids)
+                if [ "$count_ids" -eq 0 ]; then
+                    local raw_text=$(_rusk_get_task_text_raw "$cur")
                     if [ -n "$raw_text" ]; then
-                        # Only wrap in quotes when text contains special chars (not for spaces alone)
-                        local needs_q=0
-                        _rusk_needs_quotes "$raw_text" && needs_q=1
-                        if (( needs_q )); then
-                            local to_insert=$(_rusk_quote_text "$raw_text")
-                            compadd -Q -S '' -- "$to_insert"
-                        else
-                            compadd -Q -S '' -- "$raw_text"
-                        fi
+                        # Quote only when needed; do not escape plain spaces.
+                        local quoted_text="$(_rusk_quote_text "$raw_text")"
+                        # Do not assign to BUFFER in zsh completion: it's read-only in real completion context.
+                        # Instead, return a completion candidate that includes the ID plus the quoted task text.
+                        local completion_value="${cur} ${quoted_text}"
+                        reply=()
+                        # In real completion context, `compadd` will insert the value into the buffer.
+                        # In our unit tests, `compadd` may be disallowed (no completion context), so we
+                        # keep `reply` as the runtime evidence for what would be inserted.
+                        # -Q helps zsh insert the candidate as-is (instead of backslash-escaped spaces)
+                        compadd -Q -S '' -- "$completion_value" 2>/dev/null || reply=("$completion_value")
+                        return 0
                     fi
                 fi
             # Complete flags

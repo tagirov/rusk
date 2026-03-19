@@ -1,5 +1,5 @@
 #!/usr/bin/env fish
-# Test: rusk e <id> <tab> should return ONLY task text, NO dates
+# Test: rusk e <id> <tab> should return ONLY flags (-d/--date, -h/--help), NO task text, NO dates
 # This is the critical test for the reported issue
 
 set SCRIPT_DIR (dirname (status -f))
@@ -75,25 +75,72 @@ set TESTS_FAILED 0
 
 print_test_section "Fish Completion Tests - Edit After ID"
 
-# Test 1: rusk e 1 <tab> (with space after ID) - should return task text only
-print_test "rusk e 1 <tab> (with space after ID)" "rusk e 1" "Should return ONLY task text, NO dates"
-if functions -q __rusk_get_task_text
-    set TASK_TEXT (__rusk_get_task_text "1" 2>/dev/null)
-    if test -n "$TASK_TEXT"
-        # Should return task text, not dates
-        if string match -rq '^[0-9]{2}-[0-9]{2}-[0-9]{4}' "$TASK_TEXT"
-            assert_true 1 "Returns task text (NOT dates): '$TASK_TEXT'"
-        else
-            assert_true 0 "Returns task text (NOT dates): '$TASK_TEXT'"
-        end
-    else
-        assert_true 0 "Returns empty (no task text found)"
-    end
-else
-    assert_true 1 "Function __rusk_get_task_text exists"
+# Deterministic overrides (avoid depending on real task data / fish interactive commandline)
+function __rusk_is_command
+    return 0
 end
 
-# Test 2: rusk e 1 2 <tab> (multiple IDs) - should return task IDs, not text
+function __rusk_get_task_text
+    echo "dummy task text"
+end
+
+set -g __rusk_test_current_word ""
+
+function __rusk_get_cmdline
+    printf '%s\n' rusk e 1
+end
+
+function __rusk_get_current_word
+    echo $__rusk_test_current_word
+end
+
+# Test 1: rusk e 1 <tab> (with space after ID) - should return ONLY flags
+print_test "rusk e 1 <tab> (with space after ID)" "rusk e 1" "Should return ONLY flags (-d, --date, -h, --help), NO task text"
+set -g __rusk_test_current_word ""
+
+if __rusk_should_complete_edit_text
+    assert_true 1 "Does NOT suggest task text after spaced ID"
+else
+    assert_true 0 "Does NOT suggest task text after spaced ID"
+end
+
+if __rusk_should_complete_edit_flags
+    assert_true 0 "Suggests flags after spaced ID"
+else
+    assert_true 1 "Suggests flags after spaced ID"
+end
+
+set -l flags (__rusk_complete_edit_flags)
+if contains -- -d $flags && contains -- --date $flags && contains -- -h $flags && contains -- --help $flags
+    assert_true 0 "Flags completion contains expected flags"
+else
+    assert_true 1 "Flags completion contains expected flags (got: $flags)"
+end
+
+# Test 2: rusk e 1<tab> (no space) - should suggest task text
+print_test "rusk e 1<tab> (without space)" "rusk e 1" "Should suggest task text (no flags)"
+set -g __rusk_test_current_word "1"
+
+if __rusk_should_complete_edit_text
+    assert_true 0 "Suggests task text after non-spaced ID"
+else
+    assert_true 1 "Suggests task text after non-spaced ID"
+end
+
+if __rusk_should_complete_edit_flags
+    assert_true 1 "Does NOT suggest flags while completing the ID"
+else
+    assert_true 0 "Does NOT suggest flags while completing the ID"
+end
+
+set -l task_text (__rusk_complete_edit_text)
+if test "$task_text" = "dummy task text" -o "$task_text" = "1 dummy task text"
+    assert_true 0 "Task text completion returns expected dummy text"
+else
+    assert_true 1 "Task text completion returns expected dummy text (got: $task_text)"
+end
+
+# Test 3: rusk e 1 2 <tab> (multiple IDs) - should return task IDs, not text
 print_test "rusk e 1 2 <tab> (multiple IDs)" "rusk e 1 2" "Should return task IDs (not text, not dates)"
 assert_true 0 "Multiple IDs detected, should return task IDs"
 

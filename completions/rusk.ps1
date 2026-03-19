@@ -147,11 +147,17 @@ function _rusk_get_entered_ids {
     # Start from index 2 to skip "rusk" and command name
     # Determine end index: exclude last token only if wordToComplete is empty AND last token is empty
     $endIndex = $tokens.Count
-    if ([string]::IsNullOrEmpty($wordToComplete) -and $tokens.Count -gt 2) {
-        $lastTokenValue = $tokens[$tokens.Count - 1].Value
-        # Only exclude last token if it's empty (represents current word being completed)
-        if ([string]::IsNullOrEmpty($lastTokenValue)) {
+    if ($tokens.Count -gt 2) {
+        # If we are completing a non-empty current word, exclude the last token
+        # because it represents the token under the cursor.
+        if (-not [string]::IsNullOrEmpty($wordToComplete)) {
             $endIndex = $tokens.Count - 1
+        } elseif ([string]::IsNullOrEmpty($wordToComplete)) {
+            $lastTokenValue = $tokens[$tokens.Count - 1].Value
+            # Only exclude last token if it's empty (represents current word being completed)
+            if ([string]::IsNullOrEmpty($lastTokenValue)) {
+                $endIndex = $tokens.Count - 1
+            }
         }
     }
     for ($i = 2; $i -lt $endIndex; $i++) {
@@ -321,28 +327,18 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
             $enteredIds = _rusk_get_entered_ids $tokens $wordToComplete
             
             # CRITICAL CHECK FIRST: If previous token is an ID and current word is empty,
-            # we MUST suggest task text ONLY, NOT dates or anything else
+            # we MUST suggest ONLY flags (-d/--date, -h/--help). No task text, no dates.
             # This handles "rusk e 1 <tab>" case (with space after ID)
             # This check MUST come FIRST, before ANY other logic, to prevent dates from being suggested
             if ($prev -match '^\d+$' -and [string]::IsNullOrEmpty($cur)) {
                 # Only proceed if we have exactly one ID and it matches prev
                 if ($enteredIds.Count -eq 1 -and $prev -eq $enteredIds[0].ToString()) {
-                    $taskText = _rusk_get_task_text $prev
-                    if ($taskText -and -not [string]::IsNullOrWhiteSpace($taskText)) {
-                        # Quote the text if it contains special characters
-                        $quotedText = _rusk_quote_text $taskText
-                        # Return ONLY task text, nothing else - this prevents dates from being suggested
-                        # Use ListItemText and CompletionText explicitly to avoid path interpretation
-                        $completionResult = [System.Management.Automation.CompletionResult]::new(
-                            $quotedText,         # completionText - what gets inserted
-                            $taskText,           # listItemText - what shows in list (unquoted for display)
-                            [System.Management.Automation.CompletionResultType]::ParameterValue,
-                            "Current task text"  # toolTip
-                        )
-                        return @($completionResult)
-                    }
-                    # If no task text found, return empty - do NOT suggest dates or anything else
-                    return @()
+                    return @(
+                        [System.Management.Automation.CompletionResult]::new('--date', '--date', [System.Management.Automation.CompletionResultType]::ParameterName, 'Set task date'),
+                        [System.Management.Automation.CompletionResult]::new('-d', '-d', [System.Management.Automation.CompletionResultType]::ParameterName, 'Set task date'),
+                        [System.Management.Automation.CompletionResult]::new('--help', '--help', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help'),
+                        [System.Management.Automation.CompletionResult]::new('-h', '-h', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help')
+                    )
                 }
                 # If prev is an ID but condition above didn't match, still return empty to prevent dates
                 return @()

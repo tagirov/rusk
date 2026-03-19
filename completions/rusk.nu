@@ -528,19 +528,36 @@ def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_
   let cur_ends_with_comma = (ends-with-comma $cur)
   let prev_id = (extract-id $prev)
   let cur_id = (extract-id $cur)
-  
-  # Case 2: Space after single ID - suggest task text
+
+  # Space after single ID: suggest ONLY flags
   if ($cur == "") and (is-number $prev_id) and not $prev_ends_with_comma {
     if ($entered_ids | length) == 1 {
-      let task_id = ($prev_id | into int)
-      return (get-task-text-completion $task_id $spans)
+      let all_flags = ((get-date-flags) | append (get-common-flags))
+      return (complete-flags $all_flags $cur)
     }
   }
   
   # Case 3: Append task text when ID is immediately followed by <tab> (no space).
-  # IDs themselves must not be suggested, so we only append task text for the ID the user already typed.
+  # entered_ids includes the current token; exclude it so `rusk edit 5<TAB>` matches (like bash COMP_CWORD).
   if ($cur != "") and (is-number $cur) and ($prev == "edit" or $prev == "e") and not $has_trailing_space {
-    if ($entered_ids | length) == 0 {
+    let filtered = ($spans | where $it != "")
+    let rusk_idx = try {
+      ($filtered | enumerate | where {|it| $it.item == "rusk"} | get 0.index)
+    } catch {
+      -1
+    }
+    let rest = if $rusk_idx >= 0 {
+      ($filtered | skip ($rusk_idx + 2))
+    } else {
+      ($filtered | skip 2)
+    }
+    let n = ($rest | length)
+    let before_tokens = if $n > 1 { $rest | take ($n - 1) } else { [] }
+    let ids_before_cur = ($before_tokens | where {|x|
+      try { ($x | into int | ignore); true } catch { false }
+    })
+    let last_tok = try { $rest | last } catch { "" }
+    if ($last_tok == $cur) and ($ids_before_cur | is-empty) {
       try {
         let current_id = ($cur | into int)
         let task_text = (get-task-text $current_id $spans)

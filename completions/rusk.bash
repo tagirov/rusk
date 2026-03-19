@@ -311,12 +311,21 @@ _rusk_completion() {
             ;;
             
         edit|e)
-            # Suggest task text if previous word is a single ID and current is empty
+            # After single ID with a space: suggest ONLY flags
             if [[ "$prev" =~ ^[0-9]+$ ]] && [[ -z "$cur" ]]; then
                 if [ $(_rusk_count_ids) -eq 1 ]; then
-                    local task_text=$(_rusk_get_task_text "$prev")
+                    _rusk_complete_add_edit_flags
+                    return 0
+                fi
+            fi
+
+            # Support completion without a space after ID: `rusk edit <id><TAB>`
+            # Here `$cur` is the numeric ID being edited; we append task text after it.
+            if [[ "$cur" =~ ^[0-9]+$ ]] && ([[ "$prev" == "edit" ]] || [[ "$prev" == "e" ]]); then
+                if [ $(_rusk_count_ids) -eq 0 ]; then
+                    local task_text=$(_rusk_get_task_text "$cur")
                     if [ -n "$task_text" ]; then
-                        COMPREPLY=("$task_text")
+                        COMPREPLY=("$cur $task_text")
                         return 0
                     fi
                 fi

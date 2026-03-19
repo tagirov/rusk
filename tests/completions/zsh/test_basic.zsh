@@ -19,7 +19,7 @@ else
 fi
 
 # Source the completion file
-source "$COMPLETION_FILE"
+_RUSK_ZSH_SKIP_ENTRY=1 source "$COMPLETION_FILE"
 
 # Test 2: Check if completion function exists
 if (( $+functions[_rusk] )); then

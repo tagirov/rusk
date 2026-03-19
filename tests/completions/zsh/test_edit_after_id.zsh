@@ -12,7 +12,7 @@ COMPLETION_FILE="$PROJECT_ROOT/completions/rusk.zsh"
 
 # Source the completion file
 if [[ -f "$COMPLETION_FILE" ]]; then
-    source "$COMPLETION_FILE"
+    _RUSK_ZSH_SKIP_ENTRY=1 source "$COMPLETION_FILE"
 else
     echo "Error: Completion file not found: $COMPLETION_FILE"
     exit 1

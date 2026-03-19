@@ -38,8 +38,8 @@ function __rusk_complete_and_unescape
         end
 
         if test $__rusk_match1 -eq 1
-            # Remove backslash escaping using string unescape
-            set -l unescaped (string unescape -- "$cmd_after")
+            # Remove script escapes, then strip any remaining `\ ` (Fish escaped spaces) in the buffer.
+            set -l unescaped (string replace -a '\ ' ' ' -- (string unescape -- "$cmd_after"))
             
             # Remove unnecessary quotes that fish may have added when using environment variables
             # Extract everything before the task text and the task text itself
@@ -52,7 +52,7 @@ function __rusk_complete_and_unescape
                 # match_result[4] is the text after the ID
                 set -l prefix "$match_result[2] "
                 set -l text_after_id $match_result[4]
-                set -l original_text $text_after_id
+                set text_after_id (string replace -a '\ ' ' ' -- "$text_after_id")
                 
                 # Do not rewrite flag completion after ID (e.g. "-", "-d", "--date").
                 # Rewriting here can produce "'-'" instead of flag suggestions.
@@ -247,14 +247,10 @@ function __rusk_get_task_text
     end
 end
 
-# Check if text contains special characters that require quoting
-# Special chars: | ; & > < ( ) [ ] { } $ " ' ` \ * ? ~ # @ ! % ^ = + - / : ,
-function __rusk_needs_quotes
-    set -l text $argv[1]
-    if string match -qr '[|;\&><\(\)\[\]\{\}\$"\'`\\\*\?\~\#\@\!\%\^\=\+\-\/\:\,]' -- "$text"
-        return 0
-    end
-    return 1
+# True (status 0) if text contains shell metacharacters that require quoting.
+# Space alone does not count; see __rusk_quote_text.
+function __rusk_has_shell_metachar -a text
+    string match -qr '[|;\&><\(\)\[\]\{\}\$"\'`\\\*\?\~\#\@\!\%\^\=\+\-\/\:\,]' -- "$text"
 end
 
 # Check if text contains single quote
@@ -266,11 +262,15 @@ function __rusk_contains_single_quote
     return 1
 end
 
-# Quote text if it contains special characters
+# Quote text only for shell metacharacters (not spaces alone). Otherwise raw text.
 # Use single quotes if no single quote in text, otherwise use double quotes with escaping
 function __rusk_quote_text
     set -l text $argv[1]
-    if not __rusk_needs_quotes "$text"
+    set -l will_quote 0
+    if __rusk_has_shell_metachar "$text"
+        set will_quote 1
+    end
+    if test $will_quote -eq 0
         printf '%s\n' "$text"
         return
     end
@@ -672,7 +672,7 @@ complete -c rusk -f -n '__rusk_should_complete_date edit e' -a '(__rusk_get_two_
 complete -c rusk -f -n '__rusk_should_complete_edit_flags' -a '(__rusk_complete_edit_flags)'
 
 # Task text completion (before ID completion for priority)
-# Text is always wrapped in single quotes to prevent fish from escaping spaces with backslashes
+# Task text after ID: wrapper unescapes Fish backslashes; quotes only if __rusk_has_shell_metachar (not for spaces alone).
 complete -c rusk -f \
     -n '__rusk_should_complete_edit_text' \
     -a '(__rusk_complete_edit_text)' \

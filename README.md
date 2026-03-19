@@ -109,12 +109,12 @@ rusk del 1
 # Delete all completed tasks
 rusk del --done
 
-# Get help for any command
+# Get help
 rusk --help
 
-# Get help for a specific command
+# Help for a specific command
 rusk add --help
-rusk del --done --help 
+rusk del --done --help
 ```
 
 ## Working with Multiple Tasks
@@ -172,6 +172,7 @@ rusk m (mark)
 rusk e (edit)
 rusk d (del)
 rusk r (restore)
+rusk c (completions)
 
 -d (--date)
 -h (--help)
@@ -188,10 +189,10 @@ It provides autocomplete for commands, task IDs, and task text during editing by
 
 
 **Features**
-- Command completion: Autocomplete commands (`add`, `edit`, `mark`, `del`, etc.) and their aliases
+- Command completion: `add`, `edit`, `mark`, `del`, `completions`, etc. and their aliases
 - Task text completion: `rusk edit <id><tab>` appends the task text for that ID. If the text contains shell-special characters  (``| ; & > < ( ) [ ] { } $ " ' \` * ? ~ # @ ! % ^ = + - / : ,``), it is automatically wrapped in single quotes (double quotes if the text has `'`)
 - Flag completion: Autocomplete `--date`, `--done`, etc.
-- Date suggestions: `--date<tab>` or `-d<tab>` flags, suggests default dates: Today, Tomorrow, One week ahead, Two weeks ahead
+- Date suggestions: after `--date` or `-d`, suggests default dates: today, tomorrow, one week ahead, two weeks ahead
 
 **Windows Support**
 - Git Bash: Works with `bash` completions (uses Unix-style paths)

@@ -5,7 +5,11 @@ use rusk::{TaskManager, cli::HandlerCLI, completions::Shell, parse_edit_args, pa
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(about, version)]
+#[command(
+    version,
+    about,
+    after_help = "Without COMMAND, lists all tasks (same as `rusk list`).\n\nEnvironment:\n  RUSK_DB    Optional path to the tasks database file or directory.\n\nShell tab completion:\n  rusk completions install <shell>    (bash, zsh, fish, nu, powershell)\n  rusk completions show <shell>       print script to stdout"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -25,7 +29,7 @@ enum Command {
     },
     #[command(
         alias = "d",
-        about = "Delete tasks by id(s) (alias: \x1b[1md\x1b[0m). Use --done to delete all completed tasks. Examples: rusk del 3, rusk del 1,2,3",
+        about = "Delete tasks by id(s) (alias: \x1b[1md\x1b[0m). Multiple IDs: comma-separated (e.g. 1,2,3). Use --done to delete all completed tasks. Examples: rusk del 3, rusk del 1,2,3, rusk del --done",
         help_template = "{about-section}\n\nUsage: rusk del [IDS]... [OPTIONS]\n\n{all-args}"
     )]
     Del {
@@ -36,7 +40,7 @@ enum Command {
     },
     #[command(
         alias = "m",
-        about = "Mark tasks as done/undone by id(s) (alias: \x1b[1mm\x1b[0m). Examples: rusk mark 3, rusk mark 1,2,3"
+        about = "Mark tasks as done/undone by id(s) (alias: \x1b[1mm\x1b[0m). Multiple IDs: comma-separated (e.g. 1,2,3). Examples: rusk mark 3, rusk mark 1,2,3"
     )]
     Mark {
         #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
@@ -44,7 +48,7 @@ enum Command {
     },
     #[command(
         alias = "e",
-        about = "Edit tasks by id(s) (alias: \x1b[1me\x1b[0m). Text can be provided without quotes. Examples: rusk e 3 new task text -d 01-11-2025 (or short format: 1-11-25), rusk e 1,2,3 shared text",
+        about = "Edit tasks by id(s) (alias: \x1b[1me\x1b[0m). Multiple IDs: comma-separated with shared new text. Without text: `rusk edit 1` edits text interactively; `rusk edit 1 --date` edits text and date interactively. Examples: rusk e 3 new task text -d 01-11-2025 (or short: 1-11-25), rusk e 1,2,3 shared text",
         help_template = "{about-section}\n\nUsage: rusk edit [ARGS]... [OPTIONS]\n\n{all-args}"
     )]
     Edit {
@@ -56,7 +60,7 @@ enum Command {
     },
     #[command(
         alias = "l",
-        about = "List all tasks with their status, id, date, and text (alias: \x1b[1ml\x1b[0m)"
+        about = "List all tasks with their status, id, date, and text (alias: \x1b[1ml\x1b[0m). Running `rusk` with no subcommand does the same"
     )]
     List {
         #[arg(long, hide = true, default_value_t = false)]

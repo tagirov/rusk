@@ -35,8 +35,7 @@ fi
 # Test: Check if helper functions exist
 print_test "Helper functions" "" "Should have helper functions"
 if declare -f _rusk_get_task_ids >/dev/null && \
-   declare -f _rusk_get_task_text >/dev/null && \
-   declare -f _rusk_get_date_options >/dev/null; then
+   declare -f _rusk_get_task_text >/dev/null; then
     assert_true 0 "Helper functions exist"
 else
     assert_true 1 "Helper functions exist"
@@ -237,15 +236,6 @@ if [ -n "$TASK_IDS" ] || [ -z "$TASK_IDS" ]; then
     assert_true 0 "get_task_ids function works"
 else
     assert_true 1 "get_task_ids function works"
-fi
-
-# Test: _rusk_get_date_options returns dates
-print_test "Get date options" "" "Should return date options"
-DATE_OPTIONS=$(_rusk_get_date_options 2>/dev/null)
-if [ -n "$DATE_OPTIONS" ]; then
-    assert_true 0 "get_date_options function works"
-else
-    assert_true 1 "get_date_options function works"
 fi
 
 # Test: Completion is registered

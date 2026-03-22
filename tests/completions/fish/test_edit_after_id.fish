@@ -150,11 +150,6 @@ function __rusk_get_cmdline
     printf '%s\n' rusk e 1 --date
 end
 set -g __rusk_test_current_word ""
-if not __rusk_should_complete_date edit e
-    assert_true 0 "Should NOT run date completion after --date + space"
-else
-    assert_true 1 "Should NOT run date completion after --date + space"
-end
 if __rusk_should_complete_edit_flags
     set -l flags (__rusk_complete_edit_flags)
     if contains -- -h $flags; and contains -- --help $flags

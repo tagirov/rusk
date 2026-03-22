@@ -86,14 +86,6 @@ if (assert_true true "Completion file loads successfully") {
 # ============================================================================
 print_test_section "ADD Command Tests"
 
-# Test: Add command should support date completion
-print_test "Add date completion" "rusk add x --date" "Dates: --date<tab>; space after flag → -h/--help"
-if (assert_true true "Add command supports date completion") {
-    $tests_passed = ($tests_passed + 1)
-} else {
-    $tests_failed = ($tests_failed + 1)
-}
-
 # Test: rusk add <tab> should suggest flags
 print_test "rusk add <tab> (flag completion)" "rusk add" "Should suggest -h/--help only before task text"
 if (assert_true true "Add command should suggest flags") {

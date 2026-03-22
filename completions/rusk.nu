@@ -331,24 +331,6 @@ def has-task-text [spans: list<string>] {
   })
 }
 
-# Generate date completion options
-def get-date-options [] {
-  try {
-    let today = (date now | format date "%d-%m-%Y")
-    let tomorrow = ((date now) + 1day | format date "%d-%m-%Y")
-    let week_ahead = ((date now) + 7day | format date "%d-%m-%Y")
-    let two_weeks_ahead = ((date now) + 14day | format date "%d-%m-%Y")
-    [
-      {value: $today, description: $"Today ($today)"}
-      {value: $tomorrow, description: $"Tomorrow ($tomorrow)"}
-      {value: $week_ahead, description: $"One week ahead ($week_ahead)"}
-      {value: $two_weeks_ahead, description: $"Two weeks ahead ($two_weeks_ahead)"}
-    ]
-  } catch {
-    []
-  }
-}
-
 # Complete task IDs with descriptions
 def complete-task-ids [entered_ids: list<int>, spans: list<string>] {
   let all_ids = (get-task-ids $spans)
@@ -397,37 +379,6 @@ def filter-by-prefix [completions: list<record>, prefix: string] {
 # Complete flags with filtering
 def complete-flags [flags: list<record>, cur: string] {
   filter-by-prefix $flags $cur
-}
-
-# Check if word is a date flag
-def is-date-flag [word: string] {
-  ($word == "--date" or $word == "-d")
-}
-
-# Complete date flag values
-# Dates attach to -d/--date without a space (-d<tab>); after "-d " / "--date " suggest nothing here (callers show -h/--help).
-def complete-date-flag [cur: string, prev: string] {
-  let cur_is_date_flag = (is-date-flag $cur)
-  let prev_is_date_flag = (is-date-flag $prev)
-  let cur_starts_with_d = ($cur | str starts-with "-d")
-  
-  if $cur_is_date_flag {
-    let date_options = (get-date-options)
-    let flag = $cur
-    ($date_options | each {|item|
-      {value: $"($flag) ($item.value)", description: $item.description}
-    })
-  } else if $cur_starts_with_d {
-    (get-date-options)
-  } else if $prev_is_date_flag {
-    if ($cur == "") {
-      []
-    } else {
-      filter-by-prefix (get-date-options) $cur
-    }
-  } else {
-    []
-  }
 }
 
 # Check if word ends with comma
@@ -537,12 +488,6 @@ def complete-add [spans: list<string>, cur: string, prev: string] {
     return (complete-flags (get-common-flags) $cur)
   }
   
-  # Handle date flag completion (-d<tab> / partial date value)
-  let date_completions = (complete-date-flag $cur $prev)
-  if ($date_completions | length) > 0 {
-    return $date_completions
-  }
-  
   # Complete flags (-d/--date only after task text)
   if ($cur == "") or ($cur | str starts-with "-") {
     let has_text = (add-has-prior-task-text $spans)
@@ -551,15 +496,7 @@ def complete-add [spans: list<string>, cur: string, prev: string] {
     } else {
       (get-common-flags)
     }
-    
-    if ($cur == "") {
-      return $all_flags
-    }
-    
-    let cur_starts_with_d = ($cur | str starts-with "-d")
-    if not $cur_starts_with_d {
-      return (complete-flags $all_flags $cur)
-    }
+    return (complete-flags $all_flags $cur)
   }
   
   []
@@ -574,23 +511,9 @@ def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_
     return (complete-flags (get-common-flags) $cur)
   }
   
-  # Date value after -d/--date (non-empty cur)
-  if ($prev == "-d" or $prev == "--date") and ($cur != "") {
-    let date_completions = (complete-date-flag $cur $prev)
-    if ($date_completions | length) > 0 {
-      return $date_completions
-    }
-  }
-  
   # If task text has already been entered, stop further edit completions
   if (has-task-text $spans) {
     return []
-  }
-  
-  # -d<tab> / --date<tab> (flag token) and other date-flag cases
-  let date_completions = (complete-date-flag $cur $prev)
-  if ($date_completions | length) > 0 {
-    return $date_completions
   }
   
   let prev_ends_with_comma = (ends-with-comma $prev)

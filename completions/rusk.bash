@@ -122,15 +122,6 @@ _rusk_get_task_text() {
     fi
 }
 
-# Get date options (today, tomorrow, week ahead, two weeks ahead)
-_rusk_get_date_options() {
-    local today=$(date +%d-%m-%Y 2>/dev/null)
-    local tomorrow=$(date -d '+1 day' +%d-%m-%Y 2>/dev/null || date -v+1d +%d-%m-%Y 2>/dev/null || date +%d-%m-%Y)
-    local week_ahead=$(date -d '+1 week' +%d-%m-%Y 2>/dev/null || date -v+1w +%d-%m-%Y 2>/dev/null || date +%d-%m-%Y)
-    local two_weeks_ahead=$(date -d '+2 weeks' +%d-%m-%Y 2>/dev/null || date -v+2w +%d-%m-%Y 2>/dev/null || date +%d-%m-%Y)
-    echo "$today $tomorrow $week_ahead $two_weeks_ahead"
-}
-
 # Get entered task IDs from command line
 _rusk_get_entered_ids() {
     local entered_ids=""
@@ -209,38 +200,6 @@ _rusk_complete_task_ids() {
         return 0
     fi
     return 1
-}
-
-# Complete date values
-_rusk_complete_date() {
-    local dates=$(_rusk_get_date_options)
-    COMPREPLY=($(compgen -W "$dates" -- "$cur"))
-    return 0
-}
-
-# "-d <date>" / "--date <date>" when current word is the flag (… -d<tab>, not "-d <tab>")
-_rusk_complete_date_flag_attachment() {
-    local dates d
-    dates=$(_rusk_get_date_options)
-    COMPREPLY=()
-    if [[ "$cur" == --date* ]]; then
-        for d in $dates; do
-            COMPREPLY+=("--date $d")
-        done
-    elif [[ "$cur" == -d* ]] && [[ "$cur" != --* ]]; then
-        for d in $dates; do
-            COMPREPLY+=("-d $d")
-        done
-    fi
-    if ((${#COMPREPLY[@]} > 0)); then
-        local c="$cur" x
-        local -a filtered=()
-        for x in "${COMPREPLY[@]}"; do
-            [[ "$x" == "$c"* ]] && filtered+=("$x")
-        done
-        ((${#filtered[@]} > 0)) && COMPREPLY=("${filtered[@]}")
-    fi
-    return 0
 }
 
 # True when add has at least one completed task-text token (not a flag; skips date value after -d/--date)
@@ -387,13 +346,7 @@ _rusk_completion() {
             if [[ "$prev" == "--date" ]] || [[ "$prev" == "-d" ]]; then
                 if [[ -z "$cur" ]]; then
                     COMPREPLY=($(compgen -W "-h --help" -- "$cur"))
-                else
-                    _rusk_complete_date
                 fi
-            # -d<tab> / --date<tab> (flag token): attach preset dates
-            elif [[ "$cur" == --date* ]] || { [[ "$cur" == -d* ]] && [[ "$cur" != --* ]]; }; then
-                _rusk_complete_date_flag_attachment
-            # For `rusk add <tab>` or when starting a flag, offer flags
             elif [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
                 _rusk_complete_add_edit_flags
             fi
@@ -420,17 +373,10 @@ _rusk_completion() {
                 fi
             fi
             
-            # Complete date flag
             if [[ "$prev" == "--date" ]] || [[ "$prev" == "-d" ]]; then
                 if [[ -z "$cur" ]]; then
                     COMPREPLY=($(compgen -W "-h --help" -- "$cur"))
-                else
-                    _rusk_complete_date
                 fi
-            # -d<tab> / --date<tab> after id or text (current word is the flag)
-            elif [[ "$cur" == --date* ]] || { [[ "$cur" == -d* ]] && [[ "$cur" != --* ]]; }; then
-                _rusk_complete_date_flag_attachment
-            # Complete flags
             elif [[ "$cur" == -* ]]; then
                 _rusk_complete_edit_flags
             fi

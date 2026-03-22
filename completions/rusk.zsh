@@ -173,15 +173,6 @@ _rusk_get_task_text_raw() {
     fi
 }
 
-# Get date options (today, tomorrow, week ahead, two weeks ahead)
-_rusk_get_date_options() {
-    local today=$(date +%d-%m-%Y 2>/dev/null)
-    local tomorrow=$(date -d '+1 day' +%d-%m-%Y 2>/dev/null || date -v+1d +%d-%m-%Y 2>/dev/null || date +%d-%m-%Y)
-    local week_ahead=$(date -d '+1 week' +%d-%m-%Y 2>/dev/null || date -v+1w +%d-%m-%Y 2>/dev/null || date +%d-%m-%Y)
-    local two_weeks_ahead=$(date -d '+2 weeks' +%d-%m-%Y 2>/dev/null || date -v+2w +%d-%m-%Y 2>/dev/null || date +%d-%m-%Y)
-    echo "$today" "$tomorrow" "$week_ahead" "$two_weeks_ahead"
-}
-
 # Get entered task IDs from command line
 _rusk_get_entered_ids() {
     local -a entered_ids
@@ -265,27 +256,6 @@ _rusk_complete_task_ids() {
     return 1
 }
 
-# Complete date values
-_rusk_complete_date() {
-    local -a dates=($(_rusk_get_date_options))
-    compadd $dates
-}
-
-# "-d <date>" / "--date <date>" when current word is the flag token
-_rusk_complete_date_flag_attachment() {
-    local -a ds=($(_rusk_get_date_options))
-    local d
-    if [[ "$cur" == --date* ]]; then
-        for d in $ds; do
-            compadd -Q -S '' -- "--date $d" 2>/dev/null || reply+=("--date $d")
-        done
-    elif [[ "$cur" == -d* ]] && [[ "$cur" != --* ]]; then
-        for d in $ds; do
-            compadd -Q -S '' -- "-d $d" 2>/dev/null || reply+=("-d $d")
-        done
-    fi
-}
-
 # add: task text before cursor (completed words only)
 _rusk_add_has_task_text() {
     local rusk_idx=-1
@@ -361,13 +331,7 @@ _rusk_main() {
             if [[ "$prev" == "--date" ]] || [[ "$prev" == "-d" ]]; then
                 if [[ -z "$cur" ]]; then
                     compadd -- -h --help
-                else
-                    _rusk_complete_date
                 fi
-            # -d<tab> / --date<tab>
-            elif [[ "$cur" == --date* ]] || { [[ "$cur" == -d* ]] && [[ "$cur" != --* ]]; }; then
-                _rusk_complete_date_flag_attachment
-            # For `rusk add <tab>` or when starting a flag, offer flags
             elif [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
                 if _rusk_add_has_task_text; then
                     compadd -- -d --date -h --help
@@ -378,14 +342,10 @@ _rusk_main() {
             ;;
             
         edit|e)
-            # Complete date flag
             if [[ "$prev" == "--date" ]] || [[ "$prev" == "-d" ]]; then
                 if [[ -z "$cur" ]]; then
                     compadd -- -h --help
-                else
-                    _rusk_complete_date
                 fi
-            # After single ID with a space: suggest ONLY flags
             elif [[ "$prev" =~ ^[0-9]+$ ]] && [[ -z "$cur" ]]; then
                 if [ $(_rusk_count_ids) -eq 1 ]; then
                     compadd -- -h --help
@@ -411,10 +371,6 @@ _rusk_main() {
                         return 0
                     fi
                 fi
-            # -d<tab> / --date<tab> (flag token)
-            elif [[ "$cur" == --date* ]] || { [[ "$cur" == -d* ]] && [[ "$cur" != --* ]]; }; then
-                _rusk_complete_date_flag_attachment
-            # Complete flags
             elif [[ "$cur" == -* ]]; then
                 compadd -- -h --help
             fi

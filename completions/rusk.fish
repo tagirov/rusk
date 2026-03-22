@@ -219,26 +219,6 @@ function __rusk_quote_text
 end
 
 # ============================================================================
-# Date Functions
-# ============================================================================
-
-function __rusk_get_today_date
-    date +%d-%m-%Y 2>/dev/null
-end
-
-function __rusk_get_tomorrow_date
-    date -d '+1 day' +%d-%m-%Y 2>/dev/null; or date -v+1d +%d-%m-%Y 2>/dev/null; or date +%d-%m-%Y
-end
-
-function __rusk_get_week_ahead_date
-    date -d '+1 week' +%d-%m-%Y 2>/dev/null; or date -v+1w +%d-%m-%Y 2>/dev/null; or date +%d-%m-%Y
-end
-
-function __rusk_get_two_weeks_ahead_date
-    date -d '+2 weeks' +%d-%m-%Y 2>/dev/null; or date -v+2w +%d-%m-%Y 2>/dev/null; or date +%d-%m-%Y
-end
-
-# ============================================================================
 # Command Detection Functions
 # ============================================================================
 
@@ -305,60 +285,6 @@ function __rusk_is_after_date_flag
     else
         return 1
     end
-end
-
-# Preset date as bare value, "-d <date>", or "--date <date>" depending on current token
-function __rusk_date_completion_candidate
-    set -l kind $argv[1]
-    set -l cw (__rusk_get_current_word)
-    set -l v
-    switch $kind
-        case today
-            set v (__rusk_get_today_date)
-        case tomorrow
-            set v (__rusk_get_tomorrow_date)
-        case week
-            set v (__rusk_get_week_ahead_date)
-        case twoweek
-            set v (__rusk_get_two_weeks_ahead_date)
-        case '*'
-            return 1
-    end
-    if test "$cw" = --date; or string match -q -- '--date*' "$cw"
-        echo --date $v
-    else if string match -q -- '-d*' "$cw"; and not string match -q -- '--*' "$cw"
-        echo -d $v
-    else
-        echo $v
-    end
-end
-
-# Date value after "-d " / bare presets after "-d<tab>" / "--date<tab>"
-function __rusk_should_complete_date
-    set -l commands $argv
-    __rusk_is_command $commands[1] $commands[2..-1]; or return 1
-    set -l cw (__rusk_get_current_word)
-    test -n "$cw"; or return 1
-    if __rusk_is_after_date_flag
-        return 0
-    end
-    if test "$cw" = --date; or string match -q -- '--date*' "$cw"
-        return 0
-    end
-    if string match -q -- '-d*' "$cw"; and not string match -q -- '--*' "$cw"
-        return 0
-    end
-    return 1
-end
-
-# Check if we should complete flags (generic)
-function __rusk_should_complete_flags
-    set -l commands $argv[1..-2]
-    set -l flags $argv[-1]
-    __rusk_is_command $commands[1] $commands[2..-1]; or return 1
-    __rusk_is_after_date_flag; and return 1
-    set -l current_word (__rusk_get_current_word)
-    __rusk_is_flag "$current_word"; or test -z "$current_word"
 end
 
 # True if add has at least one completed task-text token (skips value after -d/--date)
@@ -433,12 +359,6 @@ function __rusk_should_complete_add_flags
         return 1
     end
     set -l current_word (__rusk_get_current_word)
-    if test "$current_word" = --date; or string match -q -- '--date*' "$current_word"
-        return 1
-    end
-    if string match -q -- '-d*' "$current_word"; and not string match -q -- '--*' "$current_word"
-        return 1
-    end
     __rusk_is_flag "$current_word"; or test -z "$current_word"
 end
 
@@ -481,12 +401,6 @@ function __rusk_should_complete_edit_flags
         return 1
     end
     set -l current_word (__rusk_get_current_word)
-    if test "$current_word" = --date; or string match -q -- '--date*' "$current_word"
-        return 1
-    end
-    if string match -q -- '-d*' "$current_word"; and not string match -q -- '--*' "$current_word"
-        return 1
-    end
     __rusk_is_flag "$current_word"; or test -z "$current_word"
 end
 
@@ -703,24 +617,12 @@ complete -c rusk -f -n '__fish_use_subcommand' -s V -l version -d 'Show version'
 # Add Command Completions
 # ============================================================================
 
-# Date completions
-complete -c rusk -f -n '__rusk_should_complete_date add a' -a '(__rusk_date_completion_candidate today)' -d 'Today'
-complete -c rusk -f -n '__rusk_should_complete_date add a' -a '(__rusk_date_completion_candidate tomorrow)' -d 'Tomorrow'
-complete -c rusk -f -n '__rusk_should_complete_date add a' -a '(__rusk_date_completion_candidate week)' -d 'One week ahead'
-complete -c rusk -f -n '__rusk_should_complete_date add a' -a '(__rusk_date_completion_candidate twoweek)' -d 'Two weeks ahead'
-
 # Flag completions
 complete -c rusk -f -n '__rusk_should_complete_add_flags' -a '(__rusk_complete_add_flags)'
 
 # ============================================================================
 # Edit Command Completions
 # ============================================================================
-
-# Date completions
-complete -c rusk -f -n '__rusk_should_complete_date edit e' -a '(__rusk_date_completion_candidate today)' -d 'Today'
-complete -c rusk -f -n '__rusk_should_complete_date edit e' -a '(__rusk_date_completion_candidate tomorrow)' -d 'Tomorrow'
-complete -c rusk -f -n '__rusk_should_complete_date edit e' -a '(__rusk_date_completion_candidate week)' -d 'One week ahead'
-complete -c rusk -f -n '__rusk_should_complete_date edit e' -a '(__rusk_date_completion_candidate twoweek)' -d 'Two weeks ahead'
 
 # Flag completions
 complete -c rusk -f -n '__rusk_should_complete_edit_flags' -a '(__rusk_complete_edit_flags)'

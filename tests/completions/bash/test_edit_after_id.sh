@@ -22,10 +22,6 @@ _rusk_get_task_text() {
     echo "dummy task text"
 }
 
-_rusk_get_date_options() {
-    echo "01-01-2020 02-01-2020"
-}
-
 reset_counters
 
 print_test_section "Bash Completion Tests - Edit After ID"
@@ -91,7 +87,7 @@ else
 fi
 
 # Test 4: rusk e 1 --date <tab> (space after flag) - help flags only, not dates
-print_test "rusk e 1 --date <tab> (space after flag)" "rusk e 1 --date " "Should return -h/--help only (dates: --date<tab>)"
+print_test "rusk e 1 --date <tab> (space after flag)" "rusk e 1 --date " "Should return -h/--help only"
 if declare -f _rusk_completion >/dev/null; then
     COMP_WORDS=(rusk e 1 --date "")
     COMP_CWORD=4

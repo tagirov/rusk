@@ -37,8 +37,7 @@ fi
 # Test: Check helper functions
 print_test "Helper functions" "" "Should have helper functions"
 if (( $+functions[_rusk_get_task_ids] )) && \
-   (( $+functions[_rusk_get_task_text] )) && \
-   (( $+functions[_rusk_get_date_options] )); then
+   (( $+functions[_rusk_get_task_text] )); then
     assert_true 0 "Helper functions exist"
 else
     assert_true 1 "Helper functions exist"
@@ -48,14 +47,6 @@ fi
 # ADD COMMAND TESTS
 # ============================================================================
 print_test_section "ADD Command Tests"
-
-# Test: Add command should support date completion
-print_test "Add date completion" "rusk add x --date" "Dates after --date<tab> (no space); space after flag → -h/--help"
-if (( $+functions[_rusk_get_date_options] )); then
-    assert_true 0 "Add command supports date completion"
-else
-    assert_true 1 "Add command supports date completion"
-fi
 
 # Test: rusk add <tab> should suggest flags
 print_test "rusk add <tab> (flag completion)" "rusk add" "Should suggest -h/--help only before task text"
@@ -250,15 +241,6 @@ if [[ -n "$TASK_IDS" ]] || [[ -z "$TASK_IDS" ]]; then
     assert_true 0 "get_task_ids function works"
 else
     assert_true 1 "get_task_ids function works"
-fi
-
-# Test: _rusk_get_date_options works
-print_test "Get date options" "" "Should return date options"
-DATE_OPTIONS=($(_rusk_get_date_options 2>/dev/null))
-if (( ${#DATE_OPTIONS[@]} > 0 )); then
-    assert_true 0 "get_date_options function works"
-else
-    assert_true 1 "get_date_options function works"
 fi
 
 get_test_summary

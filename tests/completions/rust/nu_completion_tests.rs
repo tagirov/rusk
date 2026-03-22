@@ -30,8 +30,6 @@ fn test_nu_completion_script_structure() {
         "Script should have get-task-ids function");
     assert!(script.contains("def get-task-text"), 
         "Script should have get-task-text function");
-    assert!(script.contains("def get-date-options"), 
-        "Script should have get-date-options function");
     
     // Check for constant functions
     assert!(script.contains("def get-commands"), 
@@ -548,9 +546,9 @@ fn test_nu_completion_completions_install() -> Result<()> {
     Ok(())
 }
 
-/// Test that Nu Shell completion handles date flag (-d<tab> dates; "-d " shows help only)
+/// Test Nu completion after `-d` / `--date`: no preset dates; flag/help behaviour unchanged.
 #[test]
-fn test_nu_completion_date_flag() -> Result<()> {
+fn test_nu_completion_after_date_flag() -> Result<()> {
     let script = Shell::Nu.get_script();
     let temp_dir = TempDir::new()?;
     let script_path = temp_dir.path().join("rusk.nu");
@@ -593,8 +591,12 @@ fn test_nu_completion_date_flag() -> Result<()> {
             );
             let s2 = String::from_utf8_lossy(&r2.stdout);
             assert!(
-                s2.contains("Today") || s2.contains("Tomorrow"),
-                "After '-d' without space should suggest dates, got: {s2}"
+                !s2.contains("Today") && !s2.contains("Tomorrow"),
+                "After '-d' with task text should not suggest preset dates, got: {s2}"
+            );
+            assert!(
+                s2.contains("-d") || s2.contains("date"),
+                "After '-d' should still offer date flags, got: {s2}"
             );
 
             let edit_d = format!(
@@ -612,13 +614,13 @@ fn test_nu_completion_date_flag() -> Result<()> {
             let s3 = String::from_utf8_lossy(&r3.stdout);
             let s4 = String::from_utf8_lossy(&r4.stdout);
             assert!(
-                s3.contains("Today") && !s4.contains("Today"),
-                "edit: -d<tab> dates, '-d ' help only; got s3={s3} s4={s4}"
+                !s3.contains("Today") && !s4.contains("Today"),
+                "edit: no preset date suggestions; got s3={s3} s4={s4}"
             );
             assert!(s4.contains("help"), "edit after '-d ' should include help");
         }
         (Err(e), _) | (_, Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!("Warning: nu command not found, skipping date flag test");
+            eprintln!("Warning: nu command not found, skipping after-date-flag test");
             return Ok(());
         }
         (Err(e), _) | (_, Err(e)) => return Err(e.into()),
@@ -689,8 +691,10 @@ fn test_nu_completion_aliases() -> Result<()> {
             if result.status.success() {
                 let stdout = String::from_utf8_lossy(&result.stdout);
                 // Should return same completions as "add"
-                assert!(stdout.contains("date") || stdout.contains("-d") || stdout.len() > 0,
-                    "Alias 'a' should work like 'add'");
+                assert!(
+                    stdout.contains("help") || stdout.len() > 0,
+                    "Alias 'a' should work like 'add'"
+                );
             }
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

@@ -27,10 +27,6 @@ _rusk_get_task_text_raw() {
     echo "dummy task text"
 }
 
-_rusk_get_date_options() {
-    echo "01-01-2020 02-01-2020"
-}
-
 reset_counters
 
 print_test_section "Zsh Completion Tests - Edit After ID"

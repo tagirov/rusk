@@ -99,30 +99,17 @@ end
 # ============================================================================
 print_test_section "ADD Command Tests"
 
-# Test: Add command should support date completion
-print_test "Add date completion" "rusk add x --date" "Dates: --date<tab>; space after flag → -h/--help"
-if functions -q __rusk_get_today_date
-    assert_true 0 "Add command supports date completion"
-else
-    assert_true 1 "Add command supports date completion"
-end
-
 # Test: rusk add <tab> should suggest flags
 print_test "rusk add <tab> (flag completion)" "rusk add" "Should suggest -h/--help only before task text"
 assert_true 0 "Add command should suggest help flags before task text"
 
-# Test: rusk add x --date <tab> (space) — help only (dates use --date<tab>)
+# Test: rusk add x --date <tab> (space) — help only
 print_test "rusk add x --date <tab> (space after flag)" "rusk add x --date " "Should suggest -h/--help only"
 function __rusk_get_cmdline
     printf '%s\n' rusk add x --date
 end
 function __rusk_get_current_word
     echo ""
-end
-if not __rusk_should_complete_date add a
-    assert_true 0 "No date completion after --date + space"
-else
-    assert_true 1 "No date completion after --date + space"
 end
 if __rusk_should_complete_add_flags
     set -l flags (__rusk_complete_add_flags)
@@ -318,19 +305,6 @@ if test -n "$TASK_IDS" -o -z "$TASK_IDS"
     assert_true 0 "get_all_task_ids function works"
 else
     assert_true 1 "get_all_task_ids function works"
-end
-
-# Test: Date functions work
-print_test "Get date options" "" "Should return date options"
-if functions -q __rusk_get_today_date
-    set TODAY (__rusk_get_today_date 2>/dev/null)
-    if test -n "$TODAY"
-        assert_true 0 "get_today_date function works"
-    else
-        assert_true 1 "get_today_date function works"
-    end
-else
-    assert_true 1 "get_today_date function works"
 end
 
 get_test_summary

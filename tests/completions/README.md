@@ -109,7 +109,7 @@ Common scenarios covered across all shells (bash, zsh, fish, powershell, nu):
 | **Task ID completion** | `rusk edit <tab>`, `rusk mark <tab>`, `rusk del <tab>` | Empty (no task ID suggestions) |
 | **Task text after single ID** | `rusk edit 1<TAB>` | Task text only — **not** dates (critical for edit) |
 | **Multiple IDs** | `rusk edit 1,2 <tab>`, `rusk mark 1,2 <tab>`, `rusk del 1,2 <tab>` | Empty (no task ID suggestions) |
-| **Date after flag** | `rusk add --date <tab>`, `rusk edit 1 --date <tab>` | Date options (e.g. today, formats) |
+| **After date flag + space** | `rusk add x --date <tab>`, `rusk edit 1 --date <tab>` | `-h` / `--help` only (no date value suggestions) |
 | **Flag completion** | `rusk add <tab>`, `rusk add -<tab>`, `rusk edit 1 -<tab>`, `rusk del -<tab>` | Flags (e.g. --date, -d, --done, --help, -h) |
 | **Completions subcommands** | `rusk completions <tab>`, `rusk c <tab>` | install, show |
 | **Completions shells** | `rusk completions install <tab>`, `rusk completions show <tab>` | bash, zsh, fish, nu, powershell |
@@ -119,12 +119,12 @@ Common scenarios covered across all shells (bash, zsh, fish, powershell, nu):
 **Edit-after-ID (test_edit_after_id):**
 - `rusk e 1<TAB>` → task text only, **no dates**.
 - `rusk e 1,2 <tab>` → empty (IDs are not suggested).
-- `rusk e 1 --date <tab>` → dates (after date flag).
+- `rusk e 1 --date <tab>` → `-h` / `--help` only (no preset dates).
 
 ## Command Coverage
 
-- **add** (a) — flag completion, date completion after `--date`
-- **edit** (e) — task text after ID, flag completion, date after `--date`
+- **add** (a) — flag completion (`-d` / `--date` only after task text); after `-d` / `--date` and a space, help flags only
+- **edit** (e) — task text after ID, flag completion; after `-d` / `--date` and a space, help flags only
 - **mark** (m) — flag completion (task IDs are typed manually)
 - **del** (d) — `--done` flag, flag completion (task IDs are typed manually)
 - **list** (l) — no arguments (empty completion)

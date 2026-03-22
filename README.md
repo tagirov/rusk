@@ -192,7 +192,6 @@ It provides autocomplete for commands, task IDs, and task text during editing by
 - Command completion: `add`, `edit`, `mark`, `del`, `completions`, etc. and their aliases
 - Task text completion: `rusk edit <id><tab>` appends the task text for that ID. If the text contains shell-special characters  (``| ; & > < ( ) [ ] { } $ " ' \` * ? ~ # @ ! % ^ = + - / : ,``), it is automatically wrapped in single quotes (double quotes if the text has `'`)
 - Flag completion: Autocomplete `--date`, `--done`, etc.
-- Date suggestions: after `--date` or `-d`, suggests default dates: today, tomorrow, one week ahead, two weeks ahead
 
 **Windows Support**
 - Git Bash: Works with `bash` completions (uses Unix-style paths)

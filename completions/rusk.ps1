@@ -130,15 +130,6 @@ function _rusk_get_task_text {
     return $null
 }
 
-# Get date options (today, tomorrow, week ahead, two weeks ahead)
-function _rusk_get_date_options {
-    $today = (Get-Date).ToString("dd-MM-yyyy")
-    $tomorrow = (Get-Date).AddDays(1).ToString("dd-MM-yyyy")
-    $weekAhead = (Get-Date).AddDays(7).ToString("dd-MM-yyyy")
-    $twoWeeksAhead = (Get-Date).AddDays(14).ToString("dd-MM-yyyy")
-    return @($today, $tomorrow, $weekAhead, $twoWeeksAhead)
-}
-
 # Get entered task IDs from tokens
 # Excludes the current word being completed (last token if wordToComplete is empty)
 function _rusk_get_entered_ids {
@@ -224,31 +215,6 @@ function _rusk_add_has_prior_task_text {
     return $false
 }
 
-# Complete date values
-# NOTE: This function should ONLY be called when we're explicitly after a date flag
-function _rusk_complete_date {
-    param($wordToComplete)
-    $dates = _rusk_get_date_options
-    if ([string]::IsNullOrEmpty($wordToComplete)) {
-        $filtered = $dates
-    } else {
-        $filtered = $dates | Where-Object { $_ -like "$wordToComplete*" }
-    }
-    if ($filtered) {
-        return $filtered | ForEach-Object {
-            $desc = switch ($_) {
-                { $_ -eq $dates[0] } { "Today ($_)" }
-                { $_ -eq $dates[1] } { "Tomorrow ($_)" }
-                { $_ -eq $dates[2] } { "One week ahead ($_)" }
-                { $_ -eq $dates[3] } { "Two weeks ahead ($_)" }
-                default { $_ }
-            }
-            [System.Management.Automation.CompletionResult]::new($_, $_, [System.Management.Automation.CompletionResultType]::ParameterValue, $desc)
-        }
-    }
-    return @()
-}
-
 # Complete task IDs with filtering and descriptions
 function _rusk_complete_task_ids {
     param($tokens, $wordToComplete)
@@ -327,7 +293,6 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
     # Handle subcommands
     switch ($command) {
         { $_ -in 'add', 'a' } {
-            # After "-d " / "--date " (blank next word): help flags only; dates use -d<tab> / partial date value
             if (_rusk_is_after_date_flag $prev $tokens $commandAst) {
                 if ([string]::IsNullOrEmpty($cur)) {
                     return @(
@@ -335,24 +300,7 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
                         [System.Management.Automation.CompletionResult]::new('-h', '-h', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help')
                     )
                 }
-                if ($wordToComplete -ne '-d' -and $wordToComplete -ne '--date') {
-                    return _rusk_complete_date $wordToComplete
-                }
-            }
-            # -d<tab> / --date<tab> (flag token): preset dates with flag prefix
-            if (($cur -like '--date*') -or (($cur -like '-d*') -and ($cur -notlike '--*'))) {
-                if ($prev -ne '-d' -and $prev -ne '--date') {
-                    $dates = _rusk_get_date_options
-                    $out = @()
-                    foreach ($d in $dates) {
-                        if ($cur -like '--date*') {
-                            $out += [System.Management.Automation.CompletionResult]::new("--date $d", "--date $d", [System.Management.Automation.CompletionResultType]::ParameterValue, $d)
-                        } else {
-                            $out += [System.Management.Automation.CompletionResult]::new("-d $d", "-d $d", [System.Management.Automation.CompletionResultType]::ParameterValue, $d)
-                        }
-                    }
-                    return $out
-                }
+                return @()
             }
             # Complete flags (-d/--date only after task text)
             if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur)) {
@@ -387,24 +335,17 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
             # Get all entered IDs from tokens to check context (excluding current word)
             $enteredIds = _rusk_get_entered_ids $tokens $wordToComplete
             
-            # CRITICAL CHECK FIRST: If previous token is an ID and current word is empty,
-            # we MUST suggest ONLY flags (-d/--date, -h/--help). No task text, no dates.
-            # This handles "rusk e 1 <tab>" case (with space after ID)
-            # This check MUST come FIRST, before ANY other logic, to prevent dates from being suggested
+            # If previous token is an ID and current word is empty, suggest ONLY help flags.
             if ($prev -match '^\d+$' -and [string]::IsNullOrEmpty($cur)) {
-                # Only proceed if we have exactly one ID and it matches prev
                 if ($enteredIds.Count -eq 1 -and $prev -eq $enteredIds[0].ToString()) {
                     return @(
                         [System.Management.Automation.CompletionResult]::new('--help', '--help', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help'),
                         [System.Management.Automation.CompletionResult]::new('-h', '-h', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help')
                     )
                 }
-                # If prev is an ID but condition above didn't match, still return empty to prevent dates
                 return @()
             }
             
-            # Check if we're immediately after a date flag - ONLY then suggest dates
-            # This check comes AFTER the ID check to ensure dates are never suggested after an ID
             if ($prev -eq '--date' -or $prev -eq '-d') {
                 if ([string]::IsNullOrEmpty($cur)) {
                     return @(
@@ -412,25 +353,7 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
                         [System.Management.Automation.CompletionResult]::new('-h', '-h', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help')
                     )
                 }
-                if ($wordToComplete -ne '-d' -and $wordToComplete -ne '--date') {
-                    return _rusk_complete_date $wordToComplete
-                }
-            }
-
-            # -d<tab> / --date<tab> (flag token)
-            if (($cur -like '--date*') -or (($cur -like '-d*') -and ($cur -notlike '--*'))) {
-                if ($prev -ne '-d' -and $prev -ne '--date') {
-                    $dates = _rusk_get_date_options
-                    $out = @()
-                    foreach ($d in $dates) {
-                        if ($cur -like '--date*') {
-                            $out += [System.Management.Automation.CompletionResult]::new("--date $d", "--date $d", [System.Management.Automation.CompletionResultType]::ParameterValue, $d)
-                        } else {
-                            $out += [System.Management.Automation.CompletionResult]::new("-d $d", "-d $d", [System.Management.Automation.CompletionResultType]::ParameterValue, $d)
-                        }
-                    }
-                    return $out
-                }
+                return @()
             }
 
             # Suggest task text if current word is a number (ID) and it's the first ID

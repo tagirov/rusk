@@ -54,7 +54,7 @@ assert_true 0 "Add command should suggest help flags before task text"
 
 # Test: rusk add x --date <tab> (space) should suggest -h/--help only
 print_test "rusk add x --date <tab> (space after flag)" "rusk add x --date " "Should suggest -h/--help only"
-cnt=$(grep -c 'compadd -- -h --help' "$COMPLETION_FILE" || echo 0)
+cnt=$(grep -cE 'compadd -- -h --help|_rusk_zsh_compadd_flags -- .+(-h |--help)' "$COMPLETION_FILE" || echo 0)
 if [[ "$cnt" -ge 4 ]]; then
     assert_true 0 "Zsh script has help-after-date+space for add/edit"
 else

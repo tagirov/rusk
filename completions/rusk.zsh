@@ -293,6 +293,16 @@ _rusk_add_has_task_text() {
     return 1
 }
 
+# When the word under cursor is the subcommand (e.g. rusk a|), compadd would filter out -h/--help; clear prefix briefly.
+_rusk_zsh_compadd_flags() {
+    local _rusk_cwsave="${words[CURRENT]}"
+    if [[ -n "$cur" ]] && [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; then
+        words[CURRENT]=""
+    fi
+    compadd "$@"
+    words[CURRENT]="$_rusk_cwsave"
+}
+
 _rusk_main() {
     # Find rusk command index
     local rusk_idx=-1
@@ -304,10 +314,17 @@ _rusk_main() {
         fi
     done
     
-    # Complete commands (if we're right after rusk command)
+    # Complete first token after "rusk" unless it is already a full subcommand/alias
     if [ $rusk_idx -ge 0 ] && [ -n "$CURRENT" ] && [ "$CURRENT" -eq $((rusk_idx + 1)) ] 2>/dev/null; then
-        compadd add edit mark del list restore completions a e m d l r
-        return
+        local cw="${words[CURRENT]}"
+        case "$cw" in
+            add|a|edit|e|mark|m|del|d|list|l|restore|r|completions|c)
+                ;;
+            *)
+                compadd add edit mark del list restore completions a e m d l r
+                return
+                ;;
+        esac
     fi
     
     # Get command (word after rusk)
@@ -332,11 +349,11 @@ _rusk_main() {
                 if [[ -z "$cur" ]]; then
                     compadd -- -h --help
                 fi
-            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; }; then
                 if _rusk_add_has_task_text; then
-                    compadd -- -d --date -h --help
+                    _rusk_zsh_compadd_flags -- -d --date -h --help
                 else
-                    compadd -- -h --help
+                    _rusk_zsh_compadd_flags -- -h --help
                 fi
             fi
             ;;
@@ -346,12 +363,7 @@ _rusk_main() {
                 if [[ -z "$cur" ]]; then
                     compadd -- -h --help
                 fi
-            elif [[ "$prev" =~ ^[0-9]+$ ]] && [[ -z "$cur" ]]; then
-                if [ $(_rusk_count_ids) -eq 1 ]; then
-                    compadd -- -h --help
-                fi
             # Support completion without a space after ID: `rusk edit <id><TAB>`
-            # Here `$cur` is the numeric ID being edited; we append task text after it.
             elif [[ "$cur" =~ ^[0-9]+$ ]] && [[ ("$prev" == "edit" || "$prev" == "e") ]]; then
                 local count_ids=$(_rusk_count_ids)
                 if [ "$count_ids" -eq 0 ]; then
@@ -371,47 +383,47 @@ _rusk_main() {
                         return 0
                     fi
                 fi
-            elif [[ "$cur" == -* ]]; then
-                compadd -- -h --help
+            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; }; then
+                _rusk_zsh_compadd_flags -- -h --help
             fi
             # No task ID completion for edit
             ;;
             
         mark|m|del|d)
-            if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+            if [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; }; then
                 if [[ "$cmd" == "del" || "$cmd" == "d" ]]; then
-                    compadd -- --done --help -h
+                    _rusk_zsh_compadd_flags -- --done --help -h
                 else
-                    compadd -- -h --help
+                    _rusk_zsh_compadd_flags -- -h --help
                 fi
             fi
             ;;
             
         list|l|restore|r)
-            if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
-                compadd -- -h --help
+            if [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; }; then
+                _rusk_zsh_compadd_flags -- -h --help
             fi
             ;;
             
-        completions)
-            # Third word: subcommands install/show
-            if [ -n "$CURRENT" ] && [ "$CURRENT" -eq 3 ] 2>/dev/null; then
-                compadd install show
-            else
-                # After install/show: suggest shells that haven't been used yet
+        completions|c)
+            local saw_inst=0
+            local i
+            for ((i=rusk_idx+2; i<=${#words[@]}; i++)); do
+                if [[ "${words[i]}" == "install" || "${words[i]}" == "show" ]]; then
+                    saw_inst=1
+                    break
+                fi
+            done
+            if (( saw_inst )); then
                 local -a all_shells=("bash" "zsh" "fish" "nu" "powershell")
                 local -a selected_shells=()
-
-                # Find index of install/show
                 local install_idx=-1
-                local i
                 for ((i=1; i<=${#words[@]}; i++)); do
                     if [[ "${words[i]}" == "install" || "${words[i]}" == "show" ]]; then
                         install_idx=$i
                         break
                     fi
                 done
-
                 if (( install_idx > 0 )); then
                     for ((i=install_idx+1; i<=${#words[@]}; i++)); do
                         local w="${words[i]}"
@@ -422,7 +434,6 @@ _rusk_main() {
                         done
                     done
                 fi
-
                 local -a remaining_shells=()
                 for sh in "${all_shells[@]}"; do
                     local found=0
@@ -436,10 +447,11 @@ _rusk_main() {
                         remaining_shells+=("$sh")
                     fi
                 done
-
                 if [ ${#remaining_shells[@]} -gt 0 ]; then
                     compadd "${remaining_shells[@]}"
                 fi
+            else
+                _rusk_zsh_compadd_flags -- install show
             fi
             ;;
     esac

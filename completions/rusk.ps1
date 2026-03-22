@@ -71,16 +71,70 @@ function _rusk_quote_text {
     }
 }
 
+# Shell names for `rusk completions install` / `show` (exclude already-typed full names)
+function _rusk_get_remaining_shells_after_install_show {
+    param($tokens)
+    $all = @('bash', 'zsh', 'fish', 'nu', 'powershell')
+    $idx = -1
+    for ($i = 2; $i -lt $tokens.Count; $i++) {
+        $v = $tokens[$i].Value
+        if ($v -eq 'install' -or $v -eq 'show') {
+            $idx = $i
+            break
+        }
+    }
+    if ($idx -lt 0) {
+        return @()
+    }
+    $picked = @()
+    for ($j = $idx + 1; $j -lt $tokens.Count; $j++) {
+        $w = $tokens[$j].Value
+        if ($all -contains $w -and $picked -notcontains $w) {
+            $picked += $w
+        }
+    }
+    $all | Where-Object { $picked -notcontains $_ }
+}
+
+# Prefix for flag completion when the current token is the subcommand alias (e.g. `rusk e|`)
+function _rusk_flag_completion_prefix {
+    param([string]$wordToComplete, $tokens, [string]$command, [string]$cur)
+    if (($tokens.Count -eq 2) -and ($cur -eq $command)) {
+        return ''
+    }
+    return $wordToComplete
+}
+
+function _rusk_emit_flag_completions {
+    param([string[]]$flags, [string]$wordToComplete, $tokens, [string]$command, [string]$cur)
+    $pref = _rusk_flag_completion_prefix $wordToComplete $tokens $command $cur
+    $filtered = if ([string]::IsNullOrEmpty($pref)) {
+        $flags
+    } else {
+        $flags | Where-Object { $_ -like "$pref*" }
+    }
+    if (-not $filtered) {
+        return @()
+    }
+    return $filtered | ForEach-Object {
+        $t = $_
+        $desc = switch ($t) {
+            '--date' { 'Set task date' }
+            '-d' { 'Set task date' }
+            '--done' { 'Delete all completed tasks' }
+            '--help' { 'Show help' }
+            '-h' { 'Show help' }
+            default { $t }
+        }
+        [System.Management.Automation.CompletionResult]::new($t, $t, [System.Management.Automation.CompletionResultType]::ParameterName, $desc)
+    }
+}
+
 # Get list of task IDs from rusk list output
 function _rusk_get_task_ids {
     $rusk_cmd = _rusk_get_cmd
     try {
-        # Check if RUSK_DB is set in environment
-        if ($env:RUSK_DB) {
-            $output = & $rusk_cmd list 2>$null
-        } else {
-            $output = & $rusk_cmd list 2>$null
-        }
+        $output = & $rusk_cmd list 2>$null
         if ($output) {
             $ids = @()
             foreach ($line in $output) {
@@ -295,63 +349,28 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
         { $_ -in 'add', 'a' } {
             if (_rusk_is_after_date_flag $prev $tokens $commandAst) {
                 if ([string]::IsNullOrEmpty($cur)) {
-                    return @(
-                        [System.Management.Automation.CompletionResult]::new('--help', '--help', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help'),
-                        [System.Management.Automation.CompletionResult]::new('-h', '-h', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help')
-                    )
+                    return _rusk_emit_flag_completions @('--help', '-h') $wordToComplete $tokens $command $cur
                 }
                 return @()
             }
-            # Complete flags (-d/--date only after task text)
-            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur)) {
+            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur) -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
                 $hasText = _rusk_add_has_prior_task_text $tokens $wordToComplete
-                if ($hasText) {
-                    $flags = @('--date', '-d', '--help', '-h')
+                $flags = if ($hasText) {
+                    @('--date', '-d', '--help', '-h')
                 } else {
-                    $flags = @('--help', '-h')
+                    @('--help', '-h')
                 }
-                if ([string]::IsNullOrEmpty($wordToComplete)) {
-                    $filtered = $flags
-                } else {
-                    $filtered = $flags | Where-Object { $_ -like "$wordToComplete*" }
-                }
-                if ($filtered) {
-                    return $filtered | ForEach-Object {
-                        $desc = switch ($_) {
-                            '--date' { 'Set task date' }
-                            '-d' { 'Set task date' }
-                            '--help' { 'Show help' }
-                            '-h' { 'Show help' }
-                            default { $_ }
-                        }
-                        [System.Management.Automation.CompletionResult]::new($_, $_, [System.Management.Automation.CompletionResultType]::ParameterName, $desc)
-                    }
-                }
+                return _rusk_emit_flag_completions $flags $wordToComplete $tokens $command $cur
             }
             return @()
         }
 
         { $_ -in 'edit', 'e' } {
-            # Get all entered IDs from tokens to check context (excluding current word)
             $enteredIds = _rusk_get_entered_ids $tokens $wordToComplete
-            
-            # If previous token is an ID and current word is empty, suggest ONLY help flags.
-            if ($prev -match '^\d+$' -and [string]::IsNullOrEmpty($cur)) {
-                if ($enteredIds.Count -eq 1 -and $prev -eq $enteredIds[0].ToString()) {
-                    return @(
-                        [System.Management.Automation.CompletionResult]::new('--help', '--help', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help'),
-                        [System.Management.Automation.CompletionResult]::new('-h', '-h', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help')
-                    )
-                }
-                return @()
-            }
             
             if ($prev -eq '--date' -or $prev -eq '-d') {
                 if ([string]::IsNullOrEmpty($cur)) {
-                    return @(
-                        [System.Management.Automation.CompletionResult]::new('--help', '--help', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help'),
-                        [System.Management.Automation.CompletionResult]::new('-h', '-h', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help')
-                    )
+                    return _rusk_emit_flag_completions @('--help', '-h') $wordToComplete $tokens $command $cur
                 }
                 return @()
             }
@@ -368,56 +387,69 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
                 }
             }
 
-            # Complete flags (no -d/--date in tab suggestions for edit)
-            if ($cur -like '-*') {
-                return @(
-                    [System.Management.Automation.CompletionResult]::new('--help', '--help', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help'),
-                    [System.Management.Automation.CompletionResult]::new('-h', '-h', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help')
-                )
+            # Default: flags when empty, flag prefix, or still on the subcommand token
+            if ([string]::IsNullOrEmpty($cur) -or $cur -like '-*' -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
+                return _rusk_emit_flag_completions @('--help', '-h') $wordToComplete $tokens $command $cur
             }
 
             return @()
         }
 
         { $_ -in 'mark', 'm', 'del', 'd' } {
-            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur)) {
-                if ($command -in @('del', 'd')) {
-                    return @(
-                        [System.Management.Automation.CompletionResult]::new('--done', '--done', [System.Management.Automation.CompletionResultType]::ParameterName, 'Delete all completed tasks'),
-                        [System.Management.Automation.CompletionResult]::new('--help', '--help', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help'),
-                        [System.Management.Automation.CompletionResult]::new('-h', '-h', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help')
-                    )
+            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur) -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
+                $df = if ($command -in @('del', 'd')) {
+                    @('--done', '--help', '-h')
+                } else {
+                    @('--help', '-h')
                 }
-                return @(
-                    [System.Management.Automation.CompletionResult]::new('--help', '--help', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help'),
-                    [System.Management.Automation.CompletionResult]::new('-h', '-h', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help')
-                )
+                return _rusk_emit_flag_completions $df $wordToComplete $tokens $command $cur
             }
             return @()
         }
 
         { $_ -in 'list', 'l', 'restore', 'r' } {
-            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur)) {
-                return @(
-                    [System.Management.Automation.CompletionResult]::new('--help', '--help', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help'),
-                    [System.Management.Automation.CompletionResult]::new('-h', '-h', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help')
-                )
+            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur) -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
+                return _rusk_emit_flag_completions @('--help', '-h') $wordToComplete $tokens $command $cur
             }
             return @()
         }
 
-        'completions' {
-            if ($tokens.Count -eq 2) {
-                return @('install', 'show') | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+        { $_ -in 'completions', 'c' } {
+            $hasInstShow = $false
+            for ($i = 2; $i -lt $tokens.Count; $i++) {
+                $v = $tokens[$i].Value
+                if ($v -eq 'install' -or $v -eq 'show') {
+                    $hasInstShow = $true
+                    break
+                }
+            }
+            if (-not $hasInstShow) {
+                $subPrefix = $wordToComplete
+                if ($tokens.Count -eq 2 -and $tokens[1].Value -eq $wordToComplete) {
+                    $subPrefix = ''
+                }
+                $subcmds = if ([string]::IsNullOrEmpty($subPrefix)) {
+                    @('install', 'show')
+                } else {
+                    @('install', 'show') | Where-Object { $_ -like "$subPrefix*" }
+                }
+                return $subcmds | ForEach-Object {
                     [System.Management.Automation.CompletionResult]::new($_, $_, [System.Management.Automation.CompletionResultType]::ParameterValue, $_)
                 }
             }
-            if ($tokens.Count -eq 3 -and ($tokens[2].Value -eq 'install' -or $tokens[2].Value -eq 'show')) {
-                return @('bash', 'zsh', 'fish', 'nu', 'powershell') | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
-                    [System.Management.Automation.CompletionResult]::new($_, $_, [System.Management.Automation.CompletionResultType]::ParameterValue, $_)
-                }
+            $available = _rusk_get_remaining_shells_after_install_show $tokens
+            if ($available.Count -eq 0) {
+                return @()
             }
-            return @()
+            $shellPref = $wordToComplete
+            $sf = if ([string]::IsNullOrEmpty($shellPref)) {
+                $available
+            } else {
+                $available | Where-Object { $_ -like "$shellPref*" }
+            }
+            return $sf | ForEach-Object {
+                [System.Management.Automation.CompletionResult]::new($_, $_, [System.Management.Automation.CompletionResultType]::ParameterValue, $_)
+            }
         }
     }
 

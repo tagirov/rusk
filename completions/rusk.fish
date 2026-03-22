@@ -359,7 +359,19 @@ function __rusk_should_complete_add_flags
         return 1
     end
     set -l current_word (__rusk_get_current_word)
-    __rusk_is_flag "$current_word"; or test -z "$current_word"
+    if __rusk_is_flag "$current_word"
+        return 0
+    end
+    if test -z "$current_word"
+        return 0
+    end
+    # Subcommand token still under cursor (commandline -opc often only has "rusk" here)
+    if contains -- "$current_word" add a
+        if test (count (__rusk_get_cmdline)) -eq 1
+            return 0
+        end
+    end
+    return 1
 end
 
 # Check if there are ID arguments after edit command
@@ -401,7 +413,18 @@ function __rusk_should_complete_edit_flags
         return 1
     end
     set -l current_word (__rusk_get_current_word)
-    __rusk_is_flag "$current_word"; or test -z "$current_word"
+    if __rusk_is_flag "$current_word"
+        return 0
+    end
+    if test -z "$current_word"
+        return 0
+    end
+    if contains -- "$current_word" edit e
+        if test (count (__rusk_get_cmdline)) -eq 1
+            return 0
+        end
+    end
+    return 1
 end
 
 # ============================================================================
@@ -511,7 +534,18 @@ end
 function __rusk_should_complete_mark_del_flags
     __rusk_is_command mark m del d; or return 1
     set -l cw (__rusk_get_current_word)
-    __rusk_is_flag "$cw"; or test -z "$cw"
+    if __rusk_is_flag "$cw"
+        return 0
+    end
+    if test -z "$cw"
+        return 0
+    end
+    if contains -- "$cw" mark m del d
+        if test (count (__rusk_get_cmdline)) -eq 1
+            return 0
+        end
+    end
+    return 1
 end
 
 function __rusk_complete_mark_del_flags
@@ -529,7 +563,18 @@ end
 function __rusk_should_complete_list_restore_flags
     __rusk_is_command list l restore r; or return 1
     set -l cw (__rusk_get_current_word)
-    __rusk_is_flag "$cw"; or test -z "$cw"
+    if __rusk_is_flag "$cw"
+        return 0
+    end
+    if test -z "$cw"
+        return 0
+    end
+    if contains -- "$cw" list l restore r
+        if test (count (__rusk_get_cmdline)) -eq 1
+            return 0
+        end
+    end
+    return 1
 end
 
 function __rusk_complete_list_restore_flags

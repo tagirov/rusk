@@ -67,14 +67,10 @@ impl Shell {
                 }
             }
             Shell::PowerShell => {
-                // PowerShell profile location on Windows
-                // PowerShell 7+ uses: Documents\PowerShell\Microsoft.PowerShell_profile.ps1
-                // PowerShell 5.1 uses: Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1
-                // We use PowerShell directory (for PS 7+) as default, user can override with --output
+                // PowerShell 7+ default: Documents\PowerShell\rusk-completions.ps1
+                // PowerShell 5.1 uses Documents\WindowsPowerShell\ — use `completions show powershell` and install manually if needed
                 #[cfg(windows)]
                 {
-                    // On Windows, use Documents\PowerShell\rusk-completions.ps1 (PowerShell 7+)
-                    // For PowerShell 5.1, user should use --output to specify WindowsPowerShell directory
                     if let Some(documents) = dirs::document_dir() {
                         documents.join("PowerShell").join("rusk-completions.ps1")
                     } else {

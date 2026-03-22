@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use colored::*;
 use rusk::{TaskManager, cli::HandlerCLI, completions::Shell, parse_edit_args, parse_flexible_ids, windows_console};
-use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(
@@ -88,8 +87,6 @@ enum CompletionAction {
     Install {
         #[arg(value_enum, required = true, num_args = 1..)]
         shells: Vec<Shell>,
-        #[arg(short, long, help = "Output file path (default: auto-detect based on shell). Ignored when multiple shells are specified.")]
-        output: Option<PathBuf>,
     },
     #[command(about = "Show completion script (for manual installation)")]
     Show {
@@ -229,8 +226,8 @@ fn main() -> Result<()> {
         }
         Some(Command::Completions { action }) => {
             match action {
-                CompletionAction::Install { shells, output } => {
-                    handle_completions_install(shells, output)?;
+                CompletionAction::Install { shells } => {
+                    handle_completions_install(shells)?;
                 }
                 CompletionAction::Show { shell } => {
                     handle_completions_show(shell)?;
@@ -242,42 +239,33 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn handle_completions_install(shells: Vec<Shell>, output: Option<PathBuf>) -> Result<()> {
+fn handle_completions_install(shells: Vec<Shell>) -> Result<()> {
     if shells.is_empty() {
         eprintln!("{}", "Error: At least one shell must be specified".red());
         std::process::exit(1);
     }
 
-    // If multiple shells are specified, ignore custom output path
-    let use_custom_output = shells.len() == 1 && output.is_some();
     let shells_count = shells.len();
     let mut installed_paths = Vec::new();
 
-    // Install all completions first
     for shell in &shells {
-    let script = shell.get_script();
-        let path = if use_custom_output {
-            output.as_ref().unwrap().clone()
-        } else {
-            shell.get_default_path()?
-    };
+        let script = shell.get_script();
+        let path = shell.get_default_path()?;
 
-    // Create parent directory if it doesn't exist
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
-    }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+        }
 
-    // Write completion script
-    std::fs::write(&path, script)
-        .with_context(|| format!("Failed to write completion file: {}", path.display()))?;
+        std::fs::write(&path, script)
+            .with_context(|| format!("Failed to write completion file: {}", path.display()))?;
 
-    println!(
-        "{} {} {}",
-        "✓".green(),
+        println!(
+            "{} {} {}",
+            "✓".green(),
             format!("{} completion installed to:", shell_name(shell)).green(),
-        path.display()
-    );
+            path.display()
+        );
 
         installed_paths.push((shell, path));
     }

@@ -1,11 +1,23 @@
 use anyhow::Result;
 use rusk::completions::Shell;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use tempfile::TempDir;
 
 #[path = "../../common/mod.rs"]
 mod common;
+
+fn with_isolated_home(cmd: &mut Command, home: &Path) {
+    cmd.env("HOME", home);
+    cmd.env("USERPROFILE", home);
+    #[cfg(windows)]
+    {
+        let appdata = home.join("AppData").join("Roaming");
+        let _ = fs::create_dir_all(&appdata);
+        cmd.env("APPDATA", appdata);
+    }
+}
 
 // Helper function to test completion installation
 fn test_completion_install(shell: Shell, expected_filename: &str) -> Result<()> {
@@ -391,120 +403,113 @@ fn test_cli_completions_show() -> Result<()> {
 
 #[test]
 fn test_cli_completions_install_to_temp_dir() -> Result<()> {
-    use std::process::Command;
-    
     let rusk_bin = common::require_rusk_bin()?;
-    
+
     let temp_dir = TempDir::new()?;
-    let test_path = temp_dir.path().join("test_completion");
-    
-    // Test installation to custom path
-    let output = Command::new(&rusk_bin)
-        .args(&["completions", "install", "bash", "--output", test_path.to_str().unwrap()])
-        .output()?;
-    
+    let fake_home = temp_dir.path();
+    let test_path = fake_home.join(".bash_completion.d").join("rusk");
+
+    let mut cmd = Command::new(&rusk_bin);
+    with_isolated_home(&mut cmd, fake_home);
+    let output = cmd.args(["completions", "install", "bash"]).output()?;
+
     assert!(
         output.status.success(),
         "Command should succeed. Stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    
-    // Verify file was created
+
     assert!(test_path.exists(), "Completion file should be created");
     assert!(test_path.is_file(), "Path should be a file");
-    
-    // Verify file content
+
     let content = fs::read_to_string(&test_path)?;
     assert!(!content.is_empty(), "File should not be empty");
     assert!(content.contains("rusk"), "File should contain 'rusk'");
-    
-    // Verify file matches expected script
+
     let expected_script = Shell::Bash.get_script();
     assert_eq!(content, expected_script, "File content should match script");
-    
+
     Ok(())
 }
 
 #[test]
 fn test_cli_completions_install_creates_directories() -> Result<()> {
-    use std::process::Command;
-    
     let rusk_bin = common::require_rusk_bin()?;
-    
+
     let temp_dir = TempDir::new()?;
-    let deep_path = temp_dir.path()
-        .join("level1")
-        .join("level2")
-        .join("completion");
-    
-    // Verify parent doesn't exist
-    assert!(!deep_path.parent().unwrap().exists());
-    
-    // Install to deep path
-    let output = Command::new(&rusk_bin)
-        .args(&["completions", "install", "zsh", "--output", deep_path.to_str().unwrap()])
-        .output()?;
-    
+    let fake_home = temp_dir.path();
+    let zsh_path = fake_home.join(".zsh").join("completions").join("_rusk");
+
+    assert!(!zsh_path.parent().unwrap().exists());
+
+    let mut cmd = Command::new(&rusk_bin);
+    with_isolated_home(&mut cmd, fake_home);
+    let output = cmd.args(["completions", "install", "zsh"]).output()?;
+
     assert!(
         output.status.success(),
         "Command should succeed. Stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    
-    // Verify file and directories were created
-    assert!(deep_path.exists(), "File should be created");
-    assert!(deep_path.parent().unwrap().exists(), "Parent directory should be created");
-    assert!(deep_path.parent().unwrap().parent().unwrap().exists(), "Grandparent directory should be created");
-    
+
+    assert!(zsh_path.exists(), "File should be created");
+    assert!(zsh_path.parent().unwrap().exists(), "Parent directory should be created");
+    assert!(
+        zsh_path.parent().unwrap().parent().unwrap().exists(),
+        "Grandparent directory should be created"
+    );
+
     Ok(())
 }
 
 #[test]
 fn test_cli_completions_install_overwrites_existing() -> Result<()> {
-    use std::process::Command;
-    
     let rusk_bin = common::require_rusk_bin()?;
-    
+
     let temp_dir = TempDir::new()?;
-    let test_path = temp_dir.path().join("existing_completion");
-    
-    // Create existing file
+    let fake_home = temp_dir.path();
+    let test_path = fake_home
+        .join(".config")
+        .join("fish")
+        .join("completions")
+        .join("rusk.fish");
+
+    fs::create_dir_all(test_path.parent().unwrap())?;
     fs::write(&test_path, "old content")?;
     assert_eq!(fs::read_to_string(&test_path)?, "old content");
-    
-    // Install completion (should overwrite)
-    let output = Command::new(&rusk_bin)
-        .args(&["completions", "install", "fish", "--output", test_path.to_str().unwrap()])
-        .output()?;
-    
+
+    let mut cmd = Command::new(&rusk_bin);
+    with_isolated_home(&mut cmd, fake_home);
+    let output = cmd.args(["completions", "install", "fish"]).output()?;
+
     assert!(output.status.success(), "Command should succeed");
-    
-    // Verify content was overwritten
+
     let new_content = fs::read_to_string(&test_path)?;
     assert_ne!(new_content, "old content", "Content should be overwritten");
     assert_eq!(new_content, Shell::Fish.get_script(), "Content should match Fish script");
-    
+
     Ok(())
 }
 
 #[test]
 fn test_cli_completions_install_multiple_shells() -> Result<()> {
-    use std::process::Command;
-    
     let rusk_bin = common::require_rusk_bin()?;
-    
-    // Install completions for multiple shells (without --output, uses default paths)
-    let output = Command::new(&rusk_bin)
-        .args(&["completions", "install", "fish", "nu"])
+
+    let temp_dir = TempDir::new()?;
+    let fake_home = temp_dir.path();
+
+    let mut cmd = Command::new(&rusk_bin);
+    with_isolated_home(&mut cmd, fake_home);
+    let output = cmd
+        .args(["completions", "install", "fish", "nu"])
         .output()?;
-    
+
     assert!(
         output.status.success(),
         "Command should succeed. Stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    
-    // Verify output mentions both shells
+
     let stdout = String::from_utf8(output.stdout)?;
     assert!(
         stdout.contains("Fish") || stdout.contains("fish"),
@@ -514,18 +519,21 @@ fn test_cli_completions_install_multiple_shells() -> Result<()> {
         stdout.contains("Nu Shell") || stdout.contains("nu"),
         "Output should mention Nu Shell"
     );
-    
-    // Verify both completion files were created (in default locations)
-    // Note: This test may fail if home directory structure doesn't exist,
-    // but that's acceptable - the main thing is the command succeeds
-    if let Some(home) = dirs::home_dir() {
-        let _fish_path = home.join(".config").join("fish").join("completions").join("rusk.fish");
-        let _nu_path = home.join(".config").join("nushell").join("completions").join("rusk.nu");
-        
-        // Files may or may not exist depending on permissions, but command should succeed
-        // We're mainly testing that the command accepts multiple shells
-    }
-    
+
+    let fish_path = fake_home
+        .join(".config")
+        .join("fish")
+        .join("completions")
+        .join("rusk.fish");
+    let nu_path = fake_home
+        .join(".config")
+        .join("nushell")
+        .join("completions")
+        .join("rusk.nu");
+
+    assert!(fish_path.is_file(), "Fish completion should exist under fake HOME");
+    assert!(nu_path.is_file(), "Nu completion should exist under fake HOME");
+
     Ok(())
 }
 
@@ -568,26 +576,28 @@ fn test_cli_completions_help() -> Result<()> {
 }
 
 #[test]
-fn test_completion_install_never_uses_real_home_without_explicit_path() -> Result<()> {
-    // Critical safety test: verify that get_default_path() would use home,
-    // but in tests we always use --output to avoid touching real files
-    
-    if let Some(home) = dirs::home_dir() {
-        let real_bash_path = home.join(".bash_completion.d").join("rusk");
-        let real_zsh_path = home.join(".zsh").join("completions").join("_rusk");
-        let real_fish_path = home.join(".config").join("fish").join("completions").join("rusk.fish");
-        let real_nu_path = home.join(".config").join("nushell").join("completions").join("rusk.nu");
-        
-        // Verify these paths would be in home directory
-        assert!(real_bash_path.starts_with(&home), "Bash path should be in home");
-        assert!(real_zsh_path.starts_with(&home), "Zsh path should be in home");
-        assert!(real_fish_path.starts_with(&home), "Fish path should be in home");
-        assert!(real_nu_path.starts_with(&home), "Nu path should be in home");
-        
-        // But in our tests, we never actually write to these paths
-        // All tests use TempDir or explicit --output paths
-    }
-    
+fn test_completion_default_paths_live_under_home() -> Result<()> {
+    let Some(home) = dirs::home_dir() else {
+        return Ok(());
+    };
+    let real_bash_path = home.join(".bash_completion.d").join("rusk");
+    let real_zsh_path = home.join(".zsh").join("completions").join("_rusk");
+    let real_fish_path = home
+        .join(".config")
+        .join("fish")
+        .join("completions")
+        .join("rusk.fish");
+    let real_nu_path = home
+        .join(".config")
+        .join("nushell")
+        .join("completions")
+        .join("rusk.nu");
+
+    assert!(real_bash_path.starts_with(&home), "Bash path should be in home");
+    assert!(real_zsh_path.starts_with(&home), "Zsh path should be in home");
+    assert!(real_fish_path.starts_with(&home), "Fish path should be in home");
+    assert!(real_nu_path.starts_with(&home), "Nu path should be in home");
+
     Ok(())
 }
 

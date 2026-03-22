@@ -129,7 +129,7 @@ Common scenarios covered across all shells (bash, zsh, fish, powershell, nu):
 - **del** (d) — `--done` flag, flag completion (task IDs are typed manually)
 - **list** (l) — no arguments (empty completion)
 - **restore** (r) — no arguments (empty completion)
-- **completions** (c) — subcommands: `install` (shells: bash, zsh, fish, nu, powershell; optional `--output` for single shell), `show` (shell)
+- **completions** (c) — subcommands: `install` (shells: bash, zsh, fish, nu, powershell), `show` (shell)
 
 All aliases are tested: `a`, `e`, `m`, `d`, `l`, `r`, `c`.
 

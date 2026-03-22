@@ -18,10 +18,7 @@ rusk completions install powershell
 rusk completions install bash zsh
 rusk completions install fish nu powershell
 
-# Or specify custom path (only works for single shell)
-rusk completions install bash --output ~/.bash_completion.d/rusk
-
-# Show completion script (for manual installation)
+# Dump script for manual install
 rusk completions show zsh > ~/.zsh/completions/_rusk
 ```
 

@@ -280,57 +280,6 @@ def get-entered-ids [spans: list<string>] {
   })
 }
 
-# Check if task text has already been entered (after IDs and flags)
-def has-task-text [spans: list<string>] {
-  # Find rusk command index and skip past "rusk command"
-  let filtered_spans = ($spans | where $it != "")
-  
-  let rusk_idx = try {
-    ($filtered_spans | enumerate | where {|it| $it.item == "rusk"} | get 0.index)
-  } catch {
-    -1
-  }
-  
-  let args = if $rusk_idx >= 0 {
-    # Skip past "rusk" and command (2 elements after rusk_idx)
-    ($filtered_spans | skip ($rusk_idx + 2))
-  } else {
-    # Fallback to old behavior
-    ($filtered_spans | skip 2)
-  }
-  
-  if ($args | is-empty) {
-    return false
-  }
-  
-  def is-date-value [arg: string] {
-    ($arg | parse -r '^\d{2}-\d{2}-\d{4}$' | length) > 0
-  }
-  
-  ($args | enumerate | any {|item|
-    let idx = $item.index
-    let arg = $item.item
-    let prev_arg = if $idx > 0 { ($args | get ($idx - 1)) } else { "" }
-    
-    if ($prev_arg == "-d" or $prev_arg == "--date") {
-      false
-    } else if $arg == "-d" or $arg == "--date" {
-      false
-    } else if ($arg | str starts-with "-") {
-      false
-    } else if (is-date-value $arg) {
-      false
-    } else {
-      let is_id = (try { ($arg | into int | ignore); true } catch { false })
-      if $is_id {
-        false
-      } else {
-        true
-      }
-    }
-  })
-}
-
 # Complete task IDs with descriptions
 def complete-task-ids [entered_ids: list<int>, spans: list<string>] {
   let all_ids = (get-task-ids $spans)
@@ -506,14 +455,9 @@ def complete-add [spans: list<string>, cur: string, prev: string] {
 def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_space: bool, command: string] {
   let entered_ids = (get-entered-ids $spans)
   
-  # Space after -d/--date: more flags only (before has-task-text so "edit 1 foo -d " still works)
+  # Space after -d/--date: more flags only
   if ($prev == "-d" or $prev == "--date") and ($cur == "") {
     return (complete-flags (get-common-flags) $cur)
-  }
-  
-  # If task text has already been entered, stop further edit completions
-  if (has-task-text $spans) {
-    return []
   }
   
   let prev_ends_with_comma = (ends-with-comma $prev)
@@ -561,8 +505,8 @@ def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_
     }
   }
   
-  # Complete flags (edit: no -d/--date in tab suggestions)
-  if ($cur | str starts-with "-") {
+  # Complete flags (edit: no -d/--date in tab suggestions); empty word → flags when no other rule matched
+  if ($cur == "") or ($cur | str starts-with "-") {
     return (complete-flags (get-common-flags) $cur)
   }
   
@@ -814,6 +758,12 @@ def complete-root [ctx: record] {
     return (complete-flags $all_flags $ctx.cur)
   }
   
+  # Full subcommand typed (Nu often omits trailing "" span): delegate to subcommand completers for flags
+  let exact_subcmds = [add a edit e mark m del d list l restore r completions c]
+  if ($ctx.word_count == 1) and (not $ctx.has_trailing_space) and ($ctx.cur in $exact_subcmds) {
+    return []
+  }
+  
   # Complete commands when only "rusk" is typed (or partial command without trailing space)
   # When cur is empty or equals "rusk", return all options
   # But NOT if there's already a command and trailing space (word_count == 1 with trailing space means we're after the command)
@@ -850,6 +800,15 @@ def complete-root [ctx: record] {
   []
 }
 
+# When spans lack a trailing "" after the subcommand, cur stays on the command token; treat as empty for flags.
+def normalize-subcommand-cur [ctx: record] {
+  if ($ctx.word_count == 1) and (not $ctx.has_trailing_space) and ($ctx.cur == $ctx.command) {
+    ""
+  } else {
+    $ctx.cur
+  }
+}
+
 # Main completion function
 export def rusk-completions-main [spans: list<string>] {
   let ctx = (parse-spans $spans)
@@ -865,26 +824,28 @@ export def rusk-completions-main [spans: list<string>] {
     return []
   }
   
+  let cur_n = (normalize-subcommand-cur $ctx)
+  
   # Handle subcommands
   match $ctx.command {
     "add" | "a" => {
-      complete-add $spans $ctx.cur $ctx.prev
+      complete-add $spans $cur_n $ctx.prev
     }
     
     "edit" | "e" => {
-      complete-edit $spans $ctx.cur $ctx.prev $ctx.has_trailing_space $ctx.command
+      complete-edit $spans $cur_n $ctx.prev $ctx.has_trailing_space $ctx.command
     }
     
     "mark" | "m" | "del" | "d" => {
-      complete-mark-del $ctx.cur $ctx.command
+      complete-mark-del $cur_n $ctx.command
     }
     
     "list" | "l" | "restore" | "r" => {
-      complete-list-restore $ctx.cur
+      complete-list-restore $cur_n
     }
     
     "completions" | "c" => {
-      complete-completions $spans $ctx.cur $ctx.prev $ctx.word_count $ctx.command
+      complete-completions $spans $cur_n $ctx.prev $ctx.word_count $ctx.command
     }
     
     _ => {

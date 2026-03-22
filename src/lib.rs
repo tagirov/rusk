@@ -590,7 +590,8 @@ pub fn parse_cli_date_with_base(date_str: &str, base: NaiveDate) -> Result<Naive
     let normalized = normalize_date_string(trimmed);
     NaiveDate::parse_from_str(&normalized, "%d-%m-%Y").with_context(|| {
         format!(
-            "Invalid date '{}': use DD-MM-YYYY or DD/MM/YYYY (short year like 25 is OK), or a relative offset such as 2d, 2w, 5m, 3q, 2y (combinable, e.g. 10d5w)",
+            "Invalid date '{}': use DD-MM-YYYY or DD/MM/YYYY (D-M-YY is OK),\n\
+or a relative offset such as 2d, 2w, 5m, 3q, 2y (combinable, e.g. 10d5w)",
             trimmed
         )
     })

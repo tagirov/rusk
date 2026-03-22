@@ -87,7 +87,7 @@ if (assert_true true "Completion file loads successfully") {
 print_test_section "ADD Command Tests"
 
 # Test: Add command should support date completion
-print_test "Add date completion" "rusk add --date" "Should support date completion"
+print_test "Add date completion" "rusk add x --date" "Dates: --date<tab>; space after flag → -h/--help"
 if (assert_true true "Add command supports date completion") {
     $tests_passed = ($tests_passed + 1)
 } else {
@@ -95,23 +95,23 @@ if (assert_true true "Add command supports date completion") {
 }
 
 # Test: rusk add <tab> should suggest flags
-print_test "rusk add <tab> (flag completion)" "rusk add" "Should suggest flags (--date, -d, --help, -h)"
+print_test "rusk add <tab> (flag completion)" "rusk add" "Should suggest -h/--help only before task text"
 if (assert_true true "Add command should suggest flags") {
     $tests_passed = ($tests_passed + 1)
 } else {
     $tests_failed = ($tests_failed + 1)
 }
 
-# Test: rusk add --date <tab> should suggest dates
-print_test "rusk add --date <tab> (date completion)" "rusk add --date" "Should suggest dates"
-if (assert_true true "Add command suggests dates after --date flag") {
+# Test: rusk add x --date <tab> (space) — help only
+print_test "rusk add x --date <tab> (space after flag)" "rusk add x --date" "Should suggest -h/--help only"
+if (assert_true true "Add after --date + space: help only (see rusk-completions-main)") {
     $tests_passed = ($tests_passed + 1)
 } else {
     $tests_failed = ($tests_failed + 1)
 }
 
 # Test: rusk add -<tab> should suggest flags
-print_test "rusk add -<tab> (flag completion)" "rusk add -" "Should suggest flags starting with -"
+print_test "rusk add -<tab> (flag completion)" "rusk add -" "Should suggest -h/--help only before task text"
 if (assert_true true "Add command should suggest flags with - prefix") {
     $tests_passed = ($tests_passed + 1)
 } else {
@@ -148,7 +148,7 @@ if (assert_true true "Edit command suggests task IDs") {
 }
 
 # Test: rusk edit 1 -<tab> should suggest flags
-print_test "rusk edit 1 -<tab> (flag completion)" "rusk edit 1 -" "Should suggest flags (--date, -d, --help, -h)"
+print_test "rusk edit 1 -<tab> (flag completion)" "rusk edit 1 -" "Should suggest only --help, -h (not --date, -d)"
 if (assert_true true "Edit command suggests flags after ID") {
     $tests_passed = ($tests_passed + 1)
 } else {

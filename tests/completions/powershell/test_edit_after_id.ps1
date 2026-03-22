@@ -1,4 +1,4 @@
-# Test: rusk e <id> <tab> should return ONLY flags (-d/--date, -h/--help), NO task text, NO dates
+# Test: rusk e <id> <tab> should return ONLY -h/--help, not -d/--date, NO task text, NO dates
 # This is the critical test for the reported issue
 
 . $PSScriptRoot/helpers.ps1
@@ -14,7 +14,7 @@ $test1 = Test-CompletionScenario `
     -Description "rusk e 1 <tab> (with space after ID)" `
     -Tokens @("rusk", "e", "1", "") `
     -WordToComplete "" `
-    -ExpectedBehavior "Should return ONLY flags (-d/--date, -h/--help), NO task text and NO dates" `
+    -ExpectedBehavior "Should return ONLY -h/--help (not -d/--date), NO task text and NO dates" `
     -Validation {
         param($Tokens, $WordToComplete, $Prev, $Cur)
         
@@ -86,18 +86,17 @@ $test3 = Test-CompletionScenario `
 
 if (-not $test3) { $allTestsPassed = $false }
 
-# Test 4: rusk e 1 --date <tab> (date flag after ID)
+# Test 4: rusk e 1 --date <tab> (space after flag) — help only
 $test4 = Test-CompletionScenario `
-    -Description "rusk e 1 --date <tab> (date flag after ID)" `
+    -Description "rusk e 1 --date <tab> (space after flag)" `
     -Tokens @("rusk", "e", "1", "--date", "") `
     -WordToComplete "" `
-    -ExpectedBehavior "Should return dates (after date flag)" `
+    -ExpectedBehavior "Should return -h/--help only (dates: --date<tab>)" `
     -Validation {
         param($Tokens, $WordToComplete, $Prev, $Cur)
         
-        # After date flag, should return dates
         if ($Prev -eq '--date' -or $Prev -eq '-d') {
-            Assert-True $true "Date flag detected, should return dates"
+            Assert-True $true "After date flag + space: help flags context"
             return $true
         }
         return $false

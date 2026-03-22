@@ -18,11 +18,11 @@ $test_add1 = Test-CompletionScenario `
     -Description "rusk add <tab> (flag completion)" `
     -Tokens @("rusk", "add", "") `
     -WordToComplete "" `
-    -ExpectedBehavior "Should suggest flags (--date, -d, --help, -h)" `
+    -ExpectedBehavior "Should suggest -h/--help only before task text" `
     -Validation {
         param($Tokens, $WordToComplete, $Prev, $Cur)
         if ($Prev -eq "add" -or $Prev -eq "a") {
-            Assert-True $true "Should suggest flags for add command"
+            Assert-True $true "Should suggest help flags for add before task text"
             return $true
         }
         return $false
@@ -30,16 +30,16 @@ $test_add1 = Test-CompletionScenario `
 
 if (-not $test_add1) { $allTestsPassed = $false }
 
-# Test: rusk add --date <tab> (should suggest dates)
+# Test: rusk add x --date <tab> (space after flag) should suggest -h/--help only
 $test_add2 = Test-CompletionScenario `
-    -Description "rusk add --date <tab> (date completion)" `
-    -Tokens @("rusk", "add", "--date", "") `
+    -Description "rusk add x --date <tab> (space after flag)" `
+    -Tokens @("rusk", "add", "x", "--date", "") `
     -WordToComplete "" `
-    -ExpectedBehavior "Should suggest dates" `
+    -ExpectedBehavior "Should suggest -h/--help only (dates: --date<tab>)" `
     -Validation {
         param($Tokens, $WordToComplete, $Prev, $Cur)
-        if ($Prev -eq '--date' -or $Prev -eq '-d') {
-            Assert-True $true "Should suggest dates after date flag"
+        if (($Prev -eq '--date' -or $Prev -eq '-d') -and [string]::IsNullOrEmpty($Cur)) {
+            Assert-True $true "After date flag + space: help flags context"
             return $true
         }
         return $false
@@ -52,11 +52,11 @@ $test_add3 = Test-CompletionScenario `
     -Description "rusk add -<tab> (flag completion)" `
     -Tokens @("rusk", "add", "-") `
     -WordToComplete "-" `
-    -ExpectedBehavior "Should suggest flags starting with -" `
+    -ExpectedBehavior "Should suggest -h/--help only before task text" `
     -Validation {
         param($Tokens, $WordToComplete, $Prev, $Cur)
         if ($Cur -like '-*') {
-            Assert-True $true "Should suggest flags"
+            Assert-True $true "Should suggest help flags"
             return $true
         }
         return $false
@@ -92,7 +92,7 @@ $test_edit2 = Test-CompletionScenario `
     -Description "rusk edit 1 -<tab> (flag completion)" `
     -Tokens @("rusk", "edit", "1", "-") `
     -WordToComplete "-" `
-    -ExpectedBehavior "Should suggest flags (--date, -d, --help, -h)" `
+    -ExpectedBehavior "Should suggest only --help, -h for edit (not --date, -d)" `
     -Validation {
         param($Tokens, $WordToComplete, $Prev, $Cur)
         if ($Cur -like '-*') {

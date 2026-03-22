@@ -271,6 +271,58 @@ _rusk_complete_date() {
     compadd $dates
 }
 
+# "-d <date>" / "--date <date>" when current word is the flag token
+_rusk_complete_date_flag_attachment() {
+    local -a ds=($(_rusk_get_date_options))
+    local d
+    if [[ "$cur" == --date* ]]; then
+        for d in $ds; do
+            compadd -Q -S '' -- "--date $d" 2>/dev/null || reply+=("--date $d")
+        done
+    elif [[ "$cur" == -d* ]] && [[ "$cur" != --* ]]; then
+        for d in $ds; do
+            compadd -Q -S '' -- "-d $d" 2>/dev/null || reply+=("-d $d")
+        done
+    fi
+}
+
+# add: task text before cursor (completed words only)
+_rusk_add_has_task_text() {
+    local rusk_idx=-1
+    local i
+    for ((i=1; i<=${#words[@]}; i++)); do
+        if [[ "${words[i]}" == "rusk" ]]; then
+            rusk_idx=$i
+            break
+        fi
+    done
+    [[ $rusk_idx -ge 1 ]] || return 1
+    local cmd="${words[$((rusk_idx+1))]}"
+    [[ "$cmd" == "add" || "$cmd" == "a" ]] || return 1
+    local start=$((rusk_idx+2))
+    [[ -n "$CURRENT" ]] || return 1
+    local prev=""
+    local w
+    for ((i=start; i<CURRENT; i++)); do
+        w="${words[i]}"
+        [[ -n "$w" ]] || continue
+        if [[ "$prev" == "-d" || "$prev" == "--date" ]]; then
+            prev="$w"
+            continue
+        fi
+        if [[ "$w" == "-d" || "$w" == "--date" ]]; then
+            prev="$w"
+            continue
+        fi
+        if [[ "$w" == -* ]]; then
+            prev="$w"
+            continue
+        fi
+        return 0
+    done
+    return 1
+}
+
 _rusk_main() {
     # Find rusk command index
     local rusk_idx=-1
@@ -307,22 +359,36 @@ _rusk_main() {
     case "$cmd" in
         add|a)
             if [[ "$prev" == "--date" ]] || [[ "$prev" == "-d" ]]; then
-                _rusk_complete_date
+                if [[ -z "$cur" ]]; then
+                    compadd -- -h --help
+                else
+                    _rusk_complete_date
+                fi
+            # -d<tab> / --date<tab>
+            elif [[ "$cur" == --date* ]] || { [[ "$cur" == -d* ]] && [[ "$cur" != --* ]]; }; then
+                _rusk_complete_date_flag_attachment
             # For `rusk add <tab>` or when starting a flag, offer flags
             elif [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
-                # Offer flags: -d --date -h --help
-                compadd -- -d --date -h --help
+                if _rusk_add_has_task_text; then
+                    compadd -- -d --date -h --help
+                else
+                    compadd -- -h --help
+                fi
             fi
             ;;
             
         edit|e)
             # Complete date flag
             if [[ "$prev" == "--date" ]] || [[ "$prev" == "-d" ]]; then
-                _rusk_complete_date
+                if [[ -z "$cur" ]]; then
+                    compadd -- -h --help
+                else
+                    _rusk_complete_date
+                fi
             # After single ID with a space: suggest ONLY flags
             elif [[ "$prev" =~ ^[0-9]+$ ]] && [[ -z "$cur" ]]; then
                 if [ $(_rusk_count_ids) -eq 1 ]; then
-                    compadd -- -d --date -h --help
+                    compadd -- -h --help
                 fi
             # Support completion without a space after ID: `rusk edit <id><TAB>`
             # Here `$cur` is the numeric ID being edited; we append task text after it.
@@ -345,25 +411,30 @@ _rusk_main() {
                         return 0
                     fi
                 fi
+            # -d<tab> / --date<tab> (flag token)
+            elif [[ "$cur" == --date* ]] || { [[ "$cur" == -d* ]] && [[ "$cur" != --* ]]; }; then
+                _rusk_complete_date_flag_attachment
             # Complete flags
             elif [[ "$cur" == -* ]]; then
-                # Offer flags: -d --date -h --help
-                compadd -- -d --date -h --help
+                compadd -- -h --help
             fi
             # No task ID completion for edit
             ;;
             
         mark|m|del|d)
-            # For del, complete flags first
-            if [[ ("$cmd" == "del" || "$cmd" == "d") && "$cur" == -* ]]; then
-                compadd --done
-            else
-                :
+            if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+                if [[ "$cmd" == "del" || "$cmd" == "d" ]]; then
+                    compadd -- --done --help -h
+                else
+                    compadd -- -h --help
+                fi
             fi
             ;;
             
         list|l|restore|r)
-            # No arguments
+            if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+                compadd -- -h --help
+            fi
             ;;
             
         completions)

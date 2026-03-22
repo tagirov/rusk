@@ -307,11 +307,48 @@ function __rusk_is_after_date_flag
     end
 end
 
-# Check if we should complete date value
+# Preset date as bare value, "-d <date>", or "--date <date>" depending on current token
+function __rusk_date_completion_candidate
+    set -l kind $argv[1]
+    set -l cw (__rusk_get_current_word)
+    set -l v
+    switch $kind
+        case today
+            set v (__rusk_get_today_date)
+        case tomorrow
+            set v (__rusk_get_tomorrow_date)
+        case week
+            set v (__rusk_get_week_ahead_date)
+        case twoweek
+            set v (__rusk_get_two_weeks_ahead_date)
+        case '*'
+            return 1
+    end
+    if test "$cw" = --date; or string match -q -- '--date*' "$cw"
+        echo --date $v
+    else if string match -q -- '-d*' "$cw"; and not string match -q -- '--*' "$cw"
+        echo -d $v
+    else
+        echo $v
+    end
+end
+
+# Date value after "-d " / bare presets after "-d<tab>" / "--date<tab>"
 function __rusk_should_complete_date
     set -l commands $argv
     __rusk_is_command $commands[1] $commands[2..-1]; or return 1
-    __rusk_is_after_date_flag
+    set -l cw (__rusk_get_current_word)
+    test -n "$cw"; or return 1
+    if __rusk_is_after_date_flag
+        return 0
+    end
+    if test "$cw" = --date; or string match -q -- '--date*' "$cw"
+        return 0
+    end
+    if string match -q -- '-d*' "$cw"; and not string match -q -- '--*' "$cw"
+        return 0
+    end
+    return 1
 end
 
 # Check if we should complete flags (generic)
@@ -324,30 +361,84 @@ function __rusk_should_complete_flags
     __rusk_is_flag "$current_word"; or test -z "$current_word"
 end
 
-# Complete flags for add command
+# True if add has at least one completed task-text token (skips value after -d/--date)
+function __rusk_add_has_prior_task_text
+    set -l cmdline (__rusk_get_cmdline)
+    set -l n (count $cmdline)
+    test $n -ge 3; or return 1
+    set -l rusk_idx -1
+    for i in (seq 1 $n)
+        if test "$cmdline[$i]" = rusk
+            set rusk_idx $i
+            break
+        end
+    end
+    test $rusk_idx -ge 1; or return 1
+    set -l cmd_idx (math $rusk_idx + 1)
+    test $cmd_idx -le $n; or return 1
+    if not contains -- "$cmdline[$cmd_idx]" add a
+        return 1
+    end
+    set -l start (math $cmd_idx + 1)
+    test $start -le $n; or return 1
+    set -l prev ""
+    for j in (seq $start $n)
+        set -l w "$cmdline[$j]"
+        test -n "$w"; or continue
+        if test "$prev" = -d; or test "$prev" = --date
+            set prev "$w"
+            continue
+        end
+        if test "$w" = -d; or test "$w" = --date
+            set prev "$w"
+            continue
+        end
+        if __rusk_is_flag "$w"
+            set prev "$w"
+            continue
+        end
+        return 0
+    end
+    return 1
+end
+
+# Complete flags for add command (-d/--date only after task text)
 function __rusk_complete_add_flags
-    set -l all_flags -d --date -h --help -V --version
+    if __rusk_is_after_date_flag
+        set -l cw (__rusk_get_current_word)
+        if test -z "$cw"
+            __rusk_complete_flags -h --help
+            return
+        end
+    end
+    if __rusk_add_has_prior_task_text
+        set -l all_flags -d --date -h --help
+    else
+        set -l all_flags -h --help
+    end
     __rusk_complete_flags $all_flags
 end
 
 # Check if we should complete flags for add command
 function __rusk_should_complete_add_flags
     __rusk_is_command add a; or return 1
-    __rusk_is_after_date_flag; and return 1
-    
-    # Don't complete flags if we're completing task text (after flags)
-    set -l cmdline (__rusk_get_cmdline)
-    if test (count $cmdline) -ge 3
-        set -l prev_word $cmdline[-1]
-        if not __rusk_is_flag "$prev_word"
-            # Check if it's not a date format
-            if not string match -qr '^\d{2}-\d{2}-\d{4}$' -- "$prev_word"
-                return 1
-            end
+    if __rusk_is_after_date_flag
+        set -l current_word (__rusk_get_current_word)
+        if __rusk_is_flag "$current_word"
+            return 1
         end
+        if test -z "$current_word"
+            return 0
+        end
+        return 1
     end
-    
     set -l current_word (__rusk_get_current_word)
+    if test "$current_word" = --date; or string match -q -- '--date*' "$current_word"
+        return 1
+    end
+    if string match -q -- '-d*' "$current_word"; and not string match -q -- '--*' "$current_word"
+        return 1
+    end
     __rusk_is_flag "$current_word"; or test -z "$current_word"
 end
 
@@ -371,16 +462,31 @@ end
 function __rusk_complete_edit_flags
     set -l current_word (__rusk_get_current_word)
 
-    # After task ID completion point, we always suggest only flags.
-    set -l all_flags -d --date -h --help
+    # After task ID completion point: help flags only (no -d/--date in suggestions).
+    set -l all_flags -h --help
     __rusk_complete_flags $all_flags
 end
 
 # Check if we should complete flags for edit command
 function __rusk_should_complete_edit_flags
     __rusk_is_command edit e; or return 1
-    __rusk_is_after_date_flag; and return 1
+    if __rusk_is_after_date_flag
+        set -l current_word (__rusk_get_current_word)
+        if __rusk_is_flag "$current_word"
+            return 1
+        end
+        if test -z "$current_word"
+            return 0
+        end
+        return 1
+    end
     set -l current_word (__rusk_get_current_word)
+    if test "$current_word" = --date; or string match -q -- '--date*' "$current_word"
+        return 1
+    end
+    if string match -q -- '-d*' "$current_word"; and not string match -q -- '--*' "$current_word"
+        return 1
+    end
     __rusk_is_flag "$current_word"; or test -z "$current_word"
 end
 
@@ -487,11 +593,33 @@ end
 # Mark/Del Command Functions
 # ============================================================================
 
-# Check if we should complete task IDs for mark/del commands
-function __rusk_should_complete_mark_del_id
+# Flags for mark/del (no task ID completion)
+function __rusk_should_complete_mark_del_flags
     __rusk_is_command mark m del d; or return 1
-    # IDs should never be suggested; mark/del keep only flag completion.
-    return 1
+    set -l cw (__rusk_get_current_word)
+    __rusk_is_flag "$cw"; or test -z "$cw"
+end
+
+function __rusk_complete_mark_del_flags
+    set -l cmdline (__rusk_get_cmdline)
+    test (count $cmdline) -ge 2; or return
+    set -l sub "$cmdline[2]"
+    if contains -- $sub del d
+        __rusk_complete_flags --done -h --help
+    else
+        __rusk_complete_flags -h --help
+    end
+end
+
+# list / restore: help flags only
+function __rusk_should_complete_list_restore_flags
+    __rusk_is_command list l restore r; or return 1
+    set -l cw (__rusk_get_current_word)
+    __rusk_is_flag "$cw"; or test -z "$cw"
+end
+
+function __rusk_complete_list_restore_flags
+    __rusk_complete_flags -h --help
 end
 
 # ============================================================================
@@ -576,10 +704,10 @@ complete -c rusk -f -n '__fish_use_subcommand' -s V -l version -d 'Show version'
 # ============================================================================
 
 # Date completions
-complete -c rusk -f -n '__rusk_should_complete_date add a' -a '(__rusk_get_today_date)' -d 'Today'
-complete -c rusk -f -n '__rusk_should_complete_date add a' -a '(__rusk_get_tomorrow_date)' -d 'Tomorrow'
-complete -c rusk -f -n '__rusk_should_complete_date add a' -a '(__rusk_get_week_ahead_date)' -d 'One week ahead'
-complete -c rusk -f -n '__rusk_should_complete_date add a' -a '(__rusk_get_two_weeks_ahead_date)' -d 'Two weeks ahead'
+complete -c rusk -f -n '__rusk_should_complete_date add a' -a '(__rusk_date_completion_candidate today)' -d 'Today'
+complete -c rusk -f -n '__rusk_should_complete_date add a' -a '(__rusk_date_completion_candidate tomorrow)' -d 'Tomorrow'
+complete -c rusk -f -n '__rusk_should_complete_date add a' -a '(__rusk_date_completion_candidate week)' -d 'One week ahead'
+complete -c rusk -f -n '__rusk_should_complete_date add a' -a '(__rusk_date_completion_candidate twoweek)' -d 'Two weeks ahead'
 
 # Flag completions
 complete -c rusk -f -n '__rusk_should_complete_add_flags' -a '(__rusk_complete_add_flags)'
@@ -589,10 +717,10 @@ complete -c rusk -f -n '__rusk_should_complete_add_flags' -a '(__rusk_complete_a
 # ============================================================================
 
 # Date completions
-complete -c rusk -f -n '__rusk_should_complete_date edit e' -a '(__rusk_get_today_date)' -d 'Today'
-complete -c rusk -f -n '__rusk_should_complete_date edit e' -a '(__rusk_get_tomorrow_date)' -d 'Tomorrow'
-complete -c rusk -f -n '__rusk_should_complete_date edit e' -a '(__rusk_get_week_ahead_date)' -d 'One week ahead'
-complete -c rusk -f -n '__rusk_should_complete_date edit e' -a '(__rusk_get_two_weeks_ahead_date)' -d 'Two weeks ahead'
+complete -c rusk -f -n '__rusk_should_complete_date edit e' -a '(__rusk_date_completion_candidate today)' -d 'Today'
+complete -c rusk -f -n '__rusk_should_complete_date edit e' -a '(__rusk_date_completion_candidate tomorrow)' -d 'Tomorrow'
+complete -c rusk -f -n '__rusk_should_complete_date edit e' -a '(__rusk_date_completion_candidate week)' -d 'One week ahead'
+complete -c rusk -f -n '__rusk_should_complete_date edit e' -a '(__rusk_date_completion_candidate twoweek)' -d 'Two weeks ahead'
 
 # Flag completions
 complete -c rusk -f -n '__rusk_should_complete_edit_flags' -a '(__rusk_complete_edit_flags)'
@@ -611,14 +739,13 @@ complete -c rusk -f -n '__rusk_should_complete_edit_id' -a '(__rusk_get_task_ids
 # Mark/Del Command Completions
 # ============================================================================
 
-complete -c rusk -f -n '__rusk_should_complete_mark_del_id' -a '(__rusk_get_task_ids)' -d 'Task ID'
-complete -c rusk -f -n '__rusk_should_complete_mark_del_id' -l done -d 'Delete all completed tasks'
+complete -c rusk -f -n '__rusk_should_complete_mark_del_flags' -a '(__rusk_complete_mark_del_flags)'
 
 # ============================================================================
 # List/Restore Command Completions
 # ============================================================================
 
-complete -c rusk -f -n '__fish_seen_subcommand_from list l restore r'
+complete -c rusk -f -n '__rusk_should_complete_list_restore_flags' -a '(__rusk_complete_list_restore_flags)'
 
 # ============================================================================
 # Completions Command Completions

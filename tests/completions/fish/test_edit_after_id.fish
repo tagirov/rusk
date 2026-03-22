@@ -1,5 +1,5 @@
 #!/usr/bin/env fish
-# Test: rusk e <id> <tab> should return ONLY flags (-d/--date, -h/--help), NO task text, NO dates
+# Test: rusk e <id> <tab> should return ONLY -h/--help, not -d/--date
 # This is the critical test for the reported issue
 
 set SCRIPT_DIR (dirname (status -f))
@@ -95,7 +95,7 @@ function __rusk_get_current_word
 end
 
 # Test 1: rusk e 1 <tab> (with space after ID) - should return ONLY flags
-print_test "rusk e 1 <tab> (with space after ID)" "rusk e 1" "Should return ONLY flags (-d, --date, -h, --help), NO task text"
+print_test "rusk e 1 <tab> (with space after ID)" "rusk e 1" "Should return ONLY -h/--help, NO -d/--date, NO task text"
 set -g __rusk_test_current_word ""
 
 if __rusk_should_complete_edit_text
@@ -111,7 +111,7 @@ else
 end
 
 set -l flags (__rusk_complete_edit_flags)
-if contains -- -d $flags && contains -- --date $flags && contains -- -h $flags && contains -- --help $flags
+if not contains -- -d $flags; and not contains -- --date $flags; and contains -- -h $flags; and contains -- --help $flags
     assert_true 0 "Flags completion contains expected flags"
 else
     assert_true 1 "Flags completion contains expected flags (got: $flags)"
@@ -144,17 +144,26 @@ end
 print_test "rusk e 1 2 <tab> (multiple IDs)" "rusk e 1 2" "Should return task IDs (not text, not dates)"
 assert_true 0 "Multiple IDs detected, should return task IDs"
 
-# Test 3: rusk e 1 --date <tab> (date flag after ID) - should return dates
-print_test "rusk e 1 --date <tab> (date flag after ID)" "rusk e 1 --date" "Should return dates (after date flag)"
-if functions -q __rusk_get_today_date
-    set TODAY (__rusk_get_today_date 2>/dev/null)
-    if test -n "$TODAY"
-        assert_true 0 "Date flag detected, should return dates"
+# Test 4: rusk e 1 --date <tab> (space after flag) — help flags, not dates
+print_test "rusk e 1 --date <tab> (space after flag)" "rusk e 1 --date " "Should return -h/--help only"
+function __rusk_get_cmdline
+    printf '%s\n' rusk e 1 --date
+end
+set -g __rusk_test_current_word ""
+if not __rusk_should_complete_date edit e
+    assert_true 0 "Should NOT run date completion after --date + space"
+else
+    assert_true 1 "Should NOT run date completion after --date + space"
+end
+if __rusk_should_complete_edit_flags
+    set -l flags (__rusk_complete_edit_flags)
+    if contains -- -h $flags; and contains -- --help $flags
+        assert_true 0 "Edit after --date + space suggests -h/--help"
     else
-        assert_true 1 "Date flag detected, should return dates"
+        assert_true 1 "Edit after --date + space suggests -h/--help (got: $flags)"
     end
 else
-    assert_true 1 "Function __rusk_get_today_date exists"
+    assert_true 1 "__rusk_should_complete_edit_flags should be true for --date + space"
 end
 
 get_test_summary

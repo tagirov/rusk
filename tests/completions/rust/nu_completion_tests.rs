@@ -340,9 +340,14 @@ fn test_nu_completion_add_command() -> Result<()> {
         Ok(result) => {
             if result.status.success() {
                 let stdout = String::from_utf8_lossy(&result.stdout);
-                // Should contain date flags
-                assert!(stdout.contains("date") || stdout.contains("-d") || stdout.contains("--date"),
-                    "Should return date flag for add command");
+                assert!(
+                    stdout.contains("help") || stdout.contains("-h"),
+                    "Should return help flags for rusk add (no task text yet)"
+                );
+                assert!(
+                    !stdout.contains("Set task date"),
+                    "Should not suggest -d/--date before task text"
+                );
             }
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -543,7 +548,7 @@ fn test_nu_completion_completions_install() -> Result<()> {
     Ok(())
 }
 
-/// Test that Nu Shell completion handles date flag
+/// Test that Nu Shell completion handles date flag (-d<tab> dates; "-d " shows help only)
 #[test]
 fn test_nu_completion_date_flag() -> Result<()> {
     let script = Shell::Nu.get_script();
@@ -551,31 +556,72 @@ fn test_nu_completion_date_flag() -> Result<()> {
     let script_path = temp_dir.path().join("rusk.nu");
     fs::write(&script_path, script)?;
     
-    // Test completion for "rusk add -d "
-    let test_command = format!(
-        r#"use {} *; rusk-completions-main ["rusk", "add", "-d", ""] | to json"#,
+    let after_space = format!(
+        r#"use {} *; rusk-completions-main ["rusk", "add", "x", "-d", ""] | to json"#,
+        script_path.to_string_lossy()
+    );
+    let after_d_no_space = format!(
+        r#"use {} *; rusk-completions-main ["rusk", "add", "x", "-d"] | to json"#,
         script_path.to_string_lossy()
     );
     
-    let output = Command::new("nu")
+    let output_space = Command::new("nu")
         .arg("-c")
-        .arg(&test_command)
+        .arg(&after_space)
+        .output();
+    let output_d = Command::new("nu")
+        .arg("-c")
+        .arg(&after_d_no_space)
         .output();
     
-    match output {
-        Ok(result) => {
-            if result.status.success() {
-                let stdout = String::from_utf8_lossy(&result.stdout);
-                // Should contain date options (Today, Tomorrow, etc.)
-                assert!(stdout.contains("Today") || stdout.contains("Tomorrow") || stdout.len() > 0,
-                    "Should return date options for -d flag");
-            }
+    match (output_space, output_d) {
+        (Ok(r1), Ok(r2)) => {
+            assert!(
+                r1.status.success(),
+                "nu stderr: {}",
+                String::from_utf8_lossy(&r1.stderr)
+            );
+            assert!(
+                r2.status.success(),
+                "nu stderr: {}",
+                String::from_utf8_lossy(&r2.stderr)
+            );
+            let s1 = String::from_utf8_lossy(&r1.stdout);
+            assert!(
+                s1.contains("help") && !s1.contains("Today"),
+                "After '-d ' should suggest -h/--help only, got: {s1}"
+            );
+            let s2 = String::from_utf8_lossy(&r2.stdout);
+            assert!(
+                s2.contains("Today") || s2.contains("Tomorrow"),
+                "After '-d' without space should suggest dates, got: {s2}"
+            );
+
+            let edit_d = format!(
+                r#"use {} *; rusk-completions-main ["rusk", "edit", "1", "-d"] | to json"#,
+                script_path.to_string_lossy()
+            );
+            let edit_d_space = format!(
+                r#"use {} *; rusk-completions-main ["rusk", "edit", "1", "-d", ""] | to json"#,
+                script_path.to_string_lossy()
+            );
+            let r3 = Command::new("nu").arg("-c").arg(&edit_d).output()?;
+            let r4 = Command::new("nu").arg("-c").arg(&edit_d_space).output()?;
+            assert!(r3.status.success(), "nu edit -d: {}", String::from_utf8_lossy(&r3.stderr));
+            assert!(r4.status.success(), "nu edit -d space: {}", String::from_utf8_lossy(&r4.stderr));
+            let s3 = String::from_utf8_lossy(&r3.stdout);
+            let s4 = String::from_utf8_lossy(&r4.stdout);
+            assert!(
+                s3.contains("Today") && !s4.contains("Today"),
+                "edit: -d<tab> dates, '-d ' help only; got s3={s3} s4={s4}"
+            );
+            assert!(s4.contains("help"), "edit after '-d ' should include help");
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+        (Err(e), _) | (_, Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
             eprintln!("Warning: nu command not found, skipping date flag test");
             return Ok(());
         }
-        Err(e) => return Err(e.into()),
+        (Err(e), _) | (_, Err(e)) => return Err(e.into()),
     }
     
     Ok(())

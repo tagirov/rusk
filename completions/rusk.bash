@@ -218,16 +218,98 @@ _rusk_complete_date() {
     return 0
 }
 
-# Complete flags for add/edit commands
+# "-d <date>" / "--date <date>" when current word is the flag (… -d<tab>, not "-d <tab>")
+_rusk_complete_date_flag_attachment() {
+    local dates d
+    dates=$(_rusk_get_date_options)
+    COMPREPLY=()
+    if [[ "$cur" == --date* ]]; then
+        for d in $dates; do
+            COMPREPLY+=("--date $d")
+        done
+    elif [[ "$cur" == -d* ]] && [[ "$cur" != --* ]]; then
+        for d in $dates; do
+            COMPREPLY+=("-d $d")
+        done
+    fi
+    if ((${#COMPREPLY[@]} > 0)); then
+        local c="$cur" x
+        local -a filtered=()
+        for x in "${COMPREPLY[@]}"; do
+            [[ "$x" == "$c"* ]] && filtered+=("$x")
+        done
+        ((${#filtered[@]} > 0)) && COMPREPLY=("${filtered[@]}")
+    fi
+    return 0
+}
+
+# True when add has at least one completed task-text token (not a flag; skips date value after -d/--date)
+_rusk_add_has_task_text() {
+    local rusk_idx=-1
+    local i
+    for ((i=0; i<${#COMP_WORDS[@]}; i++)); do
+        if [[ "${COMP_WORDS[i]}" == "rusk" ]]; then
+            rusk_idx=$i
+            break
+        fi
+    done
+    (( rusk_idx >= 0 )) || return 1
+    local cmd="${COMP_WORDS[$((rusk_idx+1))]}"
+    [[ "$cmd" == "add" || "$cmd" == "a" ]] || return 1
+    local start=$((rusk_idx+2))
+    local prev=""
+    local w
+    for ((i=start; i<COMP_CWORD; i++)); do
+        w="${COMP_WORDS[i]}"
+        [[ -n "$w" ]] || continue
+        if [[ "$prev" == "-d" || "$prev" == "--date" ]]; then
+            prev="$w"
+            continue
+        fi
+        if [[ "$w" == "-d" || "$w" == "--date" ]]; then
+            prev="$w"
+            continue
+        fi
+        if [[ "$w" == -* ]]; then
+            prev="$w"
+            continue
+        fi
+        return 0
+    done
+    return 1
+}
+
+# Complete flags for add command (-d/--date only after task text)
 _rusk_complete_add_edit_flags() {
-    # Order: -d --date -h --help
-    COMPREPLY=($(compgen -W "-d --date -h --help" -- "$cur"))
+    if _rusk_add_has_task_text; then
+        COMPREPLY=($(compgen -W "-d --date -h --help" -- "$cur"))
+    else
+        COMPREPLY=($(compgen -W "-h --help" -- "$cur"))
+    fi
+    return 0
+}
+
+# Complete flags for edit command (no -d/--date in tab suggestions; flags still work when typed)
+_rusk_complete_edit_flags() {
+    COMPREPLY=($(compgen -W "-h --help" -- "$cur"))
     return 0
 }
 
 # Complete flags for del command
 _rusk_complete_del_flags() {
     COMPREPLY=($(compgen -W "--done --help -h" -- "$cur"))
+    return 0
+}
+
+# Complete flags for mark command
+_rusk_complete_mark_flags() {
+    COMPREPLY=($(compgen -W "-h --help" -- "$cur"))
+    return 0
+}
+
+# Help-only flags for list/restore
+_rusk_complete_help_flags() {
+    COMPREPLY=($(compgen -W "-h --help" -- "$cur"))
     return 0
 }
 
@@ -303,7 +385,14 @@ _rusk_completion() {
     case "$cmd" in
         add|a)
             if [[ "$prev" == "--date" ]] || [[ "$prev" == "-d" ]]; then
-                _rusk_complete_date
+                if [[ -z "$cur" ]]; then
+                    COMPREPLY=($(compgen -W "-h --help" -- "$cur"))
+                else
+                    _rusk_complete_date
+                fi
+            # -d<tab> / --date<tab> (flag token): attach preset dates
+            elif [[ "$cur" == --date* ]] || { [[ "$cur" == -d* ]] && [[ "$cur" != --* ]]; }; then
+                _rusk_complete_date_flag_attachment
             # For `rusk add <tab>` or when starting a flag, offer flags
             elif [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
                 _rusk_complete_add_edit_flags
@@ -314,7 +403,7 @@ _rusk_completion() {
             # After single ID with a space: suggest ONLY flags
             if [[ "$prev" =~ ^[0-9]+$ ]] && [[ -z "$cur" ]]; then
                 if [ $(_rusk_count_ids) -eq 1 ]; then
-                    _rusk_complete_add_edit_flags
+                    _rusk_complete_edit_flags
                     return 0
                 fi
             fi
@@ -333,22 +422,34 @@ _rusk_completion() {
             
             # Complete date flag
             if [[ "$prev" == "--date" ]] || [[ "$prev" == "-d" ]]; then
-                _rusk_complete_date
+                if [[ -z "$cur" ]]; then
+                    COMPREPLY=($(compgen -W "-h --help" -- "$cur"))
+                else
+                    _rusk_complete_date
+                fi
+            # -d<tab> / --date<tab> after id or text (current word is the flag)
+            elif [[ "$cur" == --date* ]] || { [[ "$cur" == -d* ]] && [[ "$cur" != --* ]]; }; then
+                _rusk_complete_date_flag_attachment
             # Complete flags
             elif [[ "$cur" == -* ]]; then
-                _rusk_complete_add_edit_flags
+                _rusk_complete_edit_flags
             fi
             ;;
             
         mark|m|del|d)
-            # For del, complete flags
-            if [[ ("$cmd" == "del" || "$cmd" == "d") && "$cur" == -* ]]; then
-                _rusk_complete_del_flags
+            if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+                if [[ "$cmd" == "del" || "$cmd" == "d" ]]; then
+                    _rusk_complete_del_flags
+                else
+                    _rusk_complete_mark_flags
+                fi
             fi
             ;;
             
         list|l|restore|r)
-            # These commands don't take arguments
+            if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+                _rusk_complete_help_flags
+            fi
             ;;
             
         completions)

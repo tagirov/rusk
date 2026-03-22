@@ -189,6 +189,41 @@ function _rusk_is_after_date_flag {
     return $false
 }
 
+# add: at least one completed task-text token before cursor (skip value after -d/--date)
+function _rusk_add_has_prior_task_text {
+    param($tokens, $wordToComplete)
+    $endIndex = $tokens.Count
+    if ($tokens.Count -gt 2) {
+        if (-not [string]::IsNullOrEmpty($wordToComplete)) {
+            $endIndex = $tokens.Count - 1
+        } elseif ([string]::IsNullOrEmpty($wordToComplete)) {
+            $lastTokenValue = $tokens[$tokens.Count - 1].Value
+            if ([string]::IsNullOrEmpty($lastTokenValue)) {
+                $endIndex = $tokens.Count - 1
+            }
+        }
+    }
+    $prev = ""
+    for ($i = 2; $i -lt $endIndex; $i++) {
+        $w = $tokens[$i].Value
+        if ([string]::IsNullOrEmpty($w)) { continue }
+        if ($prev -eq '-d' -or $prev -eq '--date') {
+            $prev = $w
+            continue
+        }
+        if ($w -eq '-d' -or $w -eq '--date') {
+            $prev = $w
+            continue
+        }
+        if ($w.StartsWith('-')) {
+            $prev = $w
+            continue
+        }
+        return $true
+    }
+    return $false
+}
+
 # Complete date values
 # NOTE: This function should ONLY be called when we're explicitly after a date flag
 function _rusk_complete_date {
@@ -292,15 +327,41 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
     # Handle subcommands
     switch ($command) {
         { $_ -in 'add', 'a' } {
-            # Complete date values after date flag
+            # After "-d " / "--date " (blank next word): help flags only; dates use -d<tab> / partial date value
             if (_rusk_is_after_date_flag $prev $tokens $commandAst) {
+                if ([string]::IsNullOrEmpty($cur)) {
+                    return @(
+                        [System.Management.Automation.CompletionResult]::new('--help', '--help', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help'),
+                        [System.Management.Automation.CompletionResult]::new('-h', '-h', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help')
+                    )
+                }
                 if ($wordToComplete -ne '-d' -and $wordToComplete -ne '--date') {
                     return _rusk_complete_date $wordToComplete
                 }
             }
-            # Complete flags
+            # -d<tab> / --date<tab> (flag token): preset dates with flag prefix
+            if (($cur -like '--date*') -or (($cur -like '-d*') -and ($cur -notlike '--*'))) {
+                if ($prev -ne '-d' -and $prev -ne '--date') {
+                    $dates = _rusk_get_date_options
+                    $out = @()
+                    foreach ($d in $dates) {
+                        if ($cur -like '--date*') {
+                            $out += [System.Management.Automation.CompletionResult]::new("--date $d", "--date $d", [System.Management.Automation.CompletionResultType]::ParameterValue, $d)
+                        } else {
+                            $out += [System.Management.Automation.CompletionResult]::new("-d $d", "-d $d", [System.Management.Automation.CompletionResultType]::ParameterValue, $d)
+                        }
+                    }
+                    return $out
+                }
+            }
+            # Complete flags (-d/--date only after task text)
             if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur)) {
-                $flags = @('--date', '-d', '--help', '-h')
+                $hasText = _rusk_add_has_prior_task_text $tokens $wordToComplete
+                if ($hasText) {
+                    $flags = @('--date', '-d', '--help', '-h')
+                } else {
+                    $flags = @('--help', '-h')
+                }
                 if ([string]::IsNullOrEmpty($wordToComplete)) {
                     $filtered = $flags
                 } else {
@@ -334,8 +395,6 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
                 # Only proceed if we have exactly one ID and it matches prev
                 if ($enteredIds.Count -eq 1 -and $prev -eq $enteredIds[0].ToString()) {
                     return @(
-                        [System.Management.Automation.CompletionResult]::new('--date', '--date', [System.Management.Automation.CompletionResultType]::ParameterName, 'Set task date'),
-                        [System.Management.Automation.CompletionResult]::new('-d', '-d', [System.Management.Automation.CompletionResultType]::ParameterName, 'Set task date'),
                         [System.Management.Automation.CompletionResult]::new('--help', '--help', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help'),
                         [System.Management.Automation.CompletionResult]::new('-h', '-h', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help')
                     )
@@ -347,8 +406,30 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
             # Check if we're immediately after a date flag - ONLY then suggest dates
             # This check comes AFTER the ID check to ensure dates are never suggested after an ID
             if ($prev -eq '--date' -or $prev -eq '-d') {
+                if ([string]::IsNullOrEmpty($cur)) {
+                    return @(
+                        [System.Management.Automation.CompletionResult]::new('--help', '--help', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help'),
+                        [System.Management.Automation.CompletionResult]::new('-h', '-h', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help')
+                    )
+                }
                 if ($wordToComplete -ne '-d' -and $wordToComplete -ne '--date') {
                     return _rusk_complete_date $wordToComplete
+                }
+            }
+
+            # -d<tab> / --date<tab> (flag token)
+            if (($cur -like '--date*') -or (($cur -like '-d*') -and ($cur -notlike '--*'))) {
+                if ($prev -ne '-d' -and $prev -ne '--date') {
+                    $dates = _rusk_get_date_options
+                    $out = @()
+                    foreach ($d in $dates) {
+                        if ($cur -like '--date*') {
+                            $out += [System.Management.Automation.CompletionResult]::new("--date $d", "--date $d", [System.Management.Automation.CompletionResultType]::ParameterValue, $d)
+                        } else {
+                            $out += [System.Management.Automation.CompletionResult]::new("-d $d", "-d $d", [System.Management.Automation.CompletionResultType]::ParameterValue, $d)
+                        }
+                    }
+                    return $out
                 }
             }
 
@@ -364,11 +445,9 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
                 }
             }
 
-            # Complete flags
+            # Complete flags (no -d/--date in tab suggestions for edit)
             if ($cur -like '-*') {
                 return @(
-                    [System.Management.Automation.CompletionResult]::new('--date', '--date', [System.Management.Automation.CompletionResultType]::ParameterName, 'Set task date'),
-                    [System.Management.Automation.CompletionResult]::new('-d', '-d', [System.Management.Automation.CompletionResultType]::ParameterName, 'Set task date'),
                     [System.Management.Automation.CompletionResult]::new('--help', '--help', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help'),
                     [System.Management.Automation.CompletionResult]::new('-h', '-h', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help')
                 )
@@ -378,20 +457,29 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
         }
 
         { $_ -in 'mark', 'm', 'del', 'd' } {
-            # For del, complete flags
-            if ($command -in @('del', 'd') -and $cur -like '-*') {
+            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur)) {
+                if ($command -in @('del', 'd')) {
+                    return @(
+                        [System.Management.Automation.CompletionResult]::new('--done', '--done', [System.Management.Automation.CompletionResultType]::ParameterName, 'Delete all completed tasks'),
+                        [System.Management.Automation.CompletionResult]::new('--help', '--help', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help'),
+                        [System.Management.Automation.CompletionResult]::new('-h', '-h', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help')
+                    )
+                }
                 return @(
-                    [System.Management.Automation.CompletionResult]::new('--done', '--done', [System.Management.Automation.CompletionResultType]::ParameterName, 'Delete all completed tasks'),
                     [System.Management.Automation.CompletionResult]::new('--help', '--help', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help'),
                     [System.Management.Automation.CompletionResult]::new('-h', '-h', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help')
                 )
             }
-
             return @()
         }
 
         { $_ -in 'list', 'l', 'restore', 'r' } {
-            # These commands don't take arguments
+            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur)) {
+                return @(
+                    [System.Management.Automation.CompletionResult]::new('--help', '--help', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help'),
+                    [System.Management.Automation.CompletionResult]::new('-h', '-h', [System.Management.Automation.CompletionResultType]::ParameterName, 'Show help')
+                )
+            }
             return @()
         }
 

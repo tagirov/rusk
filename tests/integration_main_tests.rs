@@ -50,7 +50,7 @@ fn test_binary_mark_help() {
     let out = Command::new(&rusk).args(["mark", "--help"]).output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Mark tasks"));
+    assert!(stdout.contains("Toggle task completion"));
 }
 
 #[test]

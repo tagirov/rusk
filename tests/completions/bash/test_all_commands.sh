@@ -42,29 +42,33 @@ else
     assert_true 1 "Helper functions exist"
 fi
 
-# Test: rusk add <tab> should suggest flags
-print_test "rusk add <tab> (flag completion)" "rusk add" "Should suggest flags (--date, -d, --help, -h)"
-assert_true 0 "Add command should suggest flags"
+# Test: rusk add <tab> should suggest help flags only (not -d/--date until after task text)
+print_test "rusk add <tab> (flag completion)" "rusk add" "Should suggest -h/--help only before task text"
+assert_true 0 "Add command should suggest help flags before task text"
 
-# Test: rusk add --date <tab> should suggest dates
-print_test "rusk add --date <tab> (date completion)" "rusk add --date" "Should suggest dates"
-if declare -f _rusk_get_date_options >/dev/null; then
-    DATE_OPTIONS=$(_rusk_get_date_options 2>/dev/null)
-    if [ -n "$DATE_OPTIONS" ]; then
-        assert_true 0 "Add command suggests dates after --date flag"
+# Test: rusk add x --date <tab> (space after flag) should suggest -h/--help only
+print_test "rusk add x --date <tab> (after flag + space)" "rusk add x --date " "Should suggest -h/--help only"
+if declare -f _rusk_completion >/dev/null; then
+    COMP_WORDS=(rusk add x --date "")
+    COMP_CWORD=4
+    COMPREPLY=()
+    _rusk_completion
+    joined=" ${COMPREPLY[*]} "
+    if [[ "$joined" == *" --help "* ]] && [[ "$joined" == *" -h "* ]] && [[ "$joined" != *" --date "* ]]; then
+        assert_true 0 "Add after --date + space: help only"
     else
-        assert_true 1 "Add command suggests dates after --date flag"
+        assert_true 1 "Add after --date + space: help only (got: '${COMPREPLY[*]}')"
     fi
 else
-    assert_true 1 "Add command suggests dates after --date flag"
+    assert_true 1 "Function _rusk_completion exists"
 fi
 
-# Test: rusk add -<tab> should suggest flags
-print_test "rusk add -<tab> (flag completion)" "rusk add -" "Should suggest flags starting with -"
-assert_true 0 "Add command should suggest flags with - prefix"
+# Test: rusk add -<tab> should suggest help flags only
+print_test "rusk add -<tab> (flag completion)" "rusk add -" "Should suggest -h/--help only before task text"
+assert_true 0 "Add command should suggest help flags with - prefix before task text"
 
 # Test: rusk a <tab> (alias test)
-print_test "rusk a <tab> (alias completion)" "rusk a" "Should suggest flags (using alias 'a')"
+print_test "rusk a <tab> (alias completion)" "rusk a" "Should suggest -h/--help only (alias 'a')"
 assert_true 0 "Add command works with alias 'a'"
 
 # ============================================================================
@@ -91,7 +95,7 @@ else
 fi
 
 # Test: rusk edit 1 -<tab> should suggest flags
-print_test "rusk edit 1 -<tab> (flag completion)" "rusk edit 1 -" "Should suggest flags (--date, -d, --help, -h)"
+print_test "rusk edit 1 -<tab> (flag completion)" "rusk edit 1 -" "Should suggest only --help, -h (not --date, -d)"
 assert_true 0 "Edit command suggests flags after ID"
 
 # Test: rusk e <tab> (alias test)

@@ -36,15 +36,15 @@ reset_counters
 print_test_section "Zsh Completion Tests - Edit After ID"
 
 # Test 1: rusk e 1 <tab> (with space after ID) - should return ONLY flags
-print_test "rusk e 1 <tab> (with space after ID)" "rusk e 1" "Should return ONLY flags (-d, --date, -h, --help), NO task text and NO dates"
+print_test "rusk e 1 <tab> (with space after ID)" "rusk e 1" "Should return ONLY -h/--help (not -d/--date), NO task text and NO dates"
 if grep -q '_rusk_get_task_text_raw "$prev"' "$COMPLETION_FILE"; then
     assert_true 1 "Spaced ID completion does not call task text helper (task text disabled)"
 else
     # Ensure we do suggest flags in the edit/e branch
-    if grep -q 'compadd -- -d --date -h --help' "$COMPLETION_FILE"; then
-        assert_true 0 "Spaced ID completion returns only flags"
+    if grep -q 'compadd -- -h --help' "$COMPLETION_FILE"; then
+        assert_true 0 "Spaced ID completion returns help flags only (no -d/--date in script)"
     else
-        assert_true 1 "Spaced ID completion returns only flags (missing expected compadd)"
+        assert_true 1 "Spaced ID completion returns help flags only (missing expected compadd)"
     fi
 fi
 
@@ -86,17 +86,17 @@ else
     assert_true 1 "Function _rusk_get_entered_ids exists"
 fi
 
-# Test 4: rusk e 1 --date <tab> (date flag after ID) - should return dates
-print_test "rusk e 1 --date <tab> (date flag after ID)" "rusk e 1 --date" "Should return dates (after date flag)"
-if (( $+functions[_rusk_get_date_options] )); then
-    DATE_OPTIONS=($(_rusk_get_date_options 2>/dev/null))
-    if (( ${#DATE_OPTIONS[@]} > 0 )); then
-        assert_true 0 "Date flag detected, should return dates"
+# Test 4: after --date + space, script should offer -h/--help (runtime compadd needs zle; bash test covers behavior)
+print_test "rusk e 1 --date <tab> (space after flag)" "rusk e 1 --date " "Should return -h/--help only"
+if grep -q 'edit|e)' "$COMPLETION_FILE" && grep -q 'if \[\[ -z "\$cur" \]\]; then' "$COMPLETION_FILE"; then
+    cnt=$(grep -c 'compadd -- -h --help' "$COMPLETION_FILE" || echo 0)
+    if [[ "$cnt" -ge 4 ]]; then
+        assert_true 0 "Completion script has help-only branches after date flag + space"
     else
-        assert_true 1 "Date flag detected, should return dates"
+        assert_true 1 "Expected multiple compadd -h/--help branches (count=$cnt)"
     fi
 else
-    assert_true 1 "Function _rusk_get_date_options exists"
+    assert_true 1 "Completion file should contain edit branch and empty-cur handling"
 fi
 
 get_test_summary

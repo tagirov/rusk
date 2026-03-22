@@ -71,6 +71,11 @@ else
     exit 1
 end
 
+# Non-interactive: __fish_seen_subcommand_from is unreliable without real completion context
+function __rusk_is_command
+    return 0
+end
+
 set TESTS_PASSED 0
 set TESTS_FAILED 0
 
@@ -95,7 +100,7 @@ end
 print_test_section "ADD Command Tests"
 
 # Test: Add command should support date completion
-print_test "Add date completion" "rusk add --date" "Should support date completion"
+print_test "Add date completion" "rusk add x --date" "Dates: --date<tab>; space after flag → -h/--help"
 if functions -q __rusk_get_today_date
     assert_true 0 "Add command supports date completion"
 else
@@ -103,28 +108,39 @@ else
 end
 
 # Test: rusk add <tab> should suggest flags
-print_test "rusk add <tab> (flag completion)" "rusk add" "Should suggest flags (--date, -d, --help, -h)"
-assert_true 0 "Add command should suggest flags"
+print_test "rusk add <tab> (flag completion)" "rusk add" "Should suggest -h/--help only before task text"
+assert_true 0 "Add command should suggest help flags before task text"
 
-# Test: rusk add --date <tab> should suggest dates
-print_test "rusk add --date <tab> (date completion)" "rusk add --date" "Should suggest dates"
-if functions -q __rusk_get_today_date
-    set TODAY (__rusk_get_today_date 2>/dev/null)
-    if test -n "$TODAY"
-        assert_true 0 "Add command suggests dates after --date flag"
+# Test: rusk add x --date <tab> (space) — help only (dates use --date<tab>)
+print_test "rusk add x --date <tab> (space after flag)" "rusk add x --date " "Should suggest -h/--help only"
+function __rusk_get_cmdline
+    printf '%s\n' rusk add x --date
+end
+function __rusk_get_current_word
+    echo ""
+end
+if not __rusk_should_complete_date add a
+    assert_true 0 "No date completion after --date + space"
+else
+    assert_true 1 "No date completion after --date + space"
+end
+if __rusk_should_complete_add_flags
+    set -l flags (__rusk_complete_add_flags)
+    if contains -- -h $flags; and contains -- --help $flags; and not contains -- -d $flags
+        assert_true 0 "Add after --date + space: -h/--help only"
     else
-        assert_true 1 "Add command suggests dates after --date flag"
+        assert_true 1 "Add after --date + space: -h/--help only (got: $flags)"
     end
 else
-    assert_true 1 "Add command suggests dates after --date flag"
+    assert_true 1 "__rusk_should_complete_add_flags should run after --date + space"
 end
 
 # Test: rusk add -<tab> should suggest flags
-print_test "rusk add -<tab> (flag completion)" "rusk add -" "Should suggest flags starting with -"
-assert_true 0 "Add command should suggest flags with - prefix"
+print_test "rusk add -<tab> (flag completion)" "rusk add -" "Should suggest -h/--help only before task text"
+assert_true 0 "Add command should suggest help flags with - prefix before task text"
 
 # Test: rusk a <tab> (alias test)
-print_test "rusk a <tab> (alias completion)" "rusk a" "Should suggest flags (using alias 'a')"
+print_test "rusk a <tab> (alias completion)" "rusk a" "Should suggest -h/--help only (alias 'a')"
 assert_true 0 "Add command works with alias 'a'"
 
 # ============================================================================
@@ -150,7 +166,7 @@ else
 end
 
 # Test: rusk edit 1 -<tab> should suggest flags
-print_test "rusk edit 1 -<tab> (flag completion)" "rusk edit 1 -" "Should suggest flags (--date, -d, --help, -h)"
+print_test "rusk edit 1 -<tab> (flag completion)" "rusk edit 1 -" "Should suggest only --help, -h (not --date, -d)"
 assert_true 0 "Edit command suggests flags after ID"
 
 # Test: rusk e <tab> (alias test)
@@ -162,28 +178,28 @@ assert_true 0 "Edit command works with alias 'e'"
 # ============================================================================
 print_test_section "MARK Command Tests"
 
-# Test: Mark should support task ID completion
-print_test "Mark completion" "rusk mark" "Should support ID completion"
-if functions -q __rusk_get_all_task_ids
-    assert_true 0 "Mark command supports ID completion"
+# Test: Mark should offer flag completion helpers (no task ID completion)
+print_test "Mark completion" "rusk mark" "Should support flag completion"
+if functions -q __rusk_should_complete_mark_del_flags __rusk_complete_mark_del_flags
+    assert_true 0 "Mark command has flag completion helpers"
 else
-    assert_true 1 "Mark command supports ID completion"
+    assert_true 1 "Mark command has flag completion helpers"
 end
 
-# Test: rusk mark <tab> should suggest task IDs
-print_test "rusk mark <tab> (task ID completion)" "rusk mark" "Should suggest task IDs"
-if functions -q __rusk_get_all_task_ids
-    assert_true 0 "Mark command suggests task IDs"
+# Test: rusk mark <tab> should suggest -h / --help
+print_test "rusk mark <tab> (flag completion)" "rusk mark" "Should suggest -h, --help"
+if functions -q __rusk_complete_mark_del_flags
+    assert_true 0 "Mark command suggests help flags"
 else
-    assert_true 1 "Mark command suggests task IDs"
+    assert_true 1 "Mark command suggests help flags"
 end
 
-# Test: rusk mark 1 <tab> should suggest more task IDs
-print_test "rusk mark 1 <tab> (multiple ID completion)" "rusk mark 1" "Should suggest remaining task IDs"
-assert_true 0 "Mark command suggests remaining task IDs"
+# Test: rusk mark 1 <tab> — still flags when current word empty (no ID completion)
+print_test "rusk mark 1 <tab> (flag completion after ID)" "rusk mark 1" "Should suggest -h, --help when appropriate"
+assert_true 0 "Mark after ID uses flag completion path"
 
 # Test: rusk m <tab> (alias test)
-print_test "rusk m <tab> (alias completion)" "rusk m" "Should suggest task IDs (using alias 'm')"
+print_test "rusk m <tab> (alias completion)" "rusk m" "Should suggest flags (using alias 'm')"
 assert_true 0 "Mark command works with alias 'm'"
 
 # ============================================================================
@@ -191,32 +207,32 @@ assert_true 0 "Mark command works with alias 'm'"
 # ============================================================================
 print_test_section "DEL Command Tests"
 
-# Test: Del should support task ID completion
-print_test "Del completion" "rusk del" "Should support ID completion"
-if functions -q __rusk_get_all_task_ids
-    assert_true 0 "Del command supports ID completion"
+# Test: Del should offer flag completion helpers (no task ID completion)
+print_test "Del completion" "rusk del" "Should support flag completion"
+if functions -q __rusk_should_complete_mark_del_flags __rusk_complete_mark_del_flags
+    assert_true 0 "Del command has flag completion helpers"
 else
-    assert_true 1 "Del command supports ID completion"
+    assert_true 1 "Del command has flag completion helpers"
 end
 
-# Test: rusk del <tab> should suggest task IDs
-print_test "rusk del <tab> (task ID completion)" "rusk del" "Should suggest task IDs"
-if functions -q __rusk_get_all_task_ids
-    assert_true 0 "Del command suggests task IDs"
+# Test: rusk del <tab> should suggest --done, -h, --help
+print_test "rusk del <tab> (flag completion)" "rusk del" "Should suggest --done, -h, --help"
+if functions -q __rusk_complete_mark_del_flags
+    assert_true 0 "Del command suggests flags after subcommand"
 else
-    assert_true 1 "Del command suggests task IDs"
+    assert_true 1 "Del command suggests flags after subcommand"
 end
 
 # Test: rusk del -<tab> should suggest flags including --done
 print_test "rusk del -<tab> (flag completion)" "rusk del -" "Should suggest flags (--done, --help, -h)"
 assert_true 0 "Del command suggests flags including --done"
 
-# Test: rusk del 1 2 <tab> should suggest remaining task IDs
-print_test "rusk del 1 2 <tab> (multiple ID completion)" "rusk del 1 2" "Should suggest remaining task IDs"
-assert_true 0 "Del command suggests remaining task IDs"
+# Test: rusk del 1 2 <tab> — flags when current word empty (no ID completion)
+print_test "rusk del 1 2 <tab> (flag completion after IDs)" "rusk del 1 2" "Should suggest flags when appropriate"
+assert_true 0 "Del after IDs uses flag completion path"
 
 # Test: rusk d <tab> (alias test)
-print_test "rusk d <tab> (alias completion)" "rusk d" "Should suggest task IDs (using alias 'd')"
+print_test "rusk d <tab> (alias completion)" "rusk d" "Should suggest flags (using alias 'd')"
 assert_true 0 "Del command works with alias 'd'"
 
 # ============================================================================
@@ -228,12 +244,16 @@ print_test_section "LIST Command Tests"
 print_test "List completion" "rusk list" "Should take no arguments"
 assert_true 0 "List command takes no arguments"
 
-# Test: rusk list <tab> should return empty (no arguments)
-print_test "rusk list <tab> (no arguments)" "rusk list" "Should return empty (list takes no arguments)"
-assert_true 0 "List command takes no arguments"
+# Test: rusk list <tab> should suggest -h / --help
+print_test "rusk list <tab> (flag completion)" "rusk list" "Should suggest -h, --help"
+if functions -q __rusk_should_complete_list_restore_flags __rusk_complete_list_restore_flags
+    assert_true 0 "List command suggests help flags"
+else
+    assert_true 1 "List command suggests help flags"
+end
 
 # Test: rusk l <tab> (alias test)
-print_test "rusk l <tab> (alias completion)" "rusk l" "Should return empty (using alias 'l')"
+print_test "rusk l <tab> (alias completion)" "rusk l" "Should suggest flags (using alias 'l')"
 assert_true 0 "List command works with alias 'l'"
 
 # ============================================================================
@@ -245,12 +265,16 @@ print_test_section "RESTORE Command Tests"
 print_test "Restore completion" "rusk restore" "Should take no arguments"
 assert_true 0 "Restore command takes no arguments"
 
-# Test: rusk restore <tab> should return empty (no arguments)
-print_test "rusk restore <tab> (no arguments)" "rusk restore" "Should return empty (restore takes no arguments)"
-assert_true 0 "Restore command takes no arguments"
+# Test: rusk restore <tab> should suggest -h / --help
+print_test "rusk restore <tab> (flag completion)" "rusk restore" "Should suggest -h, --help"
+if functions -q __rusk_should_complete_list_restore_flags __rusk_complete_list_restore_flags
+    assert_true 0 "Restore command suggests help flags"
+else
+    assert_true 1 "Restore command suggests help flags"
+end
 
 # Test: rusk r <tab> (alias test)
-print_test "rusk r <tab> (alias completion)" "rusk r" "Should return empty (using alias 'r')"
+print_test "rusk r <tab> (alias completion)" "rusk r" "Should suggest flags (using alias 'r')"
 assert_true 0 "Restore command works with alias 'r'"
 
 # ============================================================================

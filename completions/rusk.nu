@@ -405,23 +405,25 @@ def is-date-flag [word: string] {
 }
 
 # Complete date flag values
+# Dates attach to -d/--date without a space (-d<tab>); after "-d " / "--date " suggest nothing here (callers show -h/--help).
 def complete-date-flag [cur: string, prev: string] {
   let cur_is_date_flag = (is-date-flag $cur)
   let prev_is_date_flag = (is-date-flag $prev)
   let cur_starts_with_d = ($cur | str starts-with "-d")
   
-  if $cur_is_date_flag or $cur_starts_with_d or $prev_is_date_flag {
+  if $cur_is_date_flag {
     let date_options = (get-date-options)
-    
-    if $cur_is_date_flag {
-      let flag = $cur
-      ($date_options | each {|item|
-        {value: $"($flag) ($item.value)", description: $item.description}
-      })
-    } else if $cur_starts_with_d {
-      $date_options
+    let flag = $cur
+    ($date_options | each {|item|
+      {value: $"($flag) ($item.value)", description: $item.description}
+    })
+  } else if $cur_starts_with_d {
+    (get-date-options)
+  } else if $prev_is_date_flag {
+    if ($cur == "") {
+      []
     } else {
-      $date_options
+      filter-by-prefix (get-date-options) $cur
     }
   } else {
     []
@@ -484,17 +486,71 @@ def get-task-text-completion [task_id: int, spans: list<string>] {
 # Command-Specific Completion Functions
 # ============================================================================
 
+# Completed arguments after "rusk add|a" (excludes current partial token)
+def add-completed-args-after [spans: list<string>] {
+  let ctx = (parse-spans $spans)
+  let filtered = ($spans | where $it != "")
+  let rusk_idx = try {
+    ($filtered | enumerate | where {|it| $it.item == "rusk"} | get 0.index)
+  } catch {
+    -1
+  }
+  if $rusk_idx < 0 {
+    return []
+  }
+  mut after = ($filtered | skip ($rusk_idx + 2))
+  if not $ctx.has_trailing_space and ($after | length) > 0 {
+    $after = ($after | take (($after | length) - 1))
+  }
+  $after
+}
+
+# True if add has at least one task-text token before cursor (skips value after -d/--date)
+def add-has-prior-task-text [spans: list<string>] {
+  let args = (add-completed-args-after $spans)
+  mut prev = ""
+  for $arg in $args {
+    if $prev == "-d" or $prev == "--date" {
+      $prev = $arg
+      continue
+    }
+    if $arg == "-d" or $arg == "--date" {
+      $prev = $arg
+      continue
+    }
+    if ($arg | str starts-with "-") {
+      $prev = $arg
+      continue
+    }
+    if ($arg | str length) > 0 {
+      return true
+    }
+    $prev = $arg
+  }
+  false
+}
+
 # Complete add command
-def complete-add [cur: string, prev: string] {
-  # Handle date flag completion
+def complete-add [spans: list<string>, cur: string, prev: string] {
+  # Space after -d/--date: more flags only (-h/--help)
+  if ($prev == "-d" or $prev == "--date") and ($cur == "") {
+    return (complete-flags (get-common-flags) $cur)
+  }
+  
+  # Handle date flag completion (-d<tab> / partial date value)
   let date_completions = (complete-date-flag $cur $prev)
   if ($date_completions | length) > 0 {
     return $date_completions
   }
   
-  # Complete flags
+  # Complete flags (-d/--date only after task text)
   if ($cur == "") or ($cur | str starts-with "-") {
-    let all_flags = ((get-date-flags) | append (get-common-flags))
+    let has_text = (add-has-prior-task-text $spans)
+    let all_flags = if $has_text {
+      ((get-date-flags) | append (get-common-flags))
+    } else {
+      (get-common-flags)
+    }
     
     if ($cur == "") {
       return $all_flags
@@ -513,12 +569,25 @@ def complete-add [cur: string, prev: string] {
 def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_space: bool, command: string] {
   let entered_ids = (get-entered-ids $spans)
   
-  # If task text has already been entered, stop completion
+  # Space after -d/--date: more flags only (before has-task-text so "edit 1 foo -d " still works)
+  if ($prev == "-d" or $prev == "--date") and ($cur == "") {
+    return (complete-flags (get-common-flags) $cur)
+  }
+  
+  # Date value after -d/--date (non-empty cur)
+  if ($prev == "-d" or $prev == "--date") and ($cur != "") {
+    let date_completions = (complete-date-flag $cur $prev)
+    if ($date_completions | length) > 0 {
+      return $date_completions
+    }
+  }
+  
+  # If task text has already been entered, stop further edit completions
   if (has-task-text $spans) {
     return []
   }
   
-  # Handle date flag completion
+  # -d<tab> / --date<tab> (flag token) and other date-flag cases
   let date_completions = (complete-date-flag $cur $prev)
   if ($date_completions | length) > 0 {
     return $date_completions
@@ -532,8 +601,7 @@ def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_
   # Space after single ID: suggest ONLY flags
   if ($cur == "") and (is-number $prev_id) and not $prev_ends_with_comma {
     if ($entered_ids | length) == 1 {
-      let all_flags = ((get-date-flags) | append (get-common-flags))
-      return (complete-flags $all_flags $cur)
+      return (complete-flags (get-common-flags) $cur)
     }
   }
   
@@ -570,48 +638,24 @@ def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_
     }
   }
   
-  # Complete flags
+  # Complete flags (edit: no -d/--date in tab suggestions)
   if ($cur | str starts-with "-") {
-    let all_flags = ((get-date-flags) | append (get-common-flags))
-    return (complete-flags $all_flags $cur)
+    return (complete-flags (get-common-flags) $cur)
   }
   
   []
 }
 
 # Complete mark/del commands
-def complete-mark-del [spans: list<string>, cur: string, prev: string, command: string] {
-  let entered_ids = (get-entered-ids $spans)
-  let cur_ends_with_comma = (ends-with-comma $cur)
-  let prev_ends_with_comma = (ends-with-comma $prev)
-  let prev_contains_comma = ($prev | str contains ",")
-  
-  # Determine if we should suggest IDs
-  let should_suggest_ids = if ($cur != $command) {
-    if $cur_ends_with_comma or $prev_ends_with_comma {
-      true
-    } else if $cur == "" {
-      ($entered_ids | is-empty) or (not $prev_contains_comma) or $prev_ends_with_comma
-    } else {
-      false
-    }
-  } else {
-    false
-  }
-  
-  # IDs should never be suggested for mark/del.
-  if $should_suggest_ids {
-    return []
-  }
-  
-  # Complete flags
-  if ($cur | str starts-with "-") {
+def complete-mark-del [cur: string, command: string] {
+  # Complete flags (including empty cur after command)
+  if ($cur == "") or ($cur | str starts-with "-") {
     let all_flags = if ($command == "del" or $command == "d") {
       [
         {value: "--done", description: "Delete all completed tasks"}
       ] | append (get-common-flags)
     } else {
-      get-common-flags
+      (get-common-flags)
     }
     return (complete-flags $all_flags $cur)
   }
@@ -901,7 +945,7 @@ export def rusk-completions-main [spans: list<string>] {
   # Handle subcommands
   match $ctx.command {
     "add" | "a" => {
-      complete-add $ctx.cur $ctx.prev
+      complete-add $spans $ctx.cur $ctx.prev
     }
     
     "edit" | "e" => {
@@ -909,7 +953,7 @@ export def rusk-completions-main [spans: list<string>] {
     }
     
     "mark" | "m" | "del" | "d" => {
-      complete-mark-del $spans $ctx.cur $ctx.prev $ctx.command
+      complete-mark-del $ctx.cur $ctx.command
     }
     
     "list" | "l" | "restore" | "r" => {

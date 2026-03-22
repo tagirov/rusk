@@ -1,4 +1,4 @@
-# Test: rusk e <id> <tab> should return ONLY flags (-d/--date, -h/--help), NO task text, NO dates
+# Test: rusk e <id> <tab> should return ONLY -h/--help (not -d/--date), NO task text, NO dates
 # This is the critical test for the reported issue
 
 let project_root = ($env.PWD | path join ".." "..")
@@ -61,8 +61,8 @@ mut tests_failed = 0
 print_test_section "Nu Shell Completion Tests - Edit After ID"
 
 # Test 1: rusk e 1 <tab> (with space after ID) - should return ONLY flags
-print_test "rusk e 1 <tab> (with space after ID)" "rusk e 1" "Should return ONLY flags (-d, --date, -h, --help), NO task text and NO dates"
-if (assert_true true "Spaced ID completion should return only flags (-d, --date, -h, --help)") {
+print_test "rusk e 1 <tab> (with space after ID)" "rusk e 1" "Should return ONLY -h/--help, NO -d/--date, NO task text and NO dates"
+if (assert_true true "Spaced ID completion should return only -h/--help (no -d/--date)") {
     $tests_passed = ($tests_passed + 1)
 } else {
     $tests_failed = ($tests_failed + 1)
@@ -76,9 +76,9 @@ if (assert_true true "Multiple IDs after spaced last ID should not suggest task 
     $tests_failed = ($tests_failed + 1)
 }
 
-# Test 3: rusk e 1 --date <tab> (date flag after ID) - should return dates
-print_test "rusk e 1 --date <tab> (date flag after ID)" "rusk e 1 --date" "Should return dates (after date flag)"
-if (assert_true true "Date flag completion should return date values") {
+# Test 3: rusk e 1 --date <tab> (space) — help only (dates: --date<tab>)
+print_test "rusk e 1 --date <tab> (space after flag)" "rusk e 1 --date" "Should return -h/--help only"
+if (assert_true true "After --date + space: help flags (see rusk-completions-main)") {
     $tests_passed = ($tests_passed + 1)
 } else {
     $tests_failed = ($tests_failed + 1)

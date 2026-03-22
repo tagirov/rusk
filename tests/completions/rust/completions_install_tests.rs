@@ -680,44 +680,21 @@ fn test_nu_completion_quotes_special_characters() {
 }
 
 #[test]
-fn test_nu_completion_mark_del_prev_contains_comma_logic() {
-    // Verify that Nu completion script has logic to prevent suggesting IDs
-    // when multiple IDs are already entered via comma (e.g., "rusk mark 8,5 <tab>")
+fn test_nu_completion_mark_del_flags_after_subcommand() {
+    // mark/del: no task ID completion; empty cur or -prefix should offer flags
     let nu_script = Shell::Nu.get_script();
-    
-    // Should contain check for prev_contains_comma
+
     assert!(
-        nu_script.contains("prev_contains_comma") || nu_script.contains("prev contains comma"),
-        "Nu script should check if previous word contains comma"
+        nu_script.contains("def complete-mark-del"),
+        "Nu script should define complete-mark-del"
     );
-    
-    // Should contain logic for mark and del commands
     assert!(
-        nu_script.contains("\"mark\"") || nu_script.contains("mark") || nu_script.contains("\"m\""),
-        "Nu script should handle mark command"
+        nu_script.contains("get-common-flags"),
+        "Nu mark/del should include common help flags"
     );
-    
     assert!(
-        nu_script.contains("\"del\"") || nu_script.contains("del") || nu_script.contains("\"d\""),
-        "Nu script should handle del command"
-    );
-    
-    // Should check for comma-separated IDs
-    assert!(
-        nu_script.contains("ends_with_comma") || nu_script.contains("ends with comma") || nu_script.contains("ends-with"),
-        "Nu script should check if word ends with comma"
-    );
-    
-    // Should contain should_suggest_ids logic
-    assert!(
-        nu_script.contains("should_suggest_ids") || nu_script.contains("should suggest"),
-        "Nu script should have logic to determine when to suggest IDs"
-    );
-    
-    // Should check for empty entered_ids or prev_contains_comma condition
-    assert!(
-        nu_script.contains("entered_ids") || nu_script.contains("entered_ids | is-empty"),
-        "Nu script should check if IDs are already entered"
+        nu_script.contains("--done") && nu_script.contains("del"),
+        "Nu del completion should offer --done"
     );
 }
 

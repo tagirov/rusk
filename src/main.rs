@@ -8,7 +8,7 @@ use std::path::PathBuf;
 #[command(
     version,
     about,
-    after_help = "Without COMMAND, lists all tasks (same as `rusk list`).\n\nEnvironment:\n  RUSK_DB    Optional path to the tasks database file or directory.\n\nShell tab completion:\n  rusk completions install <shell>    (bash, zsh, fish, nu, powershell)\n  rusk completions show <shell>       print script to stdout"
+    after_help = "Without COMMAND, lists all tasks (same as `rusk list`).\n\nEnvironment:\n  RUSK_DB    Optional path to the tasks database file or directory.\n\nShell tab completion:\n  rusk completions install <shell> [<shell> ...]\n  rusk completions show <shell>"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -18,62 +18,63 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     #[command(
-        alias = "a",
-        about = "Add a new task (alias: \x1b[1ma\x1b[0m). Example: rusk add buy groceries. With a specific date: rusk add buy groceries --date 01-07-2025 (or short format: 1-7-25)",
+        visible_alias = "a",
+        about = "Add a new task. Example: rusk add buy groceries. With a specific date: rusk add buy groceries --date 01-07-2025",
         help_template = "{about-section}\n\nUsage: rusk add [TEXT]... [OPTIONS]\n\n{all-args}"
     )]
     Add {
+        #[arg(value_name = "TEXT", help = "Task text")]
         text: Vec<String>,
-        #[arg(short, long)]
+        #[arg(short, long, value_name = "DATE", help = "Due date in DD-MM-YYYY (short forms like 1-7-25 are accepted)")]
         date: Option<String>,
     },
     #[command(
-        alias = "d",
-        about = "Delete tasks by id(s) (alias: \x1b[1md\x1b[0m). Multiple IDs: comma-separated (e.g. 1,2,3). Use --done to delete all completed tasks. Examples: rusk del 3, rusk del 1,2,3, rusk del --done",
+        visible_alias = "d",
+        about = "Delete tasks by ID. Supports multiple IDs and comma-separated input. Examples: rusk del 3, rusk del 1,2,3, rusk del --done",
         help_template = "{about-section}\n\nUsage: rusk del [IDS]... [OPTIONS]\n\n{all-args}"
     )]
     Del {
-        #[arg(trailing_var_arg = true)]
+        #[arg(trailing_var_arg = true, value_name = "IDS", help = "Task IDs to delete (space- or comma-separated)")]
         ids: Vec<String>,
-        #[arg(long)]
+        #[arg(long, help = "Delete all completed tasks")]
         done: bool,
     },
     #[command(
-        alias = "m",
-        about = "Mark tasks as done/undone by id(s) (alias: \x1b[1mm\x1b[0m). Multiple IDs: comma-separated (e.g. 1,2,3). Examples: rusk mark 3, rusk mark 1,2,3"
+        visible_alias = "m",
+        about = "Toggle task completion status by ID. Supports multiple IDs and comma-separated input. Examples: rusk mark 3, rusk mark 1,2,3"
     )]
     Mark {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
+        #[arg(trailing_var_arg = true, allow_hyphen_values = false, value_name = "IDS", help = "Task IDs to mark/unmark (space- or comma-separated)")]
         ids: Vec<String>,
     },
     #[command(
-        alias = "e",
-        about = "Edit tasks by id(s) (alias: \x1b[1me\x1b[0m). Multiple IDs: comma-separated with shared new text. Without text: `rusk edit 1` edits text interactively; `rusk edit 1 --date` edits text and date interactively. Examples: rusk e 3 new task text -d 01-11-2025 (or short: 1-11-25), rusk e 1,2,3 shared text",
+        visible_alias = "e",
+        about = "Edit tasks by ID. Without text: `rusk edit 1` starts interactive text edit; `rusk edit 1 --date` edits text and date interactively. Examples: rusk e 3 new task text -d 01-11-2025, rusk e 1,2,3 shared text",
         help_template = "{about-section}\n\nUsage: rusk edit [ARGS]... [OPTIONS]\n\n{all-args}"
     )]
     Edit {
         /// All arguments (IDs and text mixed)
-        #[arg(trailing_var_arg = true, allow_hyphen_values = false)]
+        #[arg(trailing_var_arg = true, allow_hyphen_values = false, value_name = "ARGS", help = "IDs and optional new text")]
         args: Vec<String>,
-        #[arg(short, long, value_name = "DATE", num_args = 0..=1)]
+        #[arg(short, long, value_name = "DATE", num_args = 0..=1, help = "Set date (or start interactive date edit when passed without value)")]
         date: Option<Option<String>>,
     },
     #[command(
-        alias = "l",
-        about = "List all tasks with their status, id, date, and text (alias: \x1b[1ml\x1b[0m). Running `rusk` with no subcommand does the same"
+        visible_alias = "l",
+        about = "List all tasks with status, ID, date, and text. Running `rusk` without a subcommand does the same"
     )]
     List {
         #[arg(long, hide = true, default_value_t = false)]
         for_completion: bool,
     },
     #[command(
-        alias = "r",
-        about = "Restore database from backup file (.json.backup) (alias: \x1b[1mr\x1b[0m)"
+        visible_alias = "r",
+        about = "Restore task database from backup (.json.backup)"
     )]
     Restore,
     #[command(
-        alias = "c",
-        about = "Install shell completions (alias: \x1b[1mc\x1b[0m). Example: rusk completions install bash, or rusk completions install fish nu"
+        visible_alias = "c",
+        about = "Manage shell completions. Example: rusk completions install bash, or rusk completions install fish nu"
     )]
     Completions {
         #[command(subcommand)]

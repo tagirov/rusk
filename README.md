@@ -86,7 +86,6 @@ rusk add Finish project report --date 1-3-25
 # d=days, w=weeks, m=months, q=quarters (3 months), y=years
 rusk add Follow up --date 2w
 rusk add Review --date 10d5w
-rusk edit 1 --date 1m3q
 
 # View all tasks
 rusk list
@@ -105,6 +104,7 @@ rusk edit 1 Complete the project documentation
 
 # Edit task date
 rusk edit 1 --date 25/12/2025
+rusk edit 1 --date 1m3q
 
 # Edit both text and date
 rusk edit 1 Update documentation --date 23-12-25
@@ -144,7 +144,7 @@ rusk del 1,2,3
 # Edit task text interactively
 rusk edit 1
 
-# Edit task text and date interactively (prompt accepts DD-MM-YYYY and relative offsets like 2w, 10d5w)
+# Edit task text and date interactively (prompt accepts DD-MM-YYYY and relative offsets)
 rusk edit 1 --date
 
 # Interactive editing of tasks in sequence
@@ -180,7 +180,7 @@ rusk d (del)
 rusk r (restore)
 rusk c (completions)
 
--d (--date) — fixed date (DD-MM-YYYY) or relative from today (e.g. 2w, 10d5w); see `rusk add --help`
+-d (--date)
 -h (--help)
 -V (--version)
 ```

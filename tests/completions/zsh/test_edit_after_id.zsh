@@ -85,7 +85,7 @@ fi
 # Test 4: after --date + space, script should offer -h/--help (runtime compadd needs zle; bash test covers behavior)
 print_test "rusk e 1 --date <tab> (space after flag)" "rusk e 1 --date " "Should return -h/--help only"
 if grep -q 'edit|e)' "$COMPLETION_FILE" && grep -q 'if \[\[ -z "\$cur" \]\]; then' "$COMPLETION_FILE"; then
-    cnt=$(grep -c 'compadd -- -h --help' "$COMPLETION_FILE" || echo 0)
+    cnt=$(grep -cE 'compadd -- -h --help|_rusk_zsh_compadd_flags -- .+(-h |--help)' "$COMPLETION_FILE" || echo 0)
     if [[ "$cnt" -ge 4 ]]; then
         assert_true 0 "Completion script has help-only branches after date flag + space"
     else

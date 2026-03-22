@@ -262,9 +262,6 @@ fn test_edge_case_invalid_date_formats() {
         "01.01.2025",       // Wrong format
         "01_01_2025",       // Wrong format
         "01 01 2025",       // Wrong format
-        "1-1-2025",         // Missing leading zeros
-        "1-01-2025",        // Missing leading zero for day
-        "01-1-2025",        // Missing leading zero for month
         "",                 // Empty string
         "   ",              // Whitespace only
         "2025",             // Missing month and day
@@ -280,12 +277,11 @@ fn test_edge_case_invalid_date_formats() {
 
     for date in invalid_dates {
         let result = tm.add_task(vec!["Test task".to_string()], Some(date.to_string()));
-        assert!(result.is_ok()); // Should succeed but with None date
-
-        let task = tm.tasks.last().unwrap();
-        // Note: Some invalid dates like "2025-1-1" might actually parse successfully
-        // We only check that the task was added, not necessarily that date is None
-        assert!(task.text == "Test task");
+        assert!(
+            result.is_err(),
+            "expected invalid date to be rejected: {:?}",
+            date
+        );
     }
 }
 

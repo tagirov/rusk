@@ -1,7 +1,10 @@
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use colored::*;
-use rusk::{TaskManager, cli::HandlerCLI, completions::Shell, parse_edit_args, parse_flexible_ids, windows_console};
+use rusk::{
+    TaskManager, cli::HandlerCLI, completions::Shell, is_cli_date_help_value, parse_edit_args,
+    parse_flexible_ids, windows_console,
+};
 
 #[derive(Parser)]
 #[command(
@@ -24,7 +27,7 @@ enum Command {
     Add {
         #[arg(value_name = "TEXT", help = "Task text")]
         text: Vec<String>,
-        #[arg(short, long, value_name = "DATE", help = "Due date in DD-MM-YYYY (short forms like 1-7-25 are accepted)")]
+        #[arg(short, long, value_name = "DATE", allow_hyphen_values = true, help = "Due date in DD-MM-YYYY (short forms like 1-7-25 are accepted). Use -d -h or -d --help for subcommand help")]
         date: Option<String>,
     },
     #[command(
@@ -55,7 +58,7 @@ enum Command {
         /// All arguments (IDs and text mixed)
         #[arg(trailing_var_arg = true, allow_hyphen_values = false, value_name = "ARGS", help = "IDs and optional new text")]
         args: Vec<String>,
-        #[arg(short, long, value_name = "DATE", num_args = 0..=1, help = "Set date (or start interactive date edit when passed without value)")]
+        #[arg(short, long, value_name = "DATE", num_args = 0..=1, allow_hyphen_values = true, help = "Set date (or start interactive date edit when passed without value). Value may be -h/--help for subcommand help")]
         date: Option<Option<String>>,
     },
     #[command(
@@ -95,6 +98,29 @@ enum CompletionAction {
     },
 }
 
+fn print_subcommand_help(name: &str) -> anyhow::Result<()> {
+    let mut cmd = Cli::command();
+    let sub = cmd
+        .find_subcommand_mut(name)
+        .with_context(|| format!("missing subcommand {name}"))?;
+    sub.print_long_help()?;
+    Ok(())
+}
+
+/// True if any `-d` / `--date` is immediately followed by `-h` / `--help`.
+fn args_have_date_then_help(args: &[String]) -> bool {
+    let mut i = 0usize;
+    while i < args.len() {
+        if args[i] == "-d" || args[i] == "--date" {
+            if i + 1 < args.len() && is_cli_date_help_value(&args[i + 1]) {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
 fn main() -> Result<()> {
     // Enable ANSI color support on Windows
     windows_console::enable_ansi_support();
@@ -104,6 +130,12 @@ fn main() -> Result<()> {
 
     match cli.command {
         Some(Command::Add { text, date }) => {
+            if let Some(ref d) = date {
+                if is_cli_date_help_value(d) {
+                    print_subcommand_help("add")?;
+                    return Ok(());
+                }
+            }
             if let Err(e) = HandlerCLI::handle_add_task(&mut tm, text, date) {
                 eprintln!("{}", format!("Error: {e}").red());
                 std::process::exit(1);
@@ -144,6 +176,16 @@ fn main() -> Result<()> {
             HandlerCLI::handle_mark_tasks(&mut tm, parsed_ids)?;
         }
         Some(Command::Edit { args, date }) => {
+            if args_have_date_then_help(&args) {
+                print_subcommand_help("edit")?;
+                return Ok(());
+            }
+            if let Some(Some(ref d)) = date {
+                if is_cli_date_help_value(d) {
+                    print_subcommand_help("edit")?;
+                    return Ok(());
+                }
+            }
             if args.is_empty() {
                 eprintln!("{}", "Error: No arguments provided for edit command".red());
                 std::process::exit(1);
@@ -159,9 +201,16 @@ fn main() -> Result<()> {
             while i < args.len() {
                 let a = &args[i];
                 if a == "-d" || a == "--date" {
-                    if i + 1 < args.len() && !args[i + 1].starts_with('-') {
-                        inline_date_value = Some(args[i + 1].clone());
-                        i += 1; // skip value
+                    if i + 1 < args.len() {
+                        let next = &args[i + 1];
+                        if is_cli_date_help_value(next) {
+                            i += 1; // skip -h/--help (help already handled above)
+                        } else if !next.starts_with('-') {
+                            inline_date_value = Some(next.clone());
+                            i += 1; // skip value
+                        } else {
+                            date_flag_present = true; // interactive date
+                        }
                     } else {
                         date_flag_present = true; // interactive date
                     }

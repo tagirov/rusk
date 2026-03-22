@@ -1,4 +1,4 @@
-use crate::{Task, TaskManager, normalize_date_string};
+use crate::{Task, TaskManager, normalize_date_string, parse_cli_date};
 use anyhow::{Context, Result};
 use chrono::Datelike;
 use colored::*;
@@ -937,13 +937,11 @@ impl HandlerCLI {
             }
         }
 
-        // Parse new date before it's moved
-        let parsed_new_date = date
-            .as_ref()
-            .and_then(|d| {
-                let normalized = normalize_date_string(d);
-                chrono::NaiveDate::parse_from_str(&normalized, "%d-%m-%Y").ok()
-            });
+        // Parse new date before it's moved (same rules as TaskManager::edit_tasks)
+        let parsed_new_date: Option<chrono::NaiveDate> = match &date {
+            None => None,
+            Some(d) => Some(parse_cli_date(d)?),
+        };
 
         let (edited, unchanged, not_found) = tm.edit_tasks(ids, text, date)?;
 

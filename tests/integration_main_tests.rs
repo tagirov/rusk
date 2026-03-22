@@ -73,6 +73,30 @@ fn test_binary_mark_filters_trailing_h() {
 }
 
 #[test]
+fn test_binary_add_date_flag_help_value() {
+    let rusk = rusk_bin();
+    let out = Command::new(&rusk)
+        .args(["add", "x", "-d", "-h"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Add a new task"));
+}
+
+#[test]
+fn test_binary_edit_date_flag_help_value() {
+    let rusk = rusk_bin();
+    let out = Command::new(&rusk)
+        .args(["edit", "1", "-d", "--help"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Edit tasks"));
+}
+
+#[test]
 fn test_binary_edit_inline_date() {
     let _guard = BIN_TEST_MUTEX.lock().unwrap();
 

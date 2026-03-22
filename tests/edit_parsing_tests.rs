@@ -92,14 +92,11 @@ fn test_edit_tasks_date_parsing_validation() {
         chrono::NaiveDate::parse_from_str("31-12-2025", "%d-%m-%Y").ok()
     );
 
-    // Invalid date format should result in None (parsed as None, which changes the date)
-    let (edited, _unchanged, _not_found) = tm
+    // Invalid date format should error
+    let err = tm
         .edit_tasks(vec![1], None, Some("invalid-date".to_string()))
-        .unwrap();
-
-    // Should change from valid date to None due to invalid parsing
-    assert_eq!(edited, vec![1]); // Task was edited because date changed
-    assert_eq!(tm.tasks[0].date, None);
+        .unwrap_err();
+    assert!(err.to_string().contains("Invalid date"));
 }
 
 #[test]

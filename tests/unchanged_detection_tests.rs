@@ -85,7 +85,7 @@ fn test_edit_tasks_mixed_text_and_date_changes() {
         .edit_tasks(
             vec![1],
             Some(vec!["New".to_string(), "text".to_string()]),
-            Some("2025-01-01".to_string()),
+            Some("01-01-2025".to_string()),
         )
         .unwrap();
 

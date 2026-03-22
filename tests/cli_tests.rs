@@ -288,6 +288,9 @@ fn test_cli_date_handling() {
         "31/12/2025", // Slash separator
         "12-12-25",   // Short year (25 -> 2025)
         "12/12/25",   // Short year with slash
+        "1-1-2025",   // Flexible day/month width
+        "1-01-2025",
+        "01-1-2025",
     ];
 
     for (i, date) in valid_dates.iter().enumerate() {
@@ -312,9 +315,6 @@ fn test_cli_date_handling() {
 
     for date in invalid_dates {
         let result = tm.add_task(vec!["Test task".to_string()], Some(date.to_string()));
-        assert!(result.is_ok()); // Should succeed but with None date
-
-        let task = tm.tasks.last().unwrap();
-        assert_eq!(task.date, None);
+        assert!(result.is_err(), "invalid date should error: {date:?}");
     }
 }

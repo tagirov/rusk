@@ -177,10 +177,10 @@ impl TaskManager {
             anyhow::bail!("Task text cannot be empty");
         }
 
-        let date = date.and_then(|d| {
-            let normalized = normalize_date_string(&d);
-            NaiveDate::parse_from_str(&normalized, "%d-%m-%Y").ok()
-        });
+        let date = match date {
+            None => None,
+            Some(d) => Some(parse_cli_date(&d)?),
+        };
         let id = self.generate_next_id()?;
 
         let task = Task {
@@ -281,10 +281,9 @@ impl TaskManager {
                 }
 
                 if let Some(ref new_date) = date {
-                    let normalized = normalize_date_string(new_date);
-                    let parsed_date = NaiveDate::parse_from_str(&normalized, "%d-%m-%Y").ok();
-                    if task.date != parsed_date {
-                        task.date = parsed_date;
+                    let parsed_date = parse_cli_date(new_date)?;
+                    if task.date != Some(parsed_date) {
+                        task.date = Some(parsed_date);
                         was_changed = true;
                     }
                 }
@@ -554,6 +553,26 @@ impl TaskManager {
     }
 }
 
+/// True when `s` is `-h` or `--help` (after trim), i.e. help as a value for `-d` / `--date`.
+pub fn is_cli_date_help_value(s: &str) -> bool {
+    matches!(s.trim(), "-h" | "--help")
+}
+
+/// Parse a due date from CLI input; fails on empty or unparseable values.
+pub fn parse_cli_date(date_str: &str) -> Result<NaiveDate> {
+    let trimmed = date_str.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("Date cannot be empty");
+    }
+    let normalized = normalize_date_string(trimmed);
+    NaiveDate::parse_from_str(&normalized, "%d-%m-%Y").with_context(|| {
+        format!(
+            "Invalid date '{}': use DD-MM-YYYY or DD/MM/YYYY (short year like 25 is OK)",
+            trimmed
+        )
+    })
+}
+
 /// Normalize date string: replace '/' with '-', and convert short year (25) to full year (2025)
 /// Supports formats: DD-MM-YYYY, DD/MM/YYYY, DD-MM-YY, DD/MM/YY
 pub fn normalize_date_string(date_str: &str) -> String {
@@ -638,12 +657,18 @@ pub fn parse_edit_args(args: Vec<String>) -> (Vec<u8>, Option<Vec<String>>) {
 
         // Skip date flags and their optional values
         if arg == "-d" || arg == "--date" {
-            // If next token exists and is not another flag, treat it as the date value
-            if i + 1 < args.len() && !args[i + 1].starts_with('-') {
-                i += 2; // Skip flag and value
-            } else {
-                i += 1; // Skip only the flag (interactive date mode)
+            if i + 1 < args.len() {
+                let next = &args[i + 1];
+                if is_cli_date_help_value(next) {
+                    i += 2; // -d -h / --date --help (handled in main for help output)
+                    continue;
+                }
+                if !next.starts_with('-') {
+                    i += 2; // Skip flag and date value
+                    continue;
+                }
             }
+            i += 1; // Skip only the flag (interactive date mode)
             continue;
         }
 

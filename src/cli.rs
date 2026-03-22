@@ -1,4 +1,4 @@
-use crate::{Task, TaskManager, normalize_date_string, parse_cli_date};
+use crate::{Task, TaskManager, parse_cli_date, parse_cli_date_optional_empty};
 use anyhow::{Context, Result};
 use chrono::Datelike;
 use colored::*;
@@ -746,12 +746,10 @@ impl HandlerCLI {
                     );
                     println!(
                         "{}",
-                        "Enter new date DD-MM-YYYY or DD/MM/YYYY (short year like 25 is OK, leave empty to keep, Tab to autocomplete from ghost prefill):".cyan()
+                        "Enter new date: DD-MM-YYYY or DD/MM/YYYY (short year ok), or relative from today (2d, 2w, 10d5w, …). Leave empty to keep. Tab uses ghost prefill.".cyan()
                     );
-                    let date_editor = |s: &str| {
-                        let normalized = normalize_date_string(s);
-                        chrono::NaiveDate::parse_from_str(&normalized, "%d-%m-%Y").is_ok()
-                    };
+                    let date_editor =
+                        |s: &str| parse_cli_date(s.trim()).is_ok();
                     match Self::interactive_line_editor(
                         "> ",
                         &current_date,
@@ -761,31 +759,34 @@ impl HandlerCLI {
                         allow_skip,
                     ) {
                         Ok(date_input) => {
-                            if !date_input.trim().is_empty() {
-                                let normalized = normalize_date_string(date_input.trim());
-                                if let Ok(parsed) =
-                                    chrono::NaiveDate::parse_from_str(&normalized, "%d-%m-%Y")
-                                {
-                                    let task = &mut tm.tasks_mut()[idx];
-                                    if task.date != Some(parsed) {
-                                        task.date = Some(parsed);
-                                        if !edited.contains(id) {
-                                            edited.push(*id);
-                                        }
-                                        any_changed = true;
-                                        let prefix = format!("{} {}: ", "Edited task:".green(), id);
-                                        Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
+                            let trimmed = date_input.trim();
+                            let parsed_res = parse_cli_date_optional_empty(&date_input);
+                            if let Ok(Some(parsed)) = &parsed_res {
+                                let parsed = *parsed;
+                                let task = &mut tm.tasks_mut()[idx];
+                                if task.date != Some(parsed) {
+                                    task.date = Some(parsed);
+                                    if !edited.contains(id) {
+                                        edited.push(*id);
                                     }
+                                    any_changed = true;
+                                    let prefix = format!("{} {}: ", "Edited task:".green(), id);
+                                    Self::print_task_text_with_wrapping(
+                                        &prefix,
+                                        &task.text.bold().to_string(),
+                                    );
                                 }
                             }
-                            let final_date_display = if date_input.trim().is_empty() {
-                                if current_date.is_empty() {
-                                    "empty".to_string()
-                                } else {
-                                    current_date.clone()
+                            let final_date_display = match parsed_res {
+                                Ok(None) => {
+                                    if current_date.is_empty() {
+                                        "empty".to_string()
+                                    } else {
+                                        current_date.clone()
+                                    }
                                 }
-                            } else {
-                                date_input.trim().to_string()
+                                Ok(Some(p)) => p.format("%d-%m-%Y").to_string(),
+                                Err(_) => trimmed.to_string(),
                             };
                             println!(
                                 "{} {}",

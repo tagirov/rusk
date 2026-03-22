@@ -1,5 +1,5 @@
 #!/usr/bin/env fish
-# Test: rusk e <id> <tab> should return ONLY -h/--help, not -d/--date
+# Test: rusk e <id> <tab> (space after ID) should suggest flags including -d/--date and -h/--help
 # This is the critical test for the reported issue
 
 set SCRIPT_DIR (dirname (status -f))
@@ -94,8 +94,8 @@ function __rusk_get_current_word
     echo $__rusk_test_current_word
 end
 
-# Test 1: rusk e 1 <tab> (with space after ID) - should return ONLY flags
-print_test "rusk e 1 <tab> (with space after ID)" "rusk e 1" "Should return ONLY -h/--help, NO -d/--date, NO task text"
+# Test 1: rusk e 1 <tab> (with space after ID) - flags including date + help, no task text
+print_test "rusk e 1 <tab> (with space after ID)" "rusk e 1" "Should return -d/--date and -h/--help, NO task text"
 set -g __rusk_test_current_word ""
 
 if __rusk_should_complete_edit_text
@@ -111,7 +111,7 @@ else
 end
 
 set -l flags (__rusk_complete_edit_flags)
-if not contains -- -d $flags; and not contains -- --date $flags; and contains -- -h $flags; and contains -- --help $flags
+if contains -- -d $flags; and contains -- --date $flags; and contains -- -h $flags; and contains -- --help $flags
     assert_true 0 "Flags completion contains expected flags"
 else
     assert_true 1 "Flags completion contains expected flags (got: $flags)"

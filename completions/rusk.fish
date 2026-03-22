@@ -337,10 +337,9 @@ function __rusk_complete_add_flags
             return
         end
     end
+    set -l all_flags -h --help
     if __rusk_add_has_prior_task_text
-        set -l all_flags -d --date -h --help
-    else
-        set -l all_flags -h --help
+        set all_flags -d --date -h --help
     end
     __rusk_complete_flags $all_flags
 end
@@ -392,10 +391,18 @@ end
 
 # Complete flags for edit command
 function __rusk_complete_edit_flags
-    set -l current_word (__rusk_get_current_word)
-
-    # After task ID completion point: help flags only (no -d/--date in suggestions).
+    if __rusk_is_after_date_flag
+        set -l cw (__rusk_get_current_word)
+        if test -z "$cw"
+            __rusk_complete_flags -h --help
+            return
+        end
+    end
+    # After at least one ID: date + help; before any ID: help only (matches add semantics).
     set -l all_flags -h --help
+    if __rusk_has_edit_id
+        set all_flags -d --date -h --help
+    end
     __rusk_complete_flags $all_flags
 end
 
@@ -492,10 +499,10 @@ function __rusk_complete_edit_text
                 # Emit "<id> <text>" so candidate matches and expands in place.
                 set -l current_word (__rusk_get_current_word)
                 if test "$current_word" = "$last_arg"
-                    printf '%s %s\n' "$last_arg" (string join \n $task_text)
+                    printf '%s %s\n' "$last_arg" (string join -- \n $task_text)
                 else
                     # Output raw text; wrapper will add proper quoting after insert
-                    printf '%s\n' (string join \n $task_text)
+                    printf '%s\n' (string join -- \n $task_text)
                 end
             end
         end
@@ -654,7 +661,11 @@ complete -c rusk -f -n '__fish_use_subcommand' -a 'l' -d 'Alias for list'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'r' -d 'Alias for restore'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'c' -d 'Alias for completions'
 
-# Global flags
+# Global flags (-s/-l only appear after "-" on the token; -a lists them with subcommands on bare <tab>)
+complete -c rusk -f -n '__fish_use_subcommand' -a '-h' -d 'Show help'
+complete -c rusk -f -n '__fish_use_subcommand' -a '--help' -d 'Show help'
+complete -c rusk -f -n '__fish_use_subcommand' -a '-V' -d 'Show version'
+complete -c rusk -f -n '__fish_use_subcommand' -a '--version' -d 'Show version'
 complete -c rusk -f -n '__fish_use_subcommand' -s h -l help -d 'Show help'
 complete -c rusk -f -n '__fish_use_subcommand' -s V -l version -d 'Show version'
 

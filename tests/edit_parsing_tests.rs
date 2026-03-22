@@ -1,4 +1,5 @@
-use rusk::TaskManager;
+use chrono::Local;
+use rusk::{TaskManager, parse_cli_date_with_base};
 mod common;
 use common::create_test_task;
 
@@ -97,6 +98,24 @@ fn test_edit_tasks_date_parsing_validation() {
         .edit_tasks(vec![1], None, Some("invalid-date".to_string()))
         .unwrap_err();
     assert!(err.to_string().contains("Invalid date"));
+
+    // Relative date (consistent with parse_cli_date / Local::now() in the same run)
+    let today = Local::now().date_naive();
+    let rel = "14d";
+    let (_edited, _unchanged, _not_found) = tm
+        .edit_tasks(vec![1], None, Some(rel.to_string()))
+        .unwrap();
+    assert_eq!(
+        tm.tasks[0].date,
+        Some(parse_cli_date_with_base(rel, today).unwrap())
+    );
+
+    let err = tm.edit_tasks(vec![1], None, Some("0d".to_string())).unwrap_err();
+    assert!(
+        err.to_string().contains("Relative") || err.to_string().contains("positive"),
+        "0d should be rejected: {}",
+        err
+    );
 }
 
 #[test]

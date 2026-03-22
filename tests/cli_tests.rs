@@ -1,5 +1,5 @@
-use chrono::NaiveDate;
-use rusk::{TaskManager, normalize_date_string};
+use chrono::{Local, NaiveDate};
+use rusk::{TaskManager, normalize_date_string, parse_cli_date_with_base};
 
 #[test]
 fn test_cli_add_command() {
@@ -316,5 +316,23 @@ fn test_cli_date_handling() {
     for date in invalid_dates {
         let result = tm.add_task(vec!["Test task".to_string()], Some(date.to_string()));
         assert!(result.is_err(), "invalid date should error: {date:?}");
+    }
+
+    // Relative dates (same "today" as parse_cli_date inside add_task)
+    let today = Local::now().date_naive();
+    let relative_cases = ["1d", "2w", "3m", "1q", "1y", "5d1w", "12d2q1y"];
+    let base_len = tm.tasks.len();
+    for (i, rel) in relative_cases.iter().enumerate() {
+        let result = tm.add_task(
+            vec![format!("Rel {}", i + 1)],
+            Some((*rel).to_string()),
+        );
+        assert!(result.is_ok(), "relative date {rel:?} should parse");
+        let expected = parse_cli_date_with_base(rel, today).unwrap();
+        assert_eq!(
+            tm.tasks[base_len + i].date,
+            Some(expected),
+            "relative {rel}"
+        );
     }
 }

@@ -82,6 +82,12 @@ rusk add Finish project report --date 31/12/25
 # Leading zero for day and month is optional:
 rusk add Finish project report --date 1-3-25
 
+# Relative deadline from today (local date): chain number + suffix with no spaces.
+# d=days, w=weeks, m=months, q=quarters (3 months), y=years
+rusk add Follow up --date 2w
+rusk add Review --date 10d5w
+rusk edit 1 --date 1m3q
+
 # View all tasks
 rusk list
 
@@ -138,7 +144,7 @@ rusk del 1,2,3
 # Edit task text interactively
 rusk edit 1
 
-# Edit task text and date interactively
+# Edit task text and date interactively (prompt accepts DD-MM-YYYY and relative offsets like 2w, 10d5w)
 rusk edit 1 --date
 
 # Interactive editing of tasks in sequence
@@ -174,7 +180,7 @@ rusk d (del)
 rusk r (restore)
 rusk c (completions)
 
--d (--date)
+-d (--date) — fixed date (DD-MM-YYYY) or relative from today (e.g. 2w, 10d5w); see `rusk add --help`
 -h (--help)
 -V (--version)
 ```

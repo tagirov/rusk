@@ -85,6 +85,50 @@ fn test_binary_add_date_flag_help_value() {
 }
 
 #[test]
+fn test_binary_add_help_includes_relative_date_syntax() {
+    let rusk = rusk_bin();
+    let out = Command::new(&rusk).args(["add", "--help"]).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("Relative")
+            && stdout.contains("10d5w")
+            && stdout.contains("interactive date entry"),
+        "long help should document relative and interactive edit dates:\n{stdout}"
+    );
+}
+
+#[test]
+fn test_binary_root_long_help_mentions_dates() {
+    let rusk = rusk_bin();
+    let out = Command::new(&rusk).args(["--help"]).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("2w") || stdout.contains("10d5w") || stdout.contains("relative"),
+        "root --help should point at date forms:\n{stdout}"
+    );
+}
+
+#[test]
+fn test_binary_add_rejects_invalid_relative_date() {
+    let _guard = BIN_TEST_MUTEX.lock().unwrap();
+    setup_test_db(r#"[{"id":1,"text":"T","date":null,"done":false}]"#);
+
+    let rusk = rusk_bin();
+    let out = Command::new(&rusk)
+        .args(["add", "x", "-d", "0d"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Relative") || stderr.contains("positive"),
+        "stderr={stderr}"
+    );
+}
+
+#[test]
 fn test_binary_edit_date_flag_help_value() {
     let rusk = rusk_bin();
     let out = Command::new(&rusk)
@@ -94,6 +138,31 @@ fn test_binary_edit_date_flag_help_value() {
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("Edit tasks"));
+}
+
+#[test]
+fn test_binary_edit_trailing_help_after_id() {
+    let rusk = rusk_bin();
+    for args in [["e", "22", "-h"], ["e", "22", "--help"]] {
+        let out = Command::new(&rusk).args(args).output().unwrap();
+        assert!(out.status.success(), "args={args:?}");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(stdout.contains("Edit tasks"), "args={args:?} stdout={stdout}");
+    }
+}
+
+#[test]
+fn test_binary_edit_help_includes_relative_date_syntax() {
+    let rusk = rusk_bin();
+    let out = Command::new(&rusk).args(["edit", "--help"]).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("Relative")
+            && stdout.contains("10d5w")
+            && stdout.contains("interactive date entry"),
+        "edit long help should document relative and interactive dates:\n{stdout}"
+    );
 }
 
 #[test]

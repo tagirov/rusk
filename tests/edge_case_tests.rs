@@ -273,6 +273,9 @@ fn test_edge_case_invalid_date_formats() {
         "-01-01-2025",      // Leading dash
         "01--01-2025",      // Double dash
         "2025-01--01",      // Double dash
+        "0d",               // Relative: zero amount
+        "2x",               // Relative: bad unit
+        "42",               // Relative: number without suffix
     ];
 
     for date in invalid_dates {

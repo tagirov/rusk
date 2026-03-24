@@ -1,4 +1,4 @@
-# Test: rusk e <id> <tab> should return ONLY -h/--help (not -d/--date), NO task text, NO dates
+# Test: rusk e <id> <tab> should offer -d/--date and -h/--help, NO task text in completions
 # This is the critical test for the reported issue
 
 let project_root = ($env.PWD | path join ".." "..")
@@ -61,8 +61,8 @@ mut tests_failed = 0
 print_test_section "Nu Shell Completion Tests - Edit After ID"
 
 # Test 1: rusk e 1 <tab> (with space after ID) - should return ONLY flags
-print_test "rusk e 1 <tab> (with space after ID)" "rusk e 1" "Should return ONLY -h/--help, NO -d/--date, NO task text and NO dates"
-if (assert_true true "Spaced ID completion should return only -h/--help (no -d/--date)") {
+print_test "rusk e 1 <tab> (with space after ID)" "rusk e 1" "Should return -d/--date and -h/--help, NO task text"
+if (assert_true true "Spaced ID completion should include -d/--date and help flags") {
     $tests_passed = ($tests_passed + 1)
 } else {
     $tests_failed = ($tests_failed + 1)

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test: rusk e <id><tab> should append task text, while rusk e <id> <tab> should return ONLY help flags (-h/--help), not -d/--date
+# Test: rusk e <id><tab> should append task text; rusk e <id> <tab> should offer -d/--date and -h/--help
 # This is the critical test for the reported issue
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,7 +27,7 @@ reset_counters
 print_test_section "Bash Completion Tests - Edit After ID"
 
 # Test 1: rusk e 1 <tab> (with space after ID) - should return only flags
-print_test "rusk e 1 <tab> (with space after ID)" "rusk e 1" "Should return ONLY -h/--help (not -d/--date), NO task text and NO dates"
+print_test "rusk e 1 <tab> (with space after ID)" "rusk e 1" "Should return -d/--date and -h/--help, NO task text"
 if declare -f _rusk_get_task_text >/dev/null; then
     TASK_TEXT=$(_rusk_get_task_text "1" 2>/dev/null)
     if [ -n "$TASK_TEXT" ]; then
@@ -45,10 +45,10 @@ if declare -f _rusk_get_task_text >/dev/null; then
         has_task_text=0
         [[ "$joined" == *"$TASK_TEXT"* ]] && has_task_text=1
 
-        if [ ${has_dash_d} -eq 0 ] && [ ${has_date} -eq 0 ] && [ ${has_dash_h} -eq 1 ] && [ ${has_help} -eq 1 ] && [ ${has_task_text} -eq 0 ]; then
-            assert_true 0 "Completion after spaced ID returns help flags only (no -d/--date)"
+        if [ ${has_dash_d} -eq 1 ] && [ ${has_date} -eq 1 ] && [ ${has_dash_h} -eq 1 ] && [ ${has_help} -eq 1 ] && [ ${has_task_text} -eq 0 ]; then
+            assert_true 0 "Completion after spaced ID returns date + help flags"
         else
-            assert_true 1 "Completion after spaced ID returns help flags only (got: '${COMPREPLY[*]}')"
+            assert_true 1 "Completion after spaced ID returns date + help flags (got: '${COMPREPLY[*]}')"
         fi
     else
         assert_true 0 "Returns empty (no task text found)"

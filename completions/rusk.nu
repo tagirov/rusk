@@ -432,15 +432,17 @@ def add-has-prior-task-text [spans: list<string>] {
 
 # Complete add command
 def complete-add [spans: list<string>, cur: string, prev: string] {
-  # Space after -d/--date: more flags only (-h/--help)
-  if ($prev == "-d" or $prev == "--date") and ($cur == "") {
+  # After -d/--date: more flags only (-h/--help), including while the flag token is still current
+  if ($prev == "-d" or $prev == "--date") and (($cur == "") or ($cur | str starts-with "-")) {
     return (complete-flags (get-common-flags) $cur)
   }
   
   # Complete flags (-d/--date only after task text)
   if ($cur == "") or ($cur | str starts-with "-") {
     let has_text = (add-has-prior-task-text $spans)
-    let all_flags = if $has_text {
+    let args_done = (add-completed-args-after $spans)
+    let has_date_on_line = ($args_done | any {|t| $t == "-d" or $t == "--date"}) or $cur == "-d" or $cur == "--date"
+    let all_flags = if $has_text and not $has_date_on_line {
       ((get-date-flags) | append (get-common-flags))
     } else {
       (get-common-flags)
@@ -455,8 +457,8 @@ def complete-add [spans: list<string>, cur: string, prev: string] {
 def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_space: bool, command: string] {
   let entered_ids = (get-entered-ids $spans)
   
-  # Space after -d/--date: more flags only
-  if ($prev == "-d" or $prev == "--date") and ($cur == "") {
+  # After -d/--date: date value, next flag, or empty — never suggest -d/--date again
+  if ($prev == "-d" or $prev == "--date") and (($cur == "") or ($cur | str starts-with "-")) {
     return (complete-flags (get-common-flags) $cur)
   }
   
@@ -465,10 +467,10 @@ def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_
   let prev_id = (extract-id $prev)
   let cur_id = (extract-id $cur)
 
-  # Space after single ID: suggest ONLY flags
+  # Space after single ID: flags including -d/--date
   if ($cur == "") and (is-number $prev_id) and not $prev_ends_with_comma {
     if ($entered_ids | length) == 1 {
-      return (complete-flags (get-common-flags) $cur)
+      return (complete-flags ((get-date-flags) | append (get-common-flags)) $cur)
     }
   }
   
@@ -505,9 +507,27 @@ def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_
     }
   }
   
-  # Complete flags (edit: no -d/--date in tab suggestions); empty word → flags when no other rule matched
+  # Flags: after id(s) offer -d/--date unless those flags already appear (avoids repeat after `... -d <tab>`).
   if ($cur == "") or ($cur | str starts-with "-") {
-    return (complete-flags (get-common-flags) $cur)
+    let filtered = ($spans | where $it != "")
+    let rusk_ix = try {
+      ($filtered | enumerate | where {|it| $it.item == "rusk"} | get 0.index)
+    } catch {
+      -1
+    }
+    let args_after_cmd = if $rusk_ix >= 0 {
+      ($filtered | skip ($rusk_ix + 2))
+    } else {
+      []
+    }
+    let has_date_flag_tok = ($args_after_cmd | any {|t| $t == "-d" or $t == "--date"}) or $cur == "-d" or $cur == "--date"
+    let ids = (get-entered-ids $spans)
+    let all_flags = if ($ids | length) >= 1 and not $has_date_flag_tok {
+      (get-date-flags) | append (get-common-flags)
+    } else {
+      (get-common-flags)
+    }
+    return (complete-flags $all_flags $cur)
   }
   
   []
@@ -596,8 +616,7 @@ def complete-completions [spans: list<string>, cur: string, prev: string, word_c
     # If shell is already selected, only show other shells (no flags, no install/show)
     if $has_shell_selected {
       if ($cur | str starts-with "-") {
-        # Don't suggest flags after shell is selected
-        return []
+        return (complete-flags (get-common-flags) $cur)
       }
       # Get available shells (excluding already selected) and filter by prefix
       let available_shells = (get-available-shells $spans)
@@ -724,8 +743,13 @@ def parse-spans [spans: list<string>] {
     ""
   }
   
-  let prev = if $has_trailing_space and $word_count > 1 {
-    try { ($rusk_spans | last) } catch { "" }
+  # After `rusk e ` (trailing "" span): word_count is 1 but prev must be `e` for edit/mark/del logic.
+  let prev = if $has_trailing_space {
+    if $word_count >= 1 {
+      try { ($rusk_spans | last) } catch { "" }
+    } else {
+      ""
+    }
   } else if $word_count > 1 {
     try { ($rusk_spans | get ($word_count - 2)) } catch { "" }
   } else {
@@ -758,8 +782,9 @@ def complete-root [ctx: record] {
     return (complete-flags $all_flags $ctx.cur)
   }
   
-  # Full subcommand typed (Nu often omits trailing "" span): delegate to subcommand completers for flags
-  let exact_subcmds = [add a edit e mark m del d list l restore r completions c]
+  # Full subcommand name only (not short aliases): delegate to subcommand completers for flags.
+  # Aliases (e, a, …) still get Tab → long name + alias, not -h/--help (common prefix "-").
+  let exact_subcmds = [add edit mark del list restore completions]
   if ($ctx.word_count == 1) and (not $ctx.has_trailing_space) and ($ctx.cur in $exact_subcmds) {
     return []
   }

@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Test: rusk e <id><tab> should append task text, while rusk e <id> <tab> should return ONLY flags (no dates, no task text)
+# Test: rusk e <id><tab> should append task text; rusk e <id> <tab> should offer -d/--date and help flags
 # This is the critical test for the reported issue
 
 set +e  # Don't exit on error
@@ -31,16 +31,15 @@ reset_counters
 
 print_test_section "Zsh Completion Tests - Edit After ID"
 
-# Test 1: rusk e 1 <tab> (with space after ID) - should return ONLY flags
-print_test "rusk e 1 <tab> (with space after ID)" "rusk e 1" "Should return ONLY -h/--help (not -d/--date), NO task text and NO dates"
+# Test 1: rusk e 1 <tab> (with space after ID) — date + help flags
+print_test "rusk e 1 <tab> (with space after ID)" "rusk e 1" "Should return -d/--date and -h/--help, NO task text"
 if grep -q '_rusk_get_task_text_raw "$prev"' "$COMPLETION_FILE"; then
     assert_true 1 "Spaced ID completion does not call task text helper (task text disabled)"
 else
-    # Ensure we do suggest flags in the edit/e branch
-    if grep -q 'compadd -- -h --help' "$COMPLETION_FILE"; then
-        assert_true 0 "Spaced ID completion returns help flags only (no -d/--date in script)"
+    if grep -q '_rusk_edit_has_completed_id' "$COMPLETION_FILE" && grep -q '\-d --date -h --help' "$COMPLETION_FILE"; then
+        assert_true 0 "Spaced ID completion includes -d/--date in script when ID present"
     else
-        assert_true 1 "Spaced ID completion returns help flags only (missing expected compadd)"
+        assert_true 1 "Spaced ID completion should use _rusk_edit_has_completed_id and -d --date -h --help"
     fi
 fi
 

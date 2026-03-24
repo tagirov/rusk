@@ -639,6 +639,22 @@ function __rusk_should_complete_shells
     return 0
 end
 
+# -h/--help while typing a flag token under `rusk completions ...`
+function __rusk_should_complete_completions_help
+    __rusk_is_completions_command; or return 1
+    set -l cw (__rusk_get_current_word)
+    __rusk_is_flag "$cw"; or return 1
+    return 0
+end
+
+# Empty current word: offer -h/--help next to install/show or shell names
+function __rusk_should_complete_completions_help_empty
+    __rusk_is_completions_command; or return 1
+    set -l cw (__rusk_get_current_word)
+    test -z "$cw"; or return 1
+    return 0
+end
+
 # ============================================================================
 # Main Command Completions
 # ============================================================================
@@ -711,4 +727,6 @@ complete -c rusk -f -n '__rusk_should_complete_list_restore_flags' -a '(__rusk_c
 
 complete -c rusk -f -n '__rusk_is_completions_command; and not __rusk_has_install_or_show' -a 'install' -d 'Install completions for a shell'
 complete -c rusk -f -n '__rusk_is_completions_command; and not __rusk_has_install_or_show' -a 'show' -d 'Show completion script'
+complete -c rusk -f -n '__rusk_should_complete_completions_help_empty' -a '(__rusk_complete_flags -h --help)'
+complete -c rusk -f -n '__rusk_should_complete_completions_help' -a '(__rusk_complete_flags -h --help)'
 complete -c rusk -f -n '__rusk_should_complete_shells' -a '(__rusk_get_available_shells)'

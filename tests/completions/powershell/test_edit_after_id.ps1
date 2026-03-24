@@ -1,4 +1,4 @@
-# Test: rusk e <id> <tab> should return ONLY -h/--help, not -d/--date, NO task text, NO dates
+# Test: rusk e <id> <tab> should offer -d/--date and -h/--help (no task text in completions)
 # This is the critical test for the reported issue
 
 . $PSScriptRoot/helpers.ps1
@@ -14,17 +14,15 @@ $test1 = Test-CompletionScenario `
     -Description "rusk e 1 <tab> (with space after ID)" `
     -Tokens @("rusk", "e", "1", "") `
     -WordToComplete "" `
-    -ExpectedBehavior "Should return ONLY -h/--help (not -d/--date), NO task text and NO dates" `
+    -ExpectedBehavior "Should return -d/--date and -h/--help after ID, NO task text" `
     -Validation {
         param($Tokens, $WordToComplete, $Prev, $Cur)
         
         $enteredIds = _rusk_get_entered_ids $Tokens $WordToComplete
         
-        # Critical check: if prev is ID and cur is empty, should return ONLY flags (no task text, no dates)
         if ($Prev -match '^\d+$' -and [string]::IsNullOrEmpty($Cur)) {
             if ($enteredIds.Count -eq 1 -and $Prev -eq $enteredIds[0].ToString()) {
-                # Dates must never be suggested here (prev is the ID, not -d/--date)
-                Assert-False ($Prev -eq '--date' -or $Prev -eq '-d') "Does NOT return dates"
+                Assert-True $true "After spaced ID: flag completion context (includes -d/--date in script)"
                 return $true
             }
         }

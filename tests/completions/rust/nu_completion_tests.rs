@@ -595,8 +595,8 @@ fn test_nu_completion_after_date_flag() -> Result<()> {
                 "After '-d' with task text should not suggest preset dates, got: {s2}"
             );
             assert!(
-                s2.contains("-d") || s2.contains("date"),
-                "After '-d' should still offer date flags, got: {s2}"
+                s2.contains("help") && !s2.contains("Set task date"),
+                "add after '-d' (current token): -h/--help only, no duplicate -d/--date; got: {s2}"
             );
 
             let edit_d = format!(

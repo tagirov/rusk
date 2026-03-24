@@ -403,6 +403,21 @@ $test_completions4 = Test-CompletionScenario `
 
 if (-not $test_completions4) { $allTestsPassed = $false }
 
+# Repo source: PowerShell completions branch merges subcommands/shells with -h/--help
+$ProjectRoot = Split-Path (Split-Path (Split-Path $PSScriptRoot))
+$RusksPs1Source = Join-Path $ProjectRoot "completions" "rusk.ps1"
+if (Test-Path -LiteralPath $RusksPs1Source) {
+    $ruskPs1Raw = Get-Content -LiteralPath $RusksPs1Source -Raw
+    $mergeSubcmdHelp = $ruskPs1Raw -match 'return @\(\$subcmdResults\) \+ @\(\$flagResults\)'
+    $mergeShellHelp = $ruskPs1Raw -match 'return @\(\$shellResults\) \+ @\(\$flagResults\)'
+    if (-not ($mergeSubcmdHelp -and $mergeShellHelp)) {
+        Write-Host "`n✗ rusk.ps1 (repo): completions block should merge subcommands/shells with flagResults" -ForegroundColor Red
+        $allTestsPassed = $false
+    } else {
+        Write-Host "`n✓ rusk.ps1 (repo): completions merge includes help flags" -ForegroundColor Green
+    }
+}
+
 # ============================================================================
 # COMMAND ALIASES TESTS
 # ============================================================================

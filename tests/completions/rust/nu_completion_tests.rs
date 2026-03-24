@@ -492,9 +492,14 @@ fn test_nu_completion_completions_command() -> Result<()> {
         Ok(result) => {
             if result.status.success() {
                 let stdout = String::from_utf8_lossy(&result.stdout);
-                // Should contain install or show subcommands
-                assert!(stdout.contains("install") || stdout.contains("show"),
-                    "Should return completions subcommands");
+                assert!(
+                    stdout.contains("install") && stdout.contains("show"),
+                    "Should return completions subcommands install and show: {stdout}"
+                );
+                assert!(
+                    stdout.contains("-h") && stdout.contains("--help"),
+                    "Should include -h and --help with completions subcommands: {stdout}"
+                );
             }
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -530,10 +535,18 @@ fn test_nu_completion_completions_install() -> Result<()> {
         Ok(result) => {
             if result.status.success() {
                 let stdout = String::from_utf8_lossy(&result.stdout);
-                // Should contain shell names
-                assert!(stdout.contains("bash") || stdout.contains("zsh") || stdout.contains("fish") || 
-                        stdout.contains("nu") || stdout.contains("powershell"),
-                    "Should return shell names for completions install");
+                assert!(
+                    stdout.contains("bash")
+                        && stdout.contains("zsh")
+                        && stdout.contains("fish")
+                        && stdout.contains("nu")
+                        && stdout.contains("powershell"),
+                    "Should return all shell names for completions install: {stdout}"
+                );
+                assert!(
+                    stdout.contains("-h") && stdout.contains("--help"),
+                    "Should include -h and --help after completions install: {stdout}"
+                );
             }
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

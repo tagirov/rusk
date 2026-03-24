@@ -111,8 +111,8 @@ Common scenarios covered across all shells (bash, zsh, fish, powershell, nu):
 | **Multiple IDs** | `rusk edit 1,2 <tab>`, `rusk mark 1,2 <tab>`, `rusk del 1,2 <tab>` | Empty (no task ID suggestions) |
 | **After date flag + space** | `rusk add x --date <tab>`, `rusk edit 1 --date <tab>` | `-h` / `--help` only (no date value suggestions) |
 | **Flag completion** | `rusk add <tab>`, `rusk add -<tab>`, `rusk edit 1 -<tab>`, `rusk del -<tab>` | Flags (e.g. --date, -d, --done, --help, -h); **edit** after ID includes `-d`/`--date` |
-| **Completions subcommands** | `rusk completions <tab>`, `rusk c <tab>` | install, show |
-| **Completions shells** | `rusk completions install <tab>`, `rusk completions show <tab>` | bash, zsh, fish, nu, powershell |
+| **Completions subcommands** | `rusk completions <tab>`, `rusk c <tab>` | install, show, `-h`, `--help` |
+| **Completions shells** | `rusk completions install <tab>`, `rusk completions show <tab>` | bash, zsh, fish, nu, powershell, `-h`, `--help` (with empty or flag token) |
 | **List / Restore** | `rusk list <tab>`, `rusk restore <tab>`, `rusk l <tab>`, `rusk r <tab>` | Empty (no arguments) |
 | **Aliases** | `rusk a <tab>`, `rusk e <tab>`, `rusk m <tab>`, `rusk d <tab>`, etc. | Same as full command |
 
@@ -130,7 +130,7 @@ Common scenarios covered across all shells (bash, zsh, fish, powershell, nu):
 - **del** (d) — `--done` flag, flag completion (task IDs are typed manually)
 - **list** (l) — no arguments (empty completion)
 - **restore** (r) — no arguments (empty completion)
-- **completions** (c) — subcommands: `install` (shells: bash, zsh, fish, nu, powershell), `show` (shell)
+- **completions** (c) — subcommands: `install`, `show`; same contexts also offer `-h` / `--help`; after `install`/`show`, shell names plus `-h` / `--help` when appropriate
 
 All aliases are tested: `a`, `e`, `m`, `d`, `l`, `r`, `c`.
 
@@ -162,6 +162,7 @@ These tests can be integrated into CI/CD pipelines:
 - The `run_all.sh` script will automatically skip shells that are not installed on the system
 - Rust tests can be run independently: `cargo test --test completions`
 - Each shell's test runner can be executed individually for debugging specific shell issues
+- Zsh: the `completions|c)` branch must not declare `local i` again (duplicate `local i` in `_rusk_main` can print to stdout and corrupt the command line during completion)
 
 <br />
 <p align="center"><a href="#rusk-shell-completions-tests">Back to top</a></p>

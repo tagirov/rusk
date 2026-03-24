@@ -281,6 +281,14 @@ end
 print_test "rusk completions <tab> (subcommand completion)" "rusk completions" "Should suggest subcommands (install, show)"
 assert_true 0 "Completions command suggests subcommands install and show"
 
+# Test: completion script offers -h/--help in completions contexts
+print_test "Fish script: completions help flags" "" "__rusk_should_complete_completions_help* and install/show rules"
+if grep -q '__rusk_should_complete_completions_help_empty' "$COMPLETION_FILE" && grep -q '__rusk_should_complete_completions_help' "$COMPLETION_FILE" && grep -q "not __rusk_has_install_or_show" "$COMPLETION_FILE"
+    assert_true 0 "Fish completions file defines help completion for completions command"
+else
+    assert_true 1 "Fish completions file should define completions help helpers"
+end
+
 # Test: rusk completions install <tab> should suggest shells
 print_test "rusk completions install <tab> (shell completion)" "rusk completions install" "Should suggest shells (bash, zsh, fish, nu, powershell)"
 assert_true 0 "Completions install suggests available shells"

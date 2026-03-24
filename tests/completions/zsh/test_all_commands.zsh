@@ -217,6 +217,25 @@ assert_true 0 "Completions command has subcommands"
 print_test "rusk completions <tab> (subcommand completion)" "rusk completions" "Should suggest subcommands (install, show)"
 assert_true 0 "Completions command suggests subcommands install and show"
 
+# Test: zsh script completions|c) branch offers install/show and -h/--help (compadd only works under zle)
+print_test "Zsh script: completions branch includes help flags" "" "completions|c) should compadd install show -h --help and shells + -h --help"
+if _block=$(sed -n '/completions|c)/,/^[[:space:]]*;;$/p' "$COMPLETION_FILE" 2>/dev/null) && \
+   [[ "$_block" == *'compadd -- install show -h --help'* ]] && \
+   [[ "$_block" == *'compadd -- "${remaining_shells[@]}" -h --help'* ]]; then
+    assert_true 0 "Zsh completions branch documents install/show and help with shells"
+else
+    assert_true 1 "Zsh completions branch should include install show -h --help and shells + help"
+fi
+unset _block
+
+# Test: no standalone `local i` in completions|c) branch (regression: stdout corruption)
+print_test "Zsh script: completions branch avoids duplicate local i" "" "No standalone local i after completions|c)"
+if sed -n '/completions|c)/,/^[[:space:]]*;;$/p' "$COMPLETION_FILE" | grep -v '^[[:space:]]*#' | grep -qE '^[[:space:]]*local i[[:space:]]*$'; then
+    assert_true 1 "completions|c) branch must not use standalone local i"
+else
+    assert_true 0 "completions|c) branch has no standalone local i"
+fi
+
 # Test: rusk completions install <tab> should suggest shells
 print_test "rusk completions install <tab> (shell completion)" "rusk completions install" "Should suggest shells (bash, zsh, fish, nu, powershell)"
 assert_true 0 "Completions install suggests available shells"

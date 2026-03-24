@@ -316,6 +316,25 @@ if (assert_true true "Completions command suggests subcommands install and show"
     $tests_failed = ($tests_failed + 1)
 }
 
+# Test: Nu script merges subcommands with get-common-flags (-h/--help)
+print_test "Nu script: completions subcommands include common flags" "" "get-completions-subcommands | append get-common-flags"
+let nu_raw = (open --raw $completion_file)
+let nu_ok_sub = ($nu_raw | str contains "(get-completions-subcommands) | append (get-common-flags)")
+if (assert_true $nu_ok_sub "Nu complete-completions should append get-common-flags to subcommands") {
+    $tests_passed = ($tests_passed + 1)
+} else {
+    $tests_failed = ($tests_failed + 1)
+}
+
+# Test: Nu script offers flags after install/show with empty cur (shells + get-common-flags)
+print_test "Nu script: completions install empty cur includes flags" "" "shell_completions | append (get-common-flags)"
+let nu_ok_shell = ($nu_raw | str contains "return ($shell_completions | append (get-common-flags))")
+if (assert_true $nu_ok_shell "Nu should append get-common-flags after shell list for empty cur") {
+    $tests_passed = ($tests_passed + 1)
+} else {
+    $tests_failed = ($tests_failed + 1)
+}
+
 # Test: rusk completions install <tab> should suggest shells
 print_test "rusk completions install <tab> (shell completion)" "rusk completions install" "Should suggest shells (bash, zsh, fish, nu, powershell)"
 if (assert_true true "Completions install suggests available shells") {

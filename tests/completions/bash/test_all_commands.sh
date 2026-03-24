@@ -212,9 +212,43 @@ assert_true 0 "Completions command has subcommands"
 print_test "rusk completions <tab> (subcommand completion)" "rusk completions" "Should suggest subcommands (install, show)"
 assert_true 0 "Completions command suggests subcommands install and show"
 
+# Test: rusk completions <tab> should include -h/--help with install and show
+print_test "rusk completions <tab> (subcommands + help flags)" "rusk completions " "Should suggest install, show, -h, --help"
+if declare -f _rusk_completion >/dev/null; then
+    COMP_WORDS=(rusk completions "")
+    COMP_CWORD=2
+    COMPREPLY=()
+    _rusk_completion
+    joined=" ${COMPREPLY[*]} "
+    if [[ "$joined" == *" install "* ]] && [[ "$joined" == *" show "* ]] && [[ "$joined" == *" --help "* ]] && [[ "$joined" == *" -h "* ]]; then
+        assert_true 0 "Completions after subcommand: install, show, -h, --help"
+    else
+        assert_true 1 "Completions after subcommand: install, show, -h, --help (got: '${COMPREPLY[*]}')"
+    fi
+else
+    assert_true 1 "Function _rusk_completion exists"
+fi
+
 # Test: rusk completions install <tab> should suggest shells
 print_test "rusk completions install <tab> (shell completion)" "rusk completions install" "Should suggest shells (bash, zsh, fish, nu, powershell)"
 assert_true 0 "Completions install suggests available shells"
+
+# Test: rusk completions install <tab> should include shells and -h/--help
+print_test "rusk completions install <tab> (shells + help flags)" "rusk completions install " "Should suggest shells and -h, --help"
+if declare -f _rusk_completion >/dev/null; then
+    COMP_WORDS=(rusk completions install "")
+    COMP_CWORD=3
+    COMPREPLY=()
+    _rusk_completion
+    joined=" ${COMPREPLY[*]} "
+    if [[ "$joined" == *" bash "* ]] && [[ "$joined" == *" --help "* ]] && [[ "$joined" == *" -h "* ]]; then
+        assert_true 0 "Completions install: shells and help flags"
+    else
+        assert_true 1 "Completions install: shells and help flags (got: '${COMPREPLY[*]}')"
+    fi
+else
+    assert_true 1 "Function _rusk_completion exists"
+fi
 
 # Test: rusk completions show <tab> should suggest shells
 print_test "rusk completions show <tab> (shell completion)" "rusk completions show" "Should suggest shells (bash, zsh, fish, nu, powershell)"

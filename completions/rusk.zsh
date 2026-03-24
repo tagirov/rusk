@@ -472,7 +472,8 @@ _rusk_main() {
             
         completions|c)
             local saw_inst=0
-            local i
+            # Do not redeclare `local i` here: a second `local i` in the same function can make
+            # zsh print the previous value to stdout during completion (corrupts the command line).
             for ((i=rusk_idx+2; i<=${#words[@]}; i++)); do
                 if [[ "${words[i]}" == "install" || "${words[i]}" == "show" ]]; then
                     saw_inst=1

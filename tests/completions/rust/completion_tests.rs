@@ -431,9 +431,13 @@ fn test_completion_real_rusk_list_output() {
     tm.save().unwrap();
     
     // Run rusk list and capture output
-    // In debug mode, RUSK_DB is ignored, so we don't set it
+    // Strip cargo-test env so the subprocess is not treated as test mode (which forces
+    // resolve_db_path to rusk_debug and ignores RUSK_DB in release).
     let mut cmd = Command::new(&rusk_bin);
     cmd.arg("list");
+    cmd.env_remove("RUST_TEST_THREADS");
+    cmd.env_remove("CARGO_TEST");
+    cmd.env_remove("__CARGO_TEST_CHANNEL");
     if !cfg!(debug_assertions) {
         cmd.env("RUSK_DB", db_path.to_str().unwrap());
     }

@@ -17,7 +17,11 @@ TOTAL_FAILED=0
 if command -v pwsh >/dev/null 2>&1; then
     echo "=== PowerShell Tests ==="
     if [ -f "powershell/run_all.ps1" ]; then
-        if pwsh -File powershell/run_all.ps1; then
+        # pwsh may be on PATH but crash on startup (e.g. FileLoadException / corrupted .NET runtime).
+        if ! pwsh -NoProfile -NonInteractive -Command 'exit 0' >/dev/null 2>&1; then
+            echo "⚠ pwsh does not start successfully (broken .NET/runtime install?). Skipping PowerShell tests."
+            echo "  Hint: reinstall PowerShell from https://github.com/PowerShell/PowerShell or match dotnet with pwsh."
+        elif pwsh -NoProfile -NonInteractive -File powershell/run_all.ps1; then
             TOTAL_PASSED=$((TOTAL_PASSED + 1))
         else
             TOTAL_FAILED=$((TOTAL_FAILED + 1))

@@ -17,6 +17,15 @@ fn debug_db_path() -> PathBuf {
     std::env::temp_dir().join("rusk_debug").join("tasks.json")
 }
 
+/// Spawn `rusk` with `RUSK_DB` pointing at the integration harness file. Release binaries
+/// do not detect "test mode", so without this they would use `~/.rusk` while tests write
+/// under `debug_db_path()`.
+fn rusk_command() -> Command {
+    let mut cmd = Command::new(rusk_bin());
+    cmd.env("RUSK_DB", debug_db_path());
+    cmd
+}
+
 fn setup_test_db(tasks_json: &str) {
     let db_path = debug_db_path();
     if let Some(parent) = db_path.parent() {
@@ -36,8 +45,7 @@ fn read_db() -> String {
 
 #[test]
 fn test_binary_del_help() {
-    let rusk = rusk_bin();
-    let out = Command::new(&rusk).args(["del", "--help"]).output().unwrap();
+    let out = rusk_command().args(["del", "--help"]).output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("Delete tasks"));
@@ -46,8 +54,7 @@ fn test_binary_del_help() {
 
 #[test]
 fn test_binary_mark_help() {
-    let rusk = rusk_bin();
-    let out = Command::new(&rusk).args(["mark", "--help"]).output().unwrap();
+    let out = rusk_command().args(["mark", "--help"]).output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("Toggle task completion"));
@@ -63,8 +70,7 @@ fn test_binary_mark_filters_trailing_h() {
     ]"#;
     setup_test_db(db);
 
-    let rusk = rusk_bin();
-    let out = Command::new(&rusk).args(["mark", "1", "-h"]).output().unwrap();
+    let out = rusk_command().args(["mark", "1", "-h"]).output().unwrap();
     assert!(out.status.success(), "mark 1 -h should succeed (filter -h from ids)");
 
     let db_after: Vec<serde_json::Value> = serde_json::from_str(&read_db()).unwrap();
@@ -74,8 +80,7 @@ fn test_binary_mark_filters_trailing_h() {
 
 #[test]
 fn test_binary_add_date_flag_help_value() {
-    let rusk = rusk_bin();
-    let out = Command::new(&rusk)
+    let out = rusk_command()
         .args(["add", "x", "-d", "-h"])
         .output()
         .unwrap();
@@ -86,8 +91,7 @@ fn test_binary_add_date_flag_help_value() {
 
 #[test]
 fn test_binary_add_help_includes_relative_date_syntax() {
-    let rusk = rusk_bin();
-    let out = Command::new(&rusk).args(["add", "--help"]).output().unwrap();
+    let out = rusk_command().args(["add", "--help"]).output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
@@ -100,8 +104,7 @@ fn test_binary_add_help_includes_relative_date_syntax() {
 
 #[test]
 fn test_binary_root_long_help_mentions_dates() {
-    let rusk = rusk_bin();
-    let out = Command::new(&rusk).args(["--help"]).output().unwrap();
+    let out = rusk_command().args(["--help"]).output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
@@ -115,8 +118,7 @@ fn test_binary_add_rejects_invalid_relative_date() {
     let _guard = BIN_TEST_MUTEX.lock().unwrap();
     setup_test_db(r#"[{"id":1,"text":"T","date":null,"done":false}]"#);
 
-    let rusk = rusk_bin();
-    let out = Command::new(&rusk)
+    let out = rusk_command()
         .args(["add", "x", "-d", "0d"])
         .output()
         .unwrap();
@@ -130,8 +132,7 @@ fn test_binary_add_rejects_invalid_relative_date() {
 
 #[test]
 fn test_binary_edit_date_flag_help_value() {
-    let rusk = rusk_bin();
-    let out = Command::new(&rusk)
+    let out = rusk_command()
         .args(["edit", "1", "-d", "--help"])
         .output()
         .unwrap();
@@ -142,9 +143,8 @@ fn test_binary_edit_date_flag_help_value() {
 
 #[test]
 fn test_binary_edit_trailing_help_after_id() {
-    let rusk = rusk_bin();
     for args in [["e", "22", "-h"], ["e", "22", "--help"]] {
-        let out = Command::new(&rusk).args(args).output().unwrap();
+        let out = rusk_command().args(args).output().unwrap();
         assert!(out.status.success(), "args={args:?}");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(stdout.contains("Edit tasks"), "args={args:?} stdout={stdout}");
@@ -153,8 +153,7 @@ fn test_binary_edit_trailing_help_after_id() {
 
 #[test]
 fn test_binary_edit_help_includes_relative_date_syntax() {
-    let rusk = rusk_bin();
-    let out = Command::new(&rusk).args(["edit", "--help"]).output().unwrap();
+    let out = rusk_command().args(["edit", "--help"]).output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
@@ -174,8 +173,7 @@ fn test_binary_edit_inline_date() {
     ]"#;
     setup_test_db(db);
 
-    let rusk = rusk_bin();
-    let out = Command::new(&rusk)
+    let out = rusk_command()
         .args(["edit", "1", "Updated text", "-d", "15-06-2025"])
         .output()
         .unwrap();
@@ -195,8 +193,7 @@ fn test_binary_mark_error_when_only_flags() {
 
     setup_test_db(r#"[{"id":1,"text":"Task","date":null,"done":false}]"#);
 
-    let rusk = rusk_bin();
-    let out = Command::new(&rusk).args(["mark", "--", "-"]).output().unwrap();
+    let out = rusk_command().args(["mark", "--", "-"]).output().unwrap();
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("No valid task IDs"));

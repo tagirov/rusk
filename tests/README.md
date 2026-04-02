@@ -23,7 +23,7 @@ tests/
 ├── environment_tests.rs            # Environment variable tests
 ├── integration_main_tests.rs       # Integration tests for main flow
 ├── mark_success_tests.rs           # Mark command success/failure tests
-├── parse_flexible_ids_tests.rs     # Flexible ID parsing tests (comma-separated, etc.)
+├── parse_flexible_ids_tests.rs     # ID parsing tests (comma lists; single ID without comma)
 ├── path_migration_tests.rs         # Database path migration tests
 ├── persistence_tests.rs            # Data persistence and save/load tests
 ├── restore_tests.rs                # Backup restore functionality tests

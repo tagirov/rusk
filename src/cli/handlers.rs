@@ -1,0 +1,532 @@
+use crate::{Task, TaskManager, parse_cli_date, parse_cli_date_optional_empty};
+use anyhow::Result;
+use chrono::Datelike;
+use colored::*;
+
+use super::HandlerCLI;
+
+impl HandlerCLI {
+    pub fn handle_add_task(
+        tm: &mut TaskManager,
+        text: Vec<String>,
+        date: Option<String>,
+    ) -> Result<()> {
+        tm.add_task(text, date)?;
+        let task = tm.tasks().last().unwrap();
+        let prefix = if let Some(date) = task.date {
+            let today = chrono::Local::now().date_naive();
+            let day = date.day();
+            let month = date.format("%b").to_string().to_lowercase();
+            let year = date.format("%y").to_string();
+            let date_str = format!("{}-{}-{}", day, month, year);
+            let colored_date = if date < today {
+                date_str.red()
+            } else {
+                date_str.cyan()
+            };
+            format!("{} {}: ({})", "Added task:".green(), task.id, colored_date)
+        } else {
+            format!("{} {}:", "Added task:".green(), task.id)
+        };
+        Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
+        Ok(())
+    }
+
+    pub fn handle_delete_tasks(tm: &mut TaskManager, ids: Vec<u8>, done: bool) -> Result<()> {
+        if done && ids.is_empty() {
+            Self::delete_all_done(tm)
+        } else if !ids.is_empty() {
+            Self::delete_by_ids(tm, ids)
+        } else {
+            println!("{}", "Please specify id(s) or --done.".yellow());
+            Ok(())
+        }
+    }
+
+    #[cfg(feature = "interactive")]
+    fn interactive_edit_text(current: &str, task_id: u8, allow_skip: bool) -> Result<Option<String>> {
+        let prefix = format!(
+            "{} {} {}",
+            "Current text[".cyan(),
+            task_id.to_string().bright_cyan().bold(),
+            "]:".cyan()
+        );
+        Self::print_task_text_with_wrapping(&prefix, &current.bold().to_string());
+        println!(
+            "{}",
+            "Enter new text and press Enter (leave empty to keep, Tab to autocomplete from prefill):".cyan()
+        );
+        let edited = Self::interactive_line_editor("> ", current, true, None, true, allow_skip)?;
+        if edited.trim().is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(edited))
+        }
+    }
+
+    #[cfg(feature = "interactive")]
+    fn handle_edit_tasks_interactive_internal(
+        tm: &mut TaskManager,
+        ids: Vec<u8>,
+        edit_date: bool,
+    ) -> Result<()> {
+        let mut any_changed = false;
+        let mut edited: Vec<u8> = Vec::new();
+        let mut unchanged: Vec<u8> = Vec::new();
+        let mut not_found: Vec<u8> = Vec::new();
+        let mut edited_info: Vec<(u8, String)> = Vec::new();
+
+        let total_ids = ids.len();
+        for (task_idx, id) in ids.iter().enumerate() {
+            let is_last = task_idx == total_ids - 1;
+            let allow_skip = !is_last;
+
+            if let Some(idx) = tm.find_task_by_id(*id) {
+                let current_text = tm.tasks()[idx].text.clone();
+
+                match Self::interactive_edit_text(&current_text, *id, allow_skip) {
+                    Ok(Some(new_text)) => {
+                        if new_text != current_text {
+                            let task = &mut tm.tasks_mut()[idx];
+                            task.text = new_text.clone();
+                            edited.push(*id);
+                            edited_info.push((*id, new_text.clone()));
+                            any_changed = true;
+                            let prefix = format!("{} {}: ", "Edited task:".green(), id);
+                            Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
+                        } else {
+                            unchanged.push(*id);
+                            Self::print_unchanged_task_message(&current_text, &edited_info);
+                        }
+                    }
+                    Ok(None) => {
+                        unchanged.push(*id);
+                        Self::print_unchanged_task_message(&current_text, &edited_info);
+                    }
+                    Err(e) => {
+                        if Self::handle_skip_task_error(&e, *id) {
+                            continue;
+                        }
+                        return Err(e);
+                    }
+                }
+
+                if edit_date {
+                    let current_date = tm.tasks()[idx]
+                        .date
+                        .map(|d| d.format("%d-%m-%Y").to_string())
+                        .unwrap_or_default();
+                    println!(
+                        "{} {}",
+                        "Current date:".cyan(),
+                        if current_date.is_empty() {
+                            "empty".bold()
+                        } else {
+                            current_date.bold()
+                        }
+                    );
+                    println!(
+                        "{}",
+                        "Enter new date: DD-MM-YYYY or DD/MM/YYYY (short year ok), or relative from today (2d, 2w, 10d5w, …). Leave empty to keep. Tab uses ghost prefill.".cyan()
+                    );
+                    let date_editor =
+                        |s: &str| parse_cli_date(s.trim()).is_ok();
+                    match Self::interactive_line_editor(
+                        "> ",
+                        &current_date,
+                        true,
+                        Some(date_editor),
+                        true,
+                        allow_skip,
+                    ) {
+                        Ok(date_input) => {
+                            let trimmed = date_input.trim();
+                            let parsed_res = parse_cli_date_optional_empty(&date_input);
+                            if let Ok(Some(parsed)) = &parsed_res {
+                                let parsed = *parsed;
+                                let task = &mut tm.tasks_mut()[idx];
+                                if task.date != Some(parsed) {
+                                    task.date = Some(parsed);
+                                    if !edited.contains(id) {
+                                        edited.push(*id);
+                                    }
+                                    any_changed = true;
+                                    let prefix = format!("{} {}: ", "Edited task:".green(), id);
+                                    Self::print_task_text_with_wrapping(
+                                        &prefix,
+                                        &task.text.bold().to_string(),
+                                    );
+                                }
+                            }
+                            let final_date_display = match parsed_res {
+                                Ok(None) => {
+                                    if current_date.is_empty() {
+                                        "empty".to_string()
+                                    } else {
+                                        current_date.clone()
+                                    }
+                                }
+                                Ok(Some(p)) => p.format("%d-%m-%Y").to_string(),
+                                Err(_) => trimmed.to_string(),
+                            };
+                            println!(
+                                "{} {}",
+                                "Date:".cyan(),
+                                if final_date_display == "empty" {
+                                    "empty".bold()
+                                } else {
+                                    final_date_display.bold()
+                                }
+                            );
+                        }
+                        Err(e) => {
+                            if Self::handle_skip_task_error(&e, *id) {
+                                continue;
+                            }
+                            return Err(e);
+                        }
+                    }
+                }
+            } else {
+                not_found.push(*id);
+            }
+        }
+
+        if any_changed {
+            tm.save()?;
+        }
+
+        Self::print_not_found_ids(&not_found);
+        Ok(())
+    }
+
+    #[cfg(feature = "interactive")]
+    pub fn handle_edit_tasks_interactive(tm: &mut TaskManager, ids: Vec<u8>) -> Result<()> {
+        Self::handle_edit_tasks_interactive_internal(tm, ids, true)
+    }
+
+    #[cfg(feature = "interactive")]
+    pub fn handle_edit_tasks_interactive_text_only(
+        tm: &mut TaskManager,
+        ids: Vec<u8>,
+    ) -> Result<()> {
+        Self::handle_edit_tasks_interactive_internal(tm, ids, false)
+    }
+
+    #[cfg(feature = "interactive")]
+    fn delete_all_done(tm: &mut TaskManager) -> Result<()> {
+        let done_count = tm.tasks().iter().filter(|t| t.done).count();
+        if done_count == 0 {
+            println!("{}", "No done tasks to delete.".yellow());
+            return Ok(());
+        }
+
+        let confirmed = Self::read_confirmation(&format!(
+            "{}{}{}",
+            "Delete all done tasks (".truecolor(255, 165, 0),
+            done_count.to_string().white(),
+            ")? [y/N]: ".truecolor(255, 165, 0)
+        ))?;
+
+        if confirmed {
+            let deleted = tm.delete_all_done()?;
+            if deleted > 0 {
+                println!(
+                    "{}{}{}",
+                    "Deleted ".truecolor(255, 165, 0),
+                    deleted.to_string().white(),
+                    " done tasks.".truecolor(255, 165, 0)
+                );
+            }
+            Ok(())
+        } else {
+            println!("Canceled.");
+            Ok(())
+        }
+    }
+
+    #[cfg(not(feature = "interactive"))]
+    fn delete_all_done(tm: &mut TaskManager) -> Result<()> {
+        let deleted = tm.delete_all_done()?;
+        if deleted > 0 {
+            println!(
+                "{}{}{}",
+                "Deleted ".truecolor(255, 165, 0),
+                deleted.to_string().white(),
+                " done tasks.".truecolor(255, 165, 0)
+            );
+        } else {
+            println!("{}", "No done tasks to delete.".yellow());
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "interactive")]
+    fn delete_by_ids(tm: &mut TaskManager, ids: Vec<u8>) -> Result<()> {
+        let mut confirmed_ids = Vec::new();
+        let mut not_found: Vec<u8> = Vec::new();
+
+        for &id in &ids {
+            if let Some(idx) = tm.find_task_by_id(id) {
+                let task = &tm.tasks()[idx];
+                let prompt = Self::print_delete_confirmation_dialog(&task.text, task.id);
+                let confirmed = Self::read_confirmation(&prompt)?;
+                if confirmed {
+                    confirmed_ids.push(id);
+                } else {
+                    print!("{} ", "Canceled deletion of task".magenta());
+                    print!("{}", id.to_string().white());
+                    println!("{}", ".".magenta());
+                }
+            } else {
+                not_found.push(id);
+            }
+        }
+
+        if !confirmed_ids.is_empty() {
+            let deleted_count = confirmed_ids.len();
+            let _ = tm.delete_tasks(confirmed_ids)?;
+            println!(
+                "{}{}{}",
+                "Deleted ".truecolor(255, 165, 0),
+                deleted_count.to_string().white(),
+                " task(s).".truecolor(255, 165, 0)
+            );
+        }
+
+        Self::print_not_found_ids(&not_found);
+        Ok(())
+    }
+
+    #[cfg(not(feature = "interactive"))]
+    fn delete_by_ids(tm: &mut TaskManager, ids: Vec<u8>) -> Result<()> {
+        let mut not_found: Vec<u8> = Vec::new();
+        let mut to_delete = Vec::new();
+
+        for &id in &ids {
+            if tm.find_task_by_id(id).is_some() {
+                to_delete.push(id);
+            } else {
+                not_found.push(id);
+            }
+        }
+
+        if !to_delete.is_empty() {
+            let deleted_count = to_delete.len();
+            let _ = tm.delete_tasks(to_delete)?;
+            println!(
+                "{}{}{}",
+                "Deleted ".truecolor(255, 165, 0),
+                deleted_count.to_string().white(),
+                " task(s).".truecolor(255, 165, 0)
+            );
+        }
+
+        Self::print_not_found_ids(&not_found);
+        Ok(())
+    }
+
+    pub fn handle_mark_tasks(tm: &mut TaskManager, ids: Vec<u8>) -> Result<()> {
+        let (marked, not_found) = tm.mark_tasks(ids)?;
+
+        for (id, done) in marked {
+            if let Some(idx) = tm.find_task_by_id(id) {
+                let task = &tm.tasks()[idx];
+                let status = if done { "done" } else { "undone" };
+                let prefix = format!("{} {}: ", format!("Marked task as {status}:").green(), id);
+                Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
+            }
+        }
+
+        Self::print_not_found_ids(&not_found);
+        Ok(())
+    }
+
+    pub fn handle_edit_tasks(
+        tm: &mut TaskManager,
+        ids: Vec<u8>,
+        text: Option<Vec<String>>,
+        date: Option<String>,
+    ) -> Result<()> {
+        let ids_copy = ids.clone();
+        let mut old_dates: Vec<(u8, Option<chrono::NaiveDate>)> = Vec::new();
+        for &id in &ids_copy {
+            if let Some(idx) = tm.find_task_by_id(id) {
+                old_dates.push((id, tm.tasks()[idx].date));
+            }
+        }
+
+        let parsed_new_date: Option<chrono::NaiveDate> = match &date {
+            None => None,
+            Some(d) => Some(parse_cli_date(d)?),
+        };
+
+        let (edited, unchanged, not_found) = tm.edit_tasks(ids, text, date)?;
+
+        for id in edited {
+            if let Some(idx) = tm.find_task_by_id(id) {
+                let task = &tm.tasks()[idx];
+                let old_date = old_dates
+                    .iter()
+                    .find(|(i, _)| *i == id)
+                    .and_then(|(_, d)| *d);
+                let new_date = task.date;
+
+                let prefix = format!("{} {}: ", "Edited task:".green(), id);
+                Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
+
+                if parsed_new_date.is_some() {
+                    if new_date != old_date {
+                        let old_date_str = Self::format_date_for_display(old_date);
+                        let new_date_str = Self::format_date_for_display(new_date);
+                        if old_date_str == "empty" {
+                            println!(
+                                " {} {} {} {} {} {}",
+                                "- date:".cyan(),
+                                new_date_str.bold(),
+                                "(".normal(),
+                                "was:".cyan(),
+                                old_date_str.white().bold(),
+                                ")".normal()
+                            );
+                        } else {
+                            println!(
+                                " {} {} {} {} {}",
+                                "- date:".cyan(),
+                                new_date_str.bold(),
+                                "(".normal(),
+                                format!("was: {}", old_date_str).cyan(),
+                                ")".normal()
+                            );
+                        }
+                    } else {
+                        let date_str = Self::format_date_for_display(new_date);
+                        println!(" {} {}", "- date:".cyan(), date_str.bold());
+                    }
+                }
+            }
+        }
+
+        for id in unchanged {
+            if let Some(idx) = tm.find_task_by_id(id) {
+                let task = &tm.tasks()[idx];
+                let _old_date = old_dates
+                    .iter()
+                    .find(|(i, _)| *i == id)
+                    .and_then(|(_, d)| *d);
+                let current_date = task.date;
+
+                let prefix = format!("{} ", "Task already has this content:".magenta());
+                Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
+
+                if parsed_new_date.is_some() {
+                    let date_str = Self::format_date_for_display(current_date);
+                    println!(" {} {}", "- date:".cyan(), date_str.bold());
+                }
+            }
+        }
+
+        Self::print_not_found_ids(&not_found);
+        Ok(())
+    }
+
+    pub fn handle_list_tasks(tasks: &[Task]) {
+        if tasks.is_empty() {
+            println!("{}", "No tasks".yellow());
+            return;
+        }
+
+        println!(
+            "\n  #  {}    {}       {}",
+            "id".blue(),
+            "date".blue(),
+            "task".blue()
+        );
+        println!("  ──────────────────────────────────────────────");
+
+        let max_line_width = Self::get_max_line_width();
+
+        let prefix_width = 19;
+        let available_width = max_line_width.saturating_sub(prefix_width).saturating_sub(4);
+
+        for task in tasks {
+            let status = if task.done {
+                "✔".green()
+            } else {
+                "•".normal()
+            };
+
+            let date_str = task
+                .date
+                .map(|d| {
+                    let day = d.day();
+                    let month = d.format("%b").to_string().to_lowercase();
+                    let year = d.format("%y").to_string();
+                    format!("{}-{}-{}", day, month, year)
+                })
+                .unwrap_or_default();
+
+            let date_colored = if let Some(d) = task.date {
+                if d < chrono::Local::now().date_naive() && !task.done {
+                    date_str.red()
+                } else {
+                    date_str.cyan()
+                }
+            } else {
+                "".normal()
+            };
+
+            let wrapped_lines = Self::wrap_text_by_words(&task.text, available_width);
+
+            if let Some(first_line) = wrapped_lines.first() {
+                println!(
+                    "  {} {:>2}  {:>9}  {}",
+                    status,
+                    task.id.to_string().bold(),
+                    date_colored,
+                    first_line
+                );
+            }
+
+            for line in wrapped_lines.iter().skip(1) {
+                println!(
+                    "  {} {:>3} {:>10} {}",
+                    " ",
+                    " ",
+                    " ",
+                    line
+                );
+            }
+        }
+
+        println!("\n");
+    }
+
+    pub fn handle_list_tasks_for_completion(tasks: &[Task]) {
+        for task in tasks {
+            let lines: Vec<&str> = task.text.lines().collect();
+            if let Some(first) = lines.first() {
+                println!("{}\t{}", task.id, first);
+                for line in lines.iter().skip(1) {
+                    println!("{}", line);
+                }
+            } else {
+                println!("{}\t", task.id);
+            }
+        }
+    }
+
+    pub fn handle_restore(tm: &mut TaskManager) -> Result<()> {
+        tm.restore_from_backup()
+    }
+
+    #[cfg(feature = "interactive")]
+    fn handle_skip_task_error(e: &anyhow::Error, id: u8) -> bool {
+        if e.downcast_ref::<crate::error::AppError>() == Some(&crate::error::AppError::SkipTask) {
+            println!("{} {}", "Skipped task:".yellow(), id);
+            true
+        } else {
+            false
+        }
+    }
+}

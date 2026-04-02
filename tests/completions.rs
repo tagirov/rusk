@@ -1,4 +1,5 @@
-// Include Rust completion tests from tests/completions/rust/
+#![cfg(feature = "completions")]
+
 #[path = "completions/rust/completion_tests.rs"]
 mod completion_tests;
 

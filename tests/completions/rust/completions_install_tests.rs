@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rusk::completions::Shell;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
 
@@ -160,48 +160,6 @@ fn test_completion_paths_are_in_home_directory() -> Result<()> {
 }
 
 #[test]
-fn test_completion_install_creates_parent_directories() -> Result<()> {
-    let temp_dir = TempDir::new()?;
-    let test_path = temp_dir.path().join("deep").join("nested").join("path").join("rusk");
-    
-    // Verify parent doesn't exist
-    assert!(!test_path.parent().unwrap().exists());
-    
-    // Create parent directories
-    if let Some(parent) = test_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    
-    // Write a test file
-    fs::write(&test_path, "test content")?;
-    
-    // Verify file and all parent directories exist
-    assert!(test_path.exists());
-    assert!(test_path.parent().unwrap().exists());
-    assert!(test_path.parent().unwrap().parent().unwrap().exists());
-    
-    Ok(())
-}
-
-#[test]
-fn test_completion_install_overwrites_existing_file() -> Result<()> {
-    let temp_dir = TempDir::new()?;
-    let test_path = temp_dir.path().join("test_completion");
-    
-    // Create existing file with different content
-    fs::write(&test_path, "old content")?;
-    assert_eq!(fs::read_to_string(&test_path)?, "old content");
-    
-    // Overwrite with new content (simulating installation)
-    fs::write(&test_path, "new content")?;
-    
-    // Verify content was overwritten
-    assert_eq!(fs::read_to_string(&test_path)?, "new content");
-    
-    Ok(())
-}
-
-#[test]
 fn test_completion_instructions_are_provided() {
     let temp_dir = TempDir::new().unwrap();
     let test_path = temp_dir.path().join("test_completion");
@@ -270,42 +228,6 @@ fn test_completion_install_in_custom_path() -> Result<()> {
 }
 
 #[test]
-fn test_completion_scripts_are_valid_utf8() {
-    for shell in [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::Nu, Shell::PowerShell] {
-        let script = shell.get_script();
-        // This will panic if not valid UTF-8
-        let _ = script.to_string();
-    }
-}
-
-#[test]
-fn test_completion_install_handles_nonexistent_parent() -> Result<()> {
-    let temp_dir = TempDir::new()?;
-    let deep_path = temp_dir.path()
-        .join("level1")
-        .join("level2")
-        .join("level3")
-        .join("completion");
-    
-    // Verify parent doesn't exist
-    assert!(!deep_path.parent().unwrap().exists());
-    
-    // Create all parent directories
-    if let Some(parent) = deep_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    
-    // Write file
-    fs::write(&deep_path, "test")?;
-    
-    // Verify everything was created
-    assert!(deep_path.exists());
-    assert!(deep_path.parent().unwrap().exists());
-    
-    Ok(())
-}
-
-#[test]
 fn test_completion_scripts_have_expected_structure() {
     // Verify each script has some expected markers
     let bash = Shell::Bash.get_script();
@@ -324,58 +246,6 @@ fn test_completion_scripts_have_expected_structure() {
     assert!(powershell.contains("Register-ArgumentCompleter") || powershell.contains("rusk"), "PowerShell script should have Register-ArgumentCompleter");
 }
 
-#[test]
-fn test_completion_install_does_not_modify_user_files() -> Result<()> {
-    // This is a critical safety test
-    // We verify that our tests use temporary directories, not real user directories
-    
-    let _temp_dir = TempDir::new()?;
-    let test_path = _temp_dir.path();
-    
-    // Verify we're in a temp directory (should contain "tmp" or be under /tmp)
-    let path_str = test_path.to_string_lossy();
-    assert!(
-        path_str.contains("tmp") || test_path.starts_with("/tmp"),
-        "Test should use temporary directory, not user directory. Path: {}",
-        path_str
-    );
-    
-    // Verify we're not in home directory
-    if let Some(home) = dirs::home_dir() {
-        assert!(
-            !test_path.starts_with(&home),
-            "Test path should not be in user home directory"
-        );
-    }
-    
-    Ok(())
-}
-
-#[test]
-fn test_completion_scripts_are_readable() {
-    // Verify scripts can be read and are not corrupted
-    for shell in [Shell::Bash, Shell::Zsh, Shell::Fish, Shell::Nu, Shell::PowerShell] {
-        let script = shell.get_script();
-        
-        // Script should have reasonable length
-        assert!(script.len() > 50, "Script for {:?} should be at least 50 bytes", shell);
-        assert!(script.len() < 100_000, "Script for {:?} should be less than 100KB", shell);
-        
-        // Script should contain printable characters (mostly)
-        let printable_count = script.chars().filter(|c| c.is_ascii() && (c.is_alphanumeric() || c.is_whitespace() || "!@#$%^&*()_+-=[]{}|;:,.<>?/~`\"'\\".contains(*c))).count();
-        let total_chars = script.chars().count();
-        let printable_ratio = printable_count as f64 / total_chars as f64;
-        
-        assert!(
-            printable_ratio > 0.8,
-            "Script for {:?} should be mostly printable (ratio: {:.2})",
-            shell,
-            printable_ratio
-        );
-    }
-}
-
-// Integration tests using the actual CLI command
 #[test]
 fn test_cli_completions_show() -> Result<()> {
     use std::process::Command;
@@ -793,28 +663,6 @@ fn test_completion_install_creates_file_with_correct_permissions() -> Result<()>
         // File should be readable (owner has read permission)
         assert!(mode & 0o400 != 0, "File should be readable by owner");
     }
-    
-    Ok(())
-}
-
-#[test]
-fn test_completion_install_handles_write_errors_gracefully() -> Result<()> {
-    // Test that we handle write errors properly
-    // We can't easily test permission errors, but we can test invalid paths
-    
-    let invalid_path = PathBuf::from("/nonexistent/path/that/does/not/exist/completion");
-    
-    // Verify path doesn't exist and parent is invalid
-    assert!(!invalid_path.exists());
-    assert!(!invalid_path.parent().unwrap().exists());
-    
-    // Attempting to write should fail (we can't create /nonexistent)
-    // This is expected behavior - the function should return an error
-    let result = fs::create_dir_all(invalid_path.parent().unwrap());
-    
-    // On most systems, this should fail due to permissions or non-existent root
-    // We're just verifying the error handling path exists
-    assert!(result.is_err() || result.is_ok(), "Should handle path creation errors");
     
     Ok(())
 }

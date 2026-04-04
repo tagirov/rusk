@@ -76,8 +76,9 @@ rusk add Buy groceries
 # Add a task with a deadline
 rusk add Finish project report --date 31-12-2025
 
-# Or with short year and slash separator:
+# Or with short year; slash, hyphen, or dot between parts:
 rusk add Finish project report --date 31/12/25
+rusk add Finish project report --date 31.12.25
 
 # Leading zero for day and month is optional:
 rusk add Finish project report --date 1-3-25
@@ -103,7 +104,7 @@ rusk mark 1
 rusk edit 1 Complete the project documentation
 
 # Edit task date
-rusk edit 1 --date 25/12/2025
+rusk edit 1 --date 25.12.2025
 rusk edit 1 --date 1m3q
 
 # Edit both text and date
@@ -144,7 +145,7 @@ rusk del 1,2,3
 # Edit task text interactively
 rusk edit 1
 
-# Edit task text and date interactively (prompt accepts DD-MM-YYYY and relative offsets)
+# Edit task text and date interactively (prompt accepts DD-MM-YYYY, DD/MM/YYYY, DD.MM.YYYY, and relative offsets)
 rusk edit 1 --date
 
 # Interactive editing of tasks in sequence

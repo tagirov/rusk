@@ -37,7 +37,9 @@ impl HandlerCLI {
         let _term_cols = term_cols_u16 as usize;
         let editor_row_raw = crossterm::cursor::position().unwrap_or((0, 0)).1;
         let editor_row = if term_rows_u16 > 0 && editor_row_raw + 1 >= term_rows_u16 {
-            editor_row_raw.saturating_sub(1)
+            stdout.queue(Print("\r\n"))?;
+            stdout.flush().ok();
+            crossterm::cursor::position().unwrap_or((0, editor_row_raw)).1
         } else {
             editor_row_raw
         };

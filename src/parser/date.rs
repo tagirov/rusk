@@ -23,7 +23,7 @@ pub fn parse_cli_date_with_base(date_str: &str, base: NaiveDate) -> Result<Naive
         anyhow::bail!("Date cannot be empty");
     }
 
-    let absolute_only = trimmed.contains('-') || trimmed.contains('/');
+    let absolute_only = trimmed.contains('-') || trimmed.contains('/') || trimmed.contains('.');
     if !absolute_only {
         let b = trimmed.as_bytes();
         if !b.is_empty() && b[0].is_ascii_digit() {
@@ -34,7 +34,7 @@ pub fn parse_cli_date_with_base(date_str: &str, base: NaiveDate) -> Result<Naive
     let normalized = normalize_date_string(trimmed);
     NaiveDate::parse_from_str(&normalized, "%d-%m-%Y").with_context(|| {
         format!(
-            "Invalid date '{}': use DD-MM-YYYY or DD/MM/YYYY (D-M-YY is OK),\n\
+            "Invalid date '{}': use DD-MM-YYYY, DD/MM/YYYY, or DD.MM.YYYY (D-M-YY is OK),\n\
 or a relative offset such as 2d, 2w, 5m, 3q, 2y (combinable, e.g. 10d5w)",
             trimmed
         )
@@ -42,7 +42,7 @@ or a relative offset such as 2d, 2w, 5m, 3q, 2y (combinable, e.g. 10d5w)",
 }
 
 pub fn normalize_date_string(date_str: &str) -> String {
-    let mut normalized = date_str.replace('/', "-");
+    let mut normalized = date_str.replace('/', "-").replace('.', "-");
 
     let parts: Vec<&str> = normalized.split('-').collect();
     if parts.len() == 3 {
@@ -187,6 +187,19 @@ mod tests {
         assert_eq!(
             parse_cli_date_with_base("10-10-2015", base).unwrap(),
             d(2015, 10, 10)
+        );
+    }
+
+    #[test]
+    fn absolute_parsed_with_dot_separator() {
+        let base = d(2020, 1, 1);
+        assert_eq!(
+            parse_cli_date_with_base("10.1.25", base).unwrap(),
+            d(2025, 1, 10)
+        );
+        assert_eq!(
+            parse_cli_date_with_base("01.06.2026", base).unwrap(),
+            d(2026, 6, 1)
         );
     }
 

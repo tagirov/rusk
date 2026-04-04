@@ -1,5 +1,5 @@
 use chrono::NaiveDate;
-use rusk::TaskManager;
+use rusk::{TaskManager, parse_cli_date_with_base};
 
 #[test]
 fn test_edge_case_empty_inputs() {
@@ -288,9 +288,26 @@ fn test_edge_case_invalid_date_formats() {
     }
 }
 
-// Note: test_edge_case_id_boundaries removed because generate_next_id 
+#[test]
+fn test_edge_case_date_dot_separator() {
+    let base = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+    assert_eq!(
+        parse_cli_date_with_base("10.1.25", base).unwrap(),
+        NaiveDate::from_ymd_opt(2025, 1, 10).unwrap()
+    );
+    assert_eq!(
+        parse_cli_date_with_base("01.06.2026", base).unwrap(),
+        NaiveDate::from_ymd_opt(2026, 6, 1).unwrap()
+    );
+    assert_eq!(
+        parse_cli_date_with_base("31.12.2025", base).unwrap(),
+        NaiveDate::from_ymd_opt(2025, 12, 31).unwrap()
+    );
+}
+
+// Note: test_edge_case_id_boundaries removed because generate_next_id
 // has a bug where it panics on overflow when id reaches 255.
-// The existing test_generate_next_id_max_reached in lib_tests.rs covers 
+// The existing test_generate_next_id_max_reached in lib_tests.rs covers
 // the normal case up to 200 tasks, which is sufficient for testing.
 
 #[test]

@@ -5,13 +5,17 @@ pub fn is_cli_date_help_value(s: &str) -> bool {
     matches!(s.trim(), "-h" | "--help")
 }
 
+pub fn is_cli_date_clear_value(s: &str) -> bool {
+    s.trim() == "_"
+}
+
 pub fn parse_cli_date(date_str: &str) -> Result<NaiveDate> {
     parse_cli_date_with_base(date_str, Local::now().date_naive())
 }
 
 pub fn parse_cli_date_optional_empty(s: &str) -> Result<Option<NaiveDate>> {
     let trimmed = s.trim();
-    if trimmed.is_empty() {
+    if trimmed.is_empty() || is_cli_date_clear_value(trimmed) {
         return Ok(None);
     }
     parse_cli_date(trimmed).map(Some)

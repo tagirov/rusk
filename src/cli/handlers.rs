@@ -1,4 +1,5 @@
 use crate::{Task, TaskManager, parse_cli_date, parse_cli_date_optional_empty};
+use crate::parser::date::is_cli_date_clear_value;
 use anyhow::Result;
 use chrono::Datelike;
 use colored::*;
@@ -127,10 +128,10 @@ impl HandlerCLI {
                     );
                     println!(
                         "{}",
-                        "Enter new date: DD-MM-YYYY or DD/MM/YYYY (short year ok), or relative from today (2d, 2w, 10d5w, …). Leave empty to keep. Tab uses ghost prefill.".cyan()
+                        "Enter new date: DD-MM-YYYY or DD/MM/YYYY (short year ok), or relative from today (2d, 2w, 10d5w, …). Leave empty to keep, _ to clear. Tab uses ghost prefill.".cyan()
                     );
                     let date_editor =
-                        |s: &str| parse_cli_date(s.trim()).is_ok();
+                        |s: &str| parse_cli_date(s.trim()).is_ok() || is_cli_date_clear_value(s.trim());
                     match Self::interactive_line_editor(
                         "> ",
                         &current_date,
@@ -141,6 +142,22 @@ impl HandlerCLI {
                     ) {
                         Ok(date_input) => {
                             let trimmed = date_input.trim();
+                            if is_cli_date_clear_value(trimmed) {
+                                let task = &mut tm.tasks_mut()[idx];
+                                if task.date.is_some() {
+                                    task.date = None;
+                                    if !edited.contains(id) {
+                                        edited.push(*id);
+                                    }
+                                    any_changed = true;
+                                    let prefix = format!("{} {}: ", "Edited task:".green(), id);
+                                    Self::print_task_text_with_wrapping(
+                                        &prefix,
+                                        &task.text.bold().to_string(),
+                                    );
+                                }
+                                println!("{} {}", "Date:".cyan(), "empty".bold());
+                            } else {
                             let parsed_res = parse_cli_date_optional_empty(&date_input);
                             if let Ok(Some(parsed)) = &parsed_res {
                                 let parsed = *parsed;
@@ -178,6 +195,7 @@ impl HandlerCLI {
                                     final_date_display.bold()
                                 }
                             );
+                            }
                         }
                         Err(e) => {
                             if Self::handle_skip_task_error(&e, *id) {
@@ -356,10 +374,13 @@ impl HandlerCLI {
             }
         }
 
+        let is_clearing_date = date.as_deref().is_some_and(is_cli_date_clear_value);
         let parsed_new_date: Option<chrono::NaiveDate> = match &date {
             None => None,
+            Some(d) if is_cli_date_clear_value(d) => None,
             Some(d) => Some(parse_cli_date(d)?),
         };
+        let date_change_requested = date.is_some();
 
         let (edited, unchanged, not_found) = tm.edit_tasks(ids, text, date)?;
 
@@ -375,33 +396,45 @@ impl HandlerCLI {
                 let prefix = format!("{} {}: ", "Edited task:".green(), id);
                 Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
 
-                if parsed_new_date.is_some() {
-                    if new_date != old_date {
+                if date_change_requested {
+                    if is_clearing_date {
                         let old_date_str = Self::format_date_for_display(old_date);
-                        let new_date_str = Self::format_date_for_display(new_date);
-                        if old_date_str == "empty" {
-                            println!(
-                                " {} {} {} {} {} {}",
-                                "- date:".cyan(),
-                                new_date_str.bold(),
-                                "(".normal(),
-                                "was:".cyan(),
-                                old_date_str.white().bold(),
-                                ")".normal()
-                            );
+                        println!(
+                            " {} {} {} {} {}",
+                            "- date:".cyan(),
+                            "cleared".bold(),
+                            "(".normal(),
+                            format!("was: {}", old_date_str).cyan(),
+                            ")".normal()
+                        );
+                    } else if parsed_new_date.is_some() {
+                        if new_date != old_date {
+                            let old_date_str = Self::format_date_for_display(old_date);
+                            let new_date_str = Self::format_date_for_display(new_date);
+                            if old_date_str == "empty" {
+                                println!(
+                                    " {} {} {} {} {} {}",
+                                    "- date:".cyan(),
+                                    new_date_str.bold(),
+                                    "(".normal(),
+                                    "was:".cyan(),
+                                    old_date_str.white().bold(),
+                                    ")".normal()
+                                );
+                            } else {
+                                println!(
+                                    " {} {} {} {} {}",
+                                    "- date:".cyan(),
+                                    new_date_str.bold(),
+                                    "(".normal(),
+                                    format!("was: {}", old_date_str).cyan(),
+                                    ")".normal()
+                                );
+                            }
                         } else {
-                            println!(
-                                " {} {} {} {} {}",
-                                "- date:".cyan(),
-                                new_date_str.bold(),
-                                "(".normal(),
-                                format!("was: {}", old_date_str).cyan(),
-                                ")".normal()
-                            );
+                            let date_str = Self::format_date_for_display(new_date);
+                            println!(" {} {}", "- date:".cyan(), date_str.bold());
                         }
-                    } else {
-                        let date_str = Self::format_date_for_display(new_date);
-                        println!(" {} {}", "- date:".cyan(), date_str.bold());
                     }
                 }
             }
@@ -419,7 +452,7 @@ impl HandlerCLI {
                 let prefix = format!("{} ", "Task already has this content:".magenta());
                 Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
 
-                if parsed_new_date.is_some() {
+                if date_change_requested {
                     let date_str = Self::format_date_for_display(current_date);
                     println!(" {} {}", "- date:".cyan(), date_str.bold());
                 }

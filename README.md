@@ -107,6 +107,9 @@ rusk edit 1 Complete the project documentation
 rusk edit 1 --date 25.12.2025
 rusk edit 1 --date 1m3q
 
+# Remove the deadline (clear date)
+rusk edit 1 --date _
+
 # Edit both text and date
 rusk edit 1 Update documentation --date 23-12-25
 
@@ -145,7 +148,7 @@ rusk del 1,2,3
 # Edit task text interactively
 rusk edit 1
 
-# Edit task text and date interactively (prompt accepts DD-MM-YYYY, DD/MM/YYYY, DD.MM.YYYY, and relative offsets)
+# Edit task text and date interactively (absolute or relative dates; empty line keeps date, _ clears it)
 rusk edit 1 --date
 
 # Interactive editing of tasks in sequence

@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 
 use crate::model::Task;
 use crate::parse_cli_date;
+use crate::parser::date::is_cli_date_clear_value;
 
 pub type MarkResult = (Vec<(u8, bool)>, Vec<u8>);
 
@@ -234,10 +235,17 @@ impl TaskManager {
                 }
 
                 if let Some(ref new_date) = date {
-                    let parsed_date = parse_cli_date(new_date)?;
-                    if task.date != Some(parsed_date) {
-                        task.date = Some(parsed_date);
-                        was_changed = true;
+                    if is_cli_date_clear_value(new_date) {
+                        if task.date.is_some() {
+                            task.date = None;
+                            was_changed = true;
+                        }
+                    } else {
+                        let parsed_date = parse_cli_date(new_date)?;
+                        if task.date != Some(parsed_date) {
+                            task.date = Some(parsed_date);
+                            was_changed = true;
+                        }
                     }
                 }
 

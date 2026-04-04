@@ -9,6 +9,7 @@ Date value for -d / --date (and interactive date entry when `edit … --date` wi
   Relative    Offset from today's local date. Chain segments with no spaces.
               Suffixes: d=days, w=weeks, m=months, q=quarters (3 months), y=years.
               Examples: 2d, 2w, 5m, 3q, 2y, 10d5w, 12d2q1y.
+  Clear       Pass _ to remove the date from a task (e.g. -d _).
   Subcommand  Pass -h or --help as the date value for this command's help (e.g. -d -h).\n";
 
 #[derive(Parser)]

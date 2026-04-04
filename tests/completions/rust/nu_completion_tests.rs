@@ -512,6 +512,57 @@ fn test_nu_completion_completions_command() -> Result<()> {
     Ok(())
 }
 
+/// `rusk c` without space: root suggests long name and alias; install/show only after `rusk c `.
+#[test]
+fn test_nu_completion_completions_alias_c_root_vs_space() -> Result<()> {
+    let script = Shell::Nu.get_script();
+    let temp_dir = TempDir::new()?;
+    let script_path = temp_dir.path().join("rusk.nu");
+    fs::write(&script_path, script)?;
+
+    let no_space = format!(
+        r#"use {} *; rusk-completions-main ["rusk", "c"] | to json"#,
+        script_path.to_string_lossy()
+    );
+    let with_space = format!(
+        r#"use {} *; rusk-completions-main ["rusk", "c", ""] | to json"#,
+        script_path.to_string_lossy()
+    );
+
+    let out_no = Command::new("nu").arg("-c").arg(&no_space).output();
+    let out_yes = Command::new("nu").arg("-c").arg(&with_space).output();
+
+    match (out_no, out_yes) {
+        (Ok(a), Ok(b)) => {
+            if !a.status.success() {
+                let err = String::from_utf8_lossy(&a.stderr);
+                panic!("nu rusk c: {err}");
+            }
+            if !b.status.success() {
+                let err = String::from_utf8_lossy(&b.stderr);
+                panic!("nu 'rusk c ': {err}");
+            }
+            let s_no = String::from_utf8_lossy(&a.stdout);
+            assert!(
+                s_no.contains("completions") && s_no.contains("\"c\""),
+                "rusk c<TAB> should suggest completions and alias c: {s_no}"
+            );
+            let s_yes = String::from_utf8_lossy(&b.stdout);
+            assert!(
+                s_yes.contains("install") && s_yes.contains("show"),
+                "rusk c <TAB> should offer install/show: {s_yes}"
+            );
+        }
+        (Err(e), _) | (_, Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            eprintln!("Warning: nu command not found, skipping completions alias c test");
+            return Ok(());
+        }
+        (Err(e), _) | (_, Err(e)) => return Err(e.into()),
+    }
+
+    Ok(())
+}
+
 /// Test that Nu Shell completion handles completions install subcommand
 #[test]
 fn test_nu_completion_completions_install() -> Result<()> {

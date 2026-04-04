@@ -312,7 +312,8 @@ def complete-task-ids [entered_ids: list<int>, spans: list<string>] {
 # ============================================================================
 
 # Filter completions by current input (narrowing)
-def filter-by-prefix [completions: list<record>, prefix: string] {
+# (No list<record> annotation: flattened command+alias rows infer as oneof in some Nu versions.)
+def filter-by-prefix [completions, prefix: string] {
   if ($prefix == "") {
     $completions
   } else {
@@ -782,8 +783,8 @@ def complete-root [ctx: record] {
     return (complete-flags $all_flags $ctx.cur)
   }
   
-  # Full subcommand name only (not short aliases): delegate to subcommand completers for flags.
-  # Aliases (e, a, …) still get Tab → long name + alias, not -h/--help (common prefix "-").
+  # Full subcommand name only (not short aliases): after `rusk c` + Tab offer `completions`/`c`;
+  # after `rusk c ` + Tab delegate here (root returns []) so install/show come from complete-completions.
   let exact_subcmds = [add edit mark del list restore completions]
   if ($ctx.word_count == 1) and (not $ctx.has_trailing_space) and ($ctx.cur in $exact_subcmds) {
     return []
@@ -794,11 +795,10 @@ def complete-root [ctx: record] {
   # But NOT if there's already a command and trailing space (word_count == 1 with trailing space means we're after the command)
   if ($ctx.word_count == 0) or ($ctx.word_count == 1 and not $ctx.has_trailing_space) {
     let commands = (get-commands)
+    # append aliases (not `[record (each ...)]|flatten`) so nested alias lists flatten correctly in Nu
     let all_options = ($commands | each {|cmd| 
-      [
-        {value: $cmd.value, description: $cmd.description}
-        ($cmd.aliases | each {|alias| {value: $alias, description: $"Alias for ($cmd.value)"}})
-      ]
+      [{value: $cmd.value, description: $cmd.description}]
+      | append ($cmd.aliases | each {|alias| {value: $alias, description: $"Alias for ($cmd.value)"}})
     } | flatten)
     let all_options = ($all_options | append (get-common-flags) | append (get-version-flags))
     

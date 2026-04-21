@@ -199,15 +199,18 @@ fn run() -> Result<()> {
                 (Some(text), _) => HandlerCLI::handle_edit_tasks(&mut tm, ids, Some(text), None)?,
             }
         }
-        Some(Command::List { for_completion }) => {
+        Some(Command::List {
+            for_completion,
+            first_line,
+        }) => {
             if for_completion {
                 HandlerCLI::handle_list_tasks_for_completion(tm.tasks());
             } else {
-                HandlerCLI::handle_list_tasks(tm.tasks());
+                HandlerCLI::handle_list_tasks(tm.tasks(), first_line);
             }
         }
         None => {
-            HandlerCLI::handle_list_tasks(tm.tasks());
+            HandlerCLI::handle_list_tasks(tm.tasks(), false);
         }
         Some(Command::Restore) => {
             let mut restore_tm = match TaskManager::new_for_restore() {

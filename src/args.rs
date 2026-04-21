@@ -78,6 +78,12 @@ pub enum Command {
     List {
         #[arg(long, hide = true, default_value_t = false)]
         for_completion: bool,
+        #[arg(
+            short = 'f',
+            long,
+            help = "Show only the first line of each task (no wrap/paragraph continuations); strip trailing punctuation on that line"
+        )]
+        first_line: bool,
     },
     #[command(
         visible_alias = "r",

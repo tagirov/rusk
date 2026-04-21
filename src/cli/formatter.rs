@@ -105,6 +105,84 @@ impl HandlerCLI {
         result
     }
 
+    fn is_trailing_sentence_punct(c: char) -> bool {
+        matches!(
+            c,
+            '.' | ',' | ';' | ':' | '!' | '?' | '…'
+                | '"' | '\''
+                | '«' | '»' | '„' | '“' | '”' | '‚' | '‘' | '’'
+                | '‹' | '›'
+                | '‐' | '‑' | '‒' | '–' | '—' | '―'
+                | '‼' | '⁇' | '⁈' | '⁉'
+                | '·'
+                | '¿' | '¡'
+                // Typographic / locale comma variants (not U+002C)
+                | '\u{060c}' // Arabic comma
+                | '\u{ff0c}' // Fullwidth comma
+                | '\u{fe50}' // Small comma
+                | '\u{fe10}' // Presentation form for vertical comma
+                | '\u{2e41}' // Reversed comma
+        )
+    }
+
+    /// Trims whitespace and invisible trailing marks so punctuation before them is reachable.
+    fn trim_end_display_noise(s: &str) -> &str {
+        let mut end = s.len();
+        while end > 0 {
+            let slice = &s[..end];
+            let Some(ch) = slice.chars().next_back() else {
+                break;
+            };
+            if ch.is_whitespace()
+                || matches!(
+                    ch,
+                    '\u{200b}' // ZWSP
+                        | '\u{200c}' // ZWNJ
+                        | '\u{200d}' // ZWJ
+                        | '\u{2060}' // Word joiner
+                        | '\u{feff}' // BOM / ZWNBSP
+                )
+            {
+                end -= ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        &s[..end]
+    }
+
+    /// Strips trailing sentence punctuation (and matching quotes/dashes). Used for `list --first-line`.
+    #[doc(hidden)]
+    pub fn trim_trailing_punctuation(s: &str) -> &str {
+        let mut end = s.len();
+        while end > 0 {
+            let slice = &s[..end];
+            let Some(ch) = slice.chars().next_back() else {
+                break;
+            };
+            if Self::is_trailing_sentence_punct(ch) {
+                end -= ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        &s[..end]
+    }
+
+    /// Trims end whitespace, then repeatedly removes trailing punctuation and whitespace (e.g. `"a. "` → `"a"`).
+    #[doc(hidden)]
+    pub fn trim_first_line_for_compact_list(s: &str) -> &str {
+        let mut s = Self::trim_end_display_noise(s);
+        loop {
+            let next = Self::trim_trailing_punctuation(s);
+            let next = Self::trim_end_display_noise(next);
+            if next.len() == s.len() {
+                return s;
+            }
+            s = next;
+        }
+    }
+
     #[doc(hidden)]
     pub fn wrap_text_by_words(text: &str, width: usize) -> Vec<String> {
         if text.is_empty() {

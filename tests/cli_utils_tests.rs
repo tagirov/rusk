@@ -314,6 +314,48 @@ fn test_normalize_terminal_width_one() {
     assert_eq!(HandlerCLI::normalize_terminal_width(1), 1);
 }
 
+#[test]
+fn test_trim_trailing_punctuation_basic() {
+    assert_eq!(HandlerCLI::trim_trailing_punctuation("hello."), "hello");
+    assert_eq!(HandlerCLI::trim_trailing_punctuation("a!?"), "a");
+    assert_eq!(HandlerCLI::trim_trailing_punctuation("x…"), "x");
+}
+
+#[test]
+fn test_trim_trailing_punctuation_preserves_underscore() {
+    assert_eq!(HandlerCLI::trim_trailing_punctuation("snake_case"), "snake_case");
+}
+
+#[test]
+fn test_trim_first_line_for_compact_list_spaces() {
+    assert_eq!(HandlerCLI::trim_first_line_for_compact_list("hello. "), "hello");
+    assert_eq!(HandlerCLI::trim_first_line_for_compact_list("a . "), "a");
+}
+
+#[test]
+fn test_trim_first_line_strips_comma_before_zero_width_space() {
+    assert_eq!(
+        HandlerCLI::trim_first_line_for_compact_list("hello,\u{200b}"),
+        "hello"
+    );
+}
+
+#[test]
+fn test_compact_list_trims_comma_at_end_of_wrapped_first_row() {
+    let wrapped = HandlerCLI::wrap_text_by_words("aa, bb", 5);
+    let first = wrapped.first().expect("wrapped row");
+    assert!(
+        first.ends_with(','),
+        "first visual row should end with comma before trim: {first:?}"
+    );
+    assert_eq!(HandlerCLI::trim_first_line_for_compact_list(first), "aa");
+}
+
+#[test]
+fn test_trim_trailing_punctuation_fullwidth_comma() {
+    assert_eq!(HandlerCLI::trim_trailing_punctuation("x\u{ff0c}"), "x");
+}
+
 // ── wrap_text_by_words with hard line breaks ────────────────────────────────
 
 #[test]

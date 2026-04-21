@@ -542,7 +542,7 @@ impl HandlerCLI {
         Ok(())
     }
 
-    pub fn handle_list_tasks(tasks: &[Task]) {
+    pub fn handle_list_tasks(tasks: &[Task], first_line_only: bool) {
         if tasks.is_empty() {
             println!("{}", "No tasks".yellow());
             return;
@@ -590,9 +590,23 @@ impl HandlerCLI {
                 "".normal()
             };
 
-            let wrapped_lines = Self::wrap_text_by_words(&task.text, available_width);
+            let text_for_list = if first_line_only {
+                Self::trim_first_line_for_compact_list(task.text.lines().next().unwrap_or(""))
+            } else {
+                task.text.as_str()
+            };
+            let wrapped_lines = Self::wrap_text_by_words(text_for_list, available_width);
 
-            if let Some(first_line) = wrapped_lines.first() {
+            let first_line: &str = if first_line_only {
+                wrapped_lines
+                    .first()
+                    .map(|s| Self::trim_first_line_for_compact_list(s))
+                    .unwrap_or("")
+            } else {
+                wrapped_lines.first().map(|s| s.as_str()).unwrap_or("")
+            };
+
+            if !first_line.is_empty() || !wrapped_lines.is_empty() {
                 println!(
                     "  {} {:>2}  {:>9}  {}",
                     status,
@@ -602,14 +616,16 @@ impl HandlerCLI {
                 );
             }
 
-            for line in wrapped_lines.iter().skip(1) {
-                println!(
-                    "  {} {:>3} {:>10} {}",
-                    " ",
-                    " ",
-                    " ",
-                    line
-                );
+            if !first_line_only {
+                for line in wrapped_lines.iter().skip(1) {
+                    println!(
+                        "  {} {:>3} {:>10} {}",
+                        " ",
+                        " ",
+                        " ",
+                        line
+                    );
+                }
             }
         }
 

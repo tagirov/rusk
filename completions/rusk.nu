@@ -543,7 +543,10 @@ def complete-mark-del [cur: string, command: string] {
         {value: "--done", description: "Delete all completed tasks"}
       ] | append (get-common-flags)
     } else {
-      (get-common-flags)
+      [
+        {value: "-p", description: "Toggle the priority flag"},
+        {value: "--priority", description: "Toggle the priority flag"}
+      ] | append (get-common-flags)
     }
     return (complete-flags $all_flags $cur)
   }

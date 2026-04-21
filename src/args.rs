@@ -51,11 +51,13 @@ pub enum Command {
     },
     #[command(
         visible_alias = "m",
-        about = "Toggle task completion status by ID. Supports multiple IDs and comma-separated input. Examples: rusk mark 3, rusk mark 1,2,3"
+        about = "Toggle task completion status by ID. With -p toggles priority (shown as orange `p` instead of `•`). Supports multiple IDs and comma-separated input. Examples: rusk mark 3, rusk mark 1,2,3, rusk mark 1 -p"
     )]
     Mark {
         #[arg(trailing_var_arg = true, allow_hyphen_values = false, value_name = "IDS", help = "Task IDs: comma-separated (e.g. 1,2,3); without commas only the first ID is used")]
         ids: Vec<String>,
+        #[arg(short, long, help = "Toggle the priority flag instead of the done flag. Priority is preserved when the task is toggled done/undone.")]
+        priority: bool,
     },
     #[command(
         visible_alias = "e",

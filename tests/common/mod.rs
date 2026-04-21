@@ -30,6 +30,7 @@ pub fn create_test_task(id: u8, text: &str, done: bool) -> Task {
         text: text.to_string(),
         date: None,
         done,
+        priority: false,
     }
 }
 
@@ -40,5 +41,17 @@ pub fn create_test_task_with_date(id: u8, text: &str, done: bool, date: &str) ->
         text: text.to_string(),
         date: NaiveDate::parse_from_str(date, "%d-%m-%Y").ok(),
         done,
+        priority: false,
+    }
+}
+
+#[allow(dead_code)]
+pub fn create_test_task_with_priority(id: u8, text: &str, done: bool, priority: bool) -> Task {
+    Task {
+        id,
+        text: text.to_string(),
+        date: None,
+        done,
+        priority,
     }
 }

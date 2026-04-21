@@ -59,20 +59,20 @@ impl TaskManager {
         let last_week = today - chrono::Duration::days(7);
 
         vec![
-            Task { id: 1, text: "Simple task without date".to_string(), date: None, done: false },
-            Task { id: 2, text: "Completed task without date".to_string(), date: None, done: true },
-            Task { id: 3, text: "Overdue task from last week".to_string(), date: Some(last_week), done: false },
-            Task { id: 4, text: "Completed overdue task".to_string(), date: Some(yesterday), done: true },
-            Task { id: 5, text: "Task due today".to_string(), date: Some(today), done: false },
-            Task { id: 6, text: "Completed task due today".to_string(), date: Some(today), done: true },
-            Task { id: 7, text: "Task due tomorrow".to_string(), date: Some(tomorrow), done: false },
-            Task { id: 8, text: "Completed future task".to_string(), date: Some(next_week), done: true },
-            Task { id: 9, text: "Short".to_string(), date: None, done: false },
-            Task { id: 10, text: "This is a very long task description that contains multiple words and demonstrates how the system handles longer text content".to_string(), date: Some(tomorrow), done: false },
-            Task { id: 11, text: "Task with special chars: @#$%^&*()".to_string(), date: None, done: false },
-            Task { id: 12, text: "Complete task 42 and review items 1-10".to_string(), date: Some(next_week), done: false },
-            Task { id: 13, text: "Buy groceries: milk, bread, eggs, and cheese".to_string(), date: Some(tomorrow), done: false },
-            Task { id: 14, text: "Long-term project milestone".to_string(), date: Some(today + chrono::Duration::days(30)), done: false },
+            Task { id: 1, text: "Simple task without date".to_string(), date: None, done: false, priority: false },
+            Task { id: 2, text: "Completed task without date".to_string(), date: None, done: true, priority: false },
+            Task { id: 3, text: "Overdue task from last week".to_string(), date: Some(last_week), done: false, priority: true },
+            Task { id: 4, text: "Completed overdue task".to_string(), date: Some(yesterday), done: true, priority: false },
+            Task { id: 5, text: "Task due today".to_string(), date: Some(today), done: false, priority: true },
+            Task { id: 6, text: "Completed task due today".to_string(), date: Some(today), done: true, priority: false },
+            Task { id: 7, text: "Task due tomorrow".to_string(), date: Some(tomorrow), done: false, priority: false },
+            Task { id: 8, text: "Completed future task".to_string(), date: Some(next_week), done: true, priority: false },
+            Task { id: 9, text: "Short".to_string(), date: None, done: false, priority: false },
+            Task { id: 10, text: "This is a very long task description that contains multiple words and demonstrates how the system handles longer text content".to_string(), date: Some(tomorrow), done: false, priority: false },
+            Task { id: 11, text: "Task with special chars: @#$%^&*()".to_string(), date: None, done: false, priority: false },
+            Task { id: 12, text: "Complete task 42 and review items 1-10".to_string(), date: Some(next_week), done: false, priority: false },
+            Task { id: 13, text: "Buy groceries: milk, bread, eggs, and cheese".to_string(), date: Some(tomorrow), done: false, priority: false },
+            Task { id: 14, text: "Long-term project milestone".to_string(), date: Some(today + chrono::Duration::days(30)), done: false, priority: false },
         ]
     }
 
@@ -148,6 +148,7 @@ impl TaskManager {
             text: text.clone(),
             date,
             done: false,
+            priority: false,
         };
 
         self.tasks.push(task);
@@ -199,6 +200,30 @@ impl TaskManager {
                 let task = &mut self.tasks[idx];
                 task.done = !task.done;
                 marked.push((id, task.done));
+            } else {
+                not_found.push(id);
+            }
+        }
+
+        if not_found.len() < ids_len {
+            self.save()?;
+        }
+
+        Ok((marked, not_found))
+    }
+
+    /// Toggles the `priority` flag for the given task ids. Returns `(Vec<(id, new_priority)>, not_found)`.
+    /// Does not touch `done`: the priority is preserved across later done toggles.
+    pub fn mark_priority_tasks(&mut self, ids: Vec<u8>) -> Result<MarkResult> {
+        let mut not_found = Vec::new();
+        let mut marked = Vec::new();
+        let ids_len = ids.len();
+
+        for id in ids {
+            if let Some(idx) = self.find_task_by_id(id) {
+                let task = &mut self.tasks[idx];
+                task.priority = !task.priority;
+                marked.push((id, task.priority));
             } else {
                 not_found.push(id);
             }

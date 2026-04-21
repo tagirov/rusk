@@ -45,6 +45,7 @@ fn test_generate_next_id_max_reached() {
             text: format!("Task {i}"),
             date: None,
             done: false,
+            priority: false,
         });
     }
 

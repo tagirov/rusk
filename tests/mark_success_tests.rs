@@ -1,6 +1,6 @@
 use rusk::TaskManager;
 mod common;
-use common::create_test_task;
+use common::{create_test_task, create_test_task_with_priority};
 
 #[test]
 fn test_mark_tasks_returns_marked_info() {
@@ -78,4 +78,75 @@ fn test_mark_tasks_all_not_found() {
     assert!(marked.is_empty());
     assert_eq!(not_found, vec![99, 100]);
     assert!(!tm.tasks[0].done); // Should remain unchanged
+}
+
+#[test]
+fn test_mark_priority_toggles_priority_flag() {
+    let mut tm = TaskManager::new_empty().unwrap();
+    tm.tasks = vec![create_test_task(1, "Task 1", false)];
+
+    let (marked, not_found) = tm.mark_priority_tasks(vec![1]).unwrap();
+    assert_eq!(marked, vec![(1, true)]);
+    assert!(not_found.is_empty());
+    assert!(tm.tasks[0].priority);
+    assert!(!tm.tasks[0].done);
+
+    let (marked, _) = tm.mark_priority_tasks(vec![1]).unwrap();
+    assert_eq!(marked, vec![(1, false)]);
+    assert!(!tm.tasks[0].priority);
+    assert!(!tm.tasks[0].done);
+}
+
+#[test]
+fn test_mark_done_preserves_priority() {
+    let mut tm = TaskManager::new_empty().unwrap();
+    tm.tasks = vec![create_test_task_with_priority(1, "Task", false, true)];
+
+    // Priority → Done: priority preserved, done set.
+    let (marked, _) = tm.mark_tasks(vec![1]).unwrap();
+    assert_eq!(marked, vec![(1, true)]);
+    assert!(tm.tasks[0].done);
+    assert!(tm.tasks[0].priority);
+
+    // Done → Priority (not Normal): priority still true, done cleared.
+    let (marked, _) = tm.mark_tasks(vec![1]).unwrap();
+    assert_eq!(marked, vec![(1, false)]);
+    assert!(!tm.tasks[0].done);
+    assert!(tm.tasks[0].priority);
+}
+
+#[test]
+fn test_mark_done_on_normal_task_leaves_priority_false() {
+    let mut tm = TaskManager::new_empty().unwrap();
+    tm.tasks = vec![create_test_task(1, "Task", false)];
+
+    tm.mark_tasks(vec![1]).unwrap();
+    assert!(tm.tasks[0].done);
+    assert!(!tm.tasks[0].priority);
+
+    tm.mark_tasks(vec![1]).unwrap();
+    assert!(!tm.tasks[0].done);
+    assert!(!tm.tasks[0].priority);
+}
+
+#[test]
+fn test_mark_priority_independent_of_done_flag() {
+    let mut tm = TaskManager::new_empty().unwrap();
+    tm.tasks = vec![create_test_task_with_priority(1, "Task", true, false)];
+
+    // `-p` on a done task toggles priority without touching done.
+    let (marked, _) = tm.mark_priority_tasks(vec![1]).unwrap();
+    assert_eq!(marked, vec![(1, true)]);
+    assert!(tm.tasks[0].done);
+    assert!(tm.tasks[0].priority);
+}
+
+#[test]
+fn test_mark_priority_not_found() {
+    let mut tm = TaskManager::new_empty().unwrap();
+    tm.tasks = vec![create_test_task(1, "Task", false)];
+
+    let (marked, not_found) = tm.mark_priority_tasks(vec![1, 99]).unwrap();
+    assert_eq!(marked, vec![(1, true)]);
+    assert_eq!(not_found, vec![99]);
 }

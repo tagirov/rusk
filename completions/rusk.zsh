@@ -459,7 +459,7 @@ _rusk_main() {
                 if [[ "$cmd" == "del" || "$cmd" == "d" ]]; then
                     _rusk_zsh_compadd_flags -- --done --help -h
                 else
-                    _rusk_zsh_compadd_flags -- -h --help
+                    _rusk_zsh_compadd_flags -- -p --priority -h --help
                 fi
             fi
             ;;

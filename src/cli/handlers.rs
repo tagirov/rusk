@@ -344,13 +344,23 @@ impl HandlerCLI {
         Ok(())
     }
 
-    pub fn handle_mark_tasks(tm: &mut TaskManager, ids: Vec<u8>) -> Result<()> {
-        let (marked, not_found) = tm.mark_tasks(ids)?;
+    pub fn handle_mark_tasks(tm: &mut TaskManager, ids: Vec<u8>, priority: bool) -> Result<()> {
+        let (marked, not_found) = if priority {
+            tm.mark_priority_tasks(ids)?
+        } else {
+            tm.mark_tasks(ids)?
+        };
 
-        for (id, done) in marked {
+        for (id, _) in marked {
             if let Some(idx) = tm.find_task_by_id(id) {
                 let task = &tm.tasks()[idx];
-                let status = if done { "done" } else { "undone" };
+                let status = if task.done {
+                    "done"
+                } else if task.priority {
+                    "priority"
+                } else {
+                    "undone"
+                };
                 let prefix = format!("{} {}: ", format!("Marked task as {status}:").green(), id);
                 Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
             }
@@ -485,6 +495,8 @@ impl HandlerCLI {
         for task in tasks {
             let status = if task.done {
                 "✔".green()
+            } else if task.priority {
+                "p".truecolor(255, 165, 0).bold()
             } else {
                 "•".normal()
             };

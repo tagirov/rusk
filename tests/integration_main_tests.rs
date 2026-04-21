@@ -246,6 +246,55 @@ fn test_binary_rusk_no_colors_disables_ansi_escapes() {
 }
 
 #[test]
+fn test_binary_mark_priority_toggles_and_preserves_across_done() {
+    let _guard = BIN_TEST_MUTEX.lock().unwrap();
+
+    setup_test_db(r#"[{"id":1,"text":"Task","date":null,"done":false}]"#);
+
+    // `rusk m 1 -p` → priority=true, done=false.
+    let out = rusk_command().args(["mark", "1", "-p"]).output().unwrap();
+    assert!(out.status.success(), "mark -p should succeed: {out:?}");
+    let db: Vec<serde_json::Value> = serde_json::from_str(&read_db()).unwrap();
+    assert_eq!(db[0]["priority"], true);
+    assert_eq!(db[0]["done"], false);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("priority"), "stdout should mention priority:\n{stdout}");
+
+    // `rusk m 1` → done=true, priority preserved.
+    rusk_command().args(["mark", "1"]).output().unwrap();
+    let db: Vec<serde_json::Value> = serde_json::from_str(&read_db()).unwrap();
+    assert_eq!(db[0]["done"], true);
+    assert_eq!(db[0]["priority"], true);
+
+    // `rusk m 1` → reverts to priority (done=false, priority still true).
+    rusk_command().args(["mark", "1"]).output().unwrap();
+    let db: Vec<serde_json::Value> = serde_json::from_str(&read_db()).unwrap();
+    assert_eq!(db[0]["done"], false);
+    assert_eq!(db[0]["priority"], true);
+
+    // `rusk m 1 -p` again → priority cleared.
+    rusk_command().args(["mark", "1", "-p"]).output().unwrap();
+    let db: Vec<serde_json::Value> = serde_json::from_str(&read_db()).unwrap();
+    assert_eq!(db[0]["done"], false);
+    // `skip_serializing_if = Not::not` omits the field when false; treat missing as false.
+    let p = db[0].get("priority").and_then(|v| v.as_bool()).unwrap_or(false);
+    assert!(!p, "priority should be cleared, got {:?}", db[0].get("priority"));
+}
+
+#[test]
+fn test_binary_loads_legacy_db_without_priority_field() {
+    let _guard = BIN_TEST_MUTEX.lock().unwrap();
+
+    // Old DB schema (no `priority` field) — must still load.
+    setup_test_db(r#"[{"id":1,"text":"Legacy","date":null,"done":false}]"#);
+
+    let out = rusk_command().args(["list"]).output().unwrap();
+    assert!(out.status.success(), "list should succeed on legacy DB");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Legacy"));
+}
+
+#[test]
 fn test_binary_rusk_no_colors_empty_does_not_disable() {
     let _guard = BIN_TEST_MUTEX.lock().unwrap();
     setup_test_db(r#"[{"id":1,"text":"Task","date":null,"done":false}]"#);

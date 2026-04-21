@@ -562,7 +562,7 @@ function __rusk_complete_mark_del_flags
     if contains -- $sub del d
         __rusk_complete_flags --done -h --help
     else
-        __rusk_complete_flags -h --help
+        __rusk_complete_flags -p --priority -h --help
     end
 end
 

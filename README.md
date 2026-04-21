@@ -100,6 +100,15 @@ rusk mark 1
 # Mark a task as undone (toggle)
 rusk mark 1
 
+# Mark a task as priority (shows orange `p` instead of `•`). Toggle again to remove.
+rusk mark 1 -p
+
+# Priority is preserved across done toggles: marking a priority task done, then
+# marking it again, returns it to the priority state rather than to normal.
+rusk mark 1 -p     # `•` → `p`
+rusk mark 1        # `p` → `✔`
+rusk mark 1        # `✔` → `p` (not `•`)
+
 # Edit task text (replace)
 rusk edit 1 Complete the project documentation
 

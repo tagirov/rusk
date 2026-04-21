@@ -65,7 +65,17 @@ fn main() -> Result<()> {
             let parsed_ids = parse_flexible_ids(&filtered_ids);
             HandlerCLI::handle_delete_tasks(&mut tm, parsed_ids, done)?;
         }
-        Some(Command::Mark { ids }) => {
+        Some(Command::Mark { ids, priority }) => {
+            // `trailing_var_arg` on `ids` makes clap swallow flags into the Vec instead of
+            // binding them to `priority`. Recover `-p` / `--priority` manually here.
+            let mut priority = priority;
+            for arg in &ids {
+                let t = arg.trim();
+                if t == "-p" || t == "--priority" {
+                    priority = true;
+                }
+            }
+
             let filtered_ids: Vec<String> = ids.iter()
                 .filter(|arg| {
                     let trimmed = arg.trim();
@@ -84,7 +94,7 @@ fn main() -> Result<()> {
                 eprintln!("{}", "Error: No valid task IDs provided".red());
                 std::process::exit(1);
             }
-            HandlerCLI::handle_mark_tasks(&mut tm, parsed_ids)?;
+            HandlerCLI::handle_mark_tasks(&mut tm, parsed_ids, priority)?;
         }
         Some(Command::Edit { args, date }) => {
             if args_have_date_then_help(&args) {

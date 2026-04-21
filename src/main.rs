@@ -55,6 +55,20 @@ fn run() -> Result<()> {
     }
 
     let cli = Cli::parse();
+
+    #[cfg(feature = "completions")]
+    if let Some(Command::Completions { action }) = &cli.command {
+        match action {
+            CompletionAction::Install { shells } => {
+                handle_completions_install(shells.clone())?;
+            }
+            CompletionAction::Show { shell } => {
+                handle_completions_show(*shell)?;
+            }
+        }
+        return Ok(());
+    }
+
     let mut tm = TaskManager::new()?;
 
     match cli.command {
@@ -210,15 +224,8 @@ fn run() -> Result<()> {
             }
         }
         #[cfg(feature = "completions")]
-        Some(Command::Completions { action }) => {
-            match action {
-                CompletionAction::Install { shells } => {
-                    handle_completions_install(shells)?;
-                }
-                CompletionAction::Show { shell } => {
-                    handle_completions_show(shell)?;
-                }
-            }
+        Some(Command::Completions { .. }) => {
+            unreachable!("completions are handled before TaskManager::new()");
         }
     }
 

@@ -1,10 +1,14 @@
-use crate::{Task, TaskManager, parse_cli_date, parse_cli_date_optional_empty};
+use crate::{Task, TaskManager, parse_cli_date};
+#[cfg(feature = "interactive")]
+use crate::parse_cli_date_optional_empty;
 use crate::parser::date::is_cli_date_clear_value;
 use anyhow::Result;
 use chrono::Datelike;
 use colored::*;
 
 use super::HandlerCLI;
+#[cfg(feature = "interactive")]
+use super::editor::EditorExtras;
 
 impl HandlerCLI {
     pub fn handle_add_task(
@@ -45,23 +49,93 @@ impl HandlerCLI {
     }
 
     #[cfg(feature = "interactive")]
-    fn interactive_edit_text(current: &str, task_id: u8, allow_skip: bool) -> Result<Option<String>> {
-        let prefix = format!(
-            "{} {} {}",
-            "Current text[".cyan(),
-            task_id.to_string().bright_cyan().bold(),
-            "]:".cyan()
-        );
-        Self::print_task_text_with_wrapping(&prefix, &current.bold().to_string());
-        println!(
-            "{}",
-            "Enter new text and press Enter (leave empty to keep, Tab to autocomplete from prefill):".cyan()
-        );
-        let edited = Self::interactive_line_editor("> ", current, true, None, true, allow_skip)?;
-        if edited.trim().is_empty() {
-            Ok(None)
+    fn interactive_edit_text(
+        current: &str,
+        task_id: u8,
+        task_date: Option<chrono::NaiveDate>,
+        allow_skip: bool,
+    ) -> Result<Option<(Option<chrono::NaiveDate>, String)>> {
+        let draft_dir = crate::TaskManager::get_db_dir();
+        let draft_path = Self::draft_path_for(&draft_dir);
+        let draft_key = format!("task-{}", task_id);
+
+        // Prefill embeds the task date as an editable prefix on the first line.
+        let base_prefill = if let Some(date) = task_date {
+            format!("{} {}", date.format("%d-%m-%Y"), current)
         } else {
-            Ok(Some(edited))
+            current.to_string()
+        };
+        let mut prefill_owned = base_prefill.clone();
+        if draft_path.exists() {
+            if let Some(text) = Self::read_draft_for(&draft_path, &draft_key) {
+                if text != base_prefill {
+                    let prompt = format!(
+                        "{} {} {} ",
+                        "Restore unsaved draft for task".truecolor(255, 165, 0),
+                        task_id.to_string().white(),
+                        "? [y/N]:".truecolor(255, 165, 0)
+                    );
+                    if Self::read_confirmation(&prompt)? {
+                        prefill_owned = text;
+                    } else {
+                        let _ = std::fs::remove_file(&draft_path);
+                    }
+                }
+            }
+        }
+
+        let mut extras = EditorExtras::default();
+        extras.draft_path = Some(draft_path);
+        extras.draft_key = Some(draft_key);
+
+        let edited = Self::run_multi_line_editor(
+            "    ",
+            &prefill_owned,
+            true,
+            None,
+            allow_skip,
+            extras,
+        )?;
+        if edited.trim().is_empty() {
+            return Ok(None);
+        }
+        let (parsed_date, stripped) = Self::extract_leading_date(&edited);
+        // If user removed all body text but kept the date, fall back to the
+        // original text so the task never becomes empty on a date-only edit.
+        let new_text = if stripped.trim().is_empty() {
+            current.to_string()
+        } else {
+            stripped
+        };
+        Ok(Some((parsed_date, new_text)))
+    }
+
+    #[cfg(feature = "interactive")]
+    fn extract_leading_date(edited: &str) -> (Option<chrono::NaiveDate>, String) {
+        let mut parts = edited.splitn(2, '\n');
+        let first = parts.next().unwrap_or("");
+        let rest = parts.next();
+        let token: String = first.chars().take_while(|c| !c.is_whitespace()).collect();
+        if token.is_empty() {
+            return (None, edited.to_string());
+        }
+        match parse_cli_date(&token) {
+            Ok(date) => {
+                let token_chars = token.chars().count();
+                let mut tail = first.chars().skip(token_chars);
+                // Drop exactly one separating whitespace if present.
+                let peek = tail.clone().next();
+                if matches!(peek, Some(c) if c.is_whitespace()) {
+                    tail.next();
+                }
+                let first_rest: String = tail.collect();
+                let new_text = match rest {
+                    Some(r) => format!("{}\n{}", first_rest, r),
+                    None => first_rest,
+                };
+                (Some(date), new_text)
+            }
+            Err(_) => (None, edited.to_string()),
         }
     }
 
@@ -84,25 +158,28 @@ impl HandlerCLI {
 
             if let Some(idx) = tm.find_task_by_id(*id) {
                 let current_text = tm.tasks()[idx].text.clone();
+                let current_date = tm.tasks()[idx].date;
 
-                match Self::interactive_edit_text(&current_text, *id, allow_skip) {
-                    Ok(Some(new_text)) => {
-                        if new_text != current_text {
+                match Self::interactive_edit_text(&current_text, *id, current_date, allow_skip) {
+                    Ok(Some((new_date, new_text))) => {
+                        let text_changed = new_text != current_text;
+                        let date_changed = new_date != current_date;
+                        if text_changed || date_changed {
                             let task = &mut tm.tasks_mut()[idx];
                             task.text = new_text.clone();
+                            task.date = new_date;
                             edited.push(*id);
                             edited_info.push((*id, new_text.clone()));
                             any_changed = true;
-                            let prefix = format!("{} {}: ", "Edited task:".green(), id);
-                            Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
+                            println!("{} {}", "Edited task:".green(), id);
                         } else {
                             unchanged.push(*id);
-                            Self::print_unchanged_task_message(&current_text, &edited_info);
+                            println!("{} {}", "Task unchanged:".magenta(), id);
                         }
                     }
                     Ok(None) => {
                         unchanged.push(*id);
-                        Self::print_unchanged_task_message(&current_text, &edited_info);
+                        println!("{} {}", "Task unchanged:".magenta(), id);
                     }
                     Err(e) => {
                         if Self::handle_skip_task_error(&e, *id) {
@@ -128,17 +205,17 @@ impl HandlerCLI {
                     );
                     println!(
                         "{}",
-                        "Enter new date: DD-MM-YYYY or DD/MM/YYYY (short year ok), or relative from today (2d, 2w, 10d5w, …). Leave empty to keep, _ to clear. Tab uses ghost prefill.".cyan()
+                        "Enter new date: DD-MM-YYYY or DD/MM/YYYY (short year ok), or relative from today (2d, 2w, 10d5w, …). Leave empty to keep, _ to clear. Tab restores prefill.".cyan()
                     );
                     let date_editor =
                         |s: &str| parse_cli_date(s.trim()).is_ok() || is_cli_date_clear_value(s.trim());
-                    match Self::interactive_line_editor(
+                    match Self::run_multi_line_editor(
                         "> ",
                         &current_date,
                         true,
                         Some(date_editor),
-                        true,
                         allow_skip,
+                        EditorExtras::default(),
                     ) {
                         Ok(date_input) => {
                             let trimmed = date_input.trim();
@@ -150,11 +227,7 @@ impl HandlerCLI {
                                         edited.push(*id);
                                     }
                                     any_changed = true;
-                                    let prefix = format!("{} {}: ", "Edited task:".green(), id);
-                                    Self::print_task_text_with_wrapping(
-                                        &prefix,
-                                        &task.text.bold().to_string(),
-                                    );
+                                    println!("{} {}", "Edited task:".green(), id);
                                 }
                                 println!("{} {}", "Date:".cyan(), "empty".bold());
                             } else {
@@ -168,11 +241,7 @@ impl HandlerCLI {
                                         edited.push(*id);
                                     }
                                     any_changed = true;
-                                    let prefix = format!("{} {}: ", "Edited task:".green(), id);
-                                    Self::print_task_text_with_wrapping(
-                                        &prefix,
-                                        &task.text.bold().to_string(),
-                                    );
+                                    println!("{} {}", "Edited task:".green(), id);
                                 }
                             }
                             let final_date_display = match parsed_res {

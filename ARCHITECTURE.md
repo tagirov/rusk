@@ -19,8 +19,8 @@ src/
 ├── cli/
 │   ├── mod.rs           # HandlerCLI struct, submodule declarations
 │   ├── handlers.rs      # Command handlers: add, del, mark, edit, list, restore
-│   ├── formatter.rs     # Text wrapping, ANSI stripping, terminal width detection
-│   ├── editor.rs        # Interactive line editor (crossterm), cursor/word helpers
+│   ├── formatter.rs     # Text wrapping (preserves hard line breaks), ANSI stripping, terminal width
+│   ├── editor.rs        # Interactive full-screen editor (crossterm): task text + date input
 │   └── dialogs.rs       # Confirmation prompts (crossterm raw mode)
 ├── completions.rs       # Shell completion scripts (include_str!), Shell enum
 └── windows_console.rs   # Windows ANSI support via windows-sys
@@ -72,6 +72,10 @@ completions
 
 Without `interactive`: edit commands only work with inline text (`rusk edit 1 new text`),
 delete skips confirmation. Terminal width falls back to 80 columns.
+
+With `interactive`, `rusk edit <id>` opens the full-screen editor for task text:
+`Enter` inserts a newline, `Ctrl+S` saves, `Esc` skips, `Ctrl+G` / `F1` shows in-editor help.
+The same editor is used for the date step when `--date` is set (typically one line of input).
 
 Without `completions`: `rusk completions` subcommand is unavailable.
 

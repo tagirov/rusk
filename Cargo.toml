@@ -16,7 +16,7 @@ path = "src/main.rs"
 [features]
 default = ["completions", "interactive"]
 completions = ["dep:dirs"]
-interactive = ["dep:crossterm"]
+interactive = ["dep:crossterm", "dep:arboard"]
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
@@ -27,6 +27,7 @@ chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0"
 dirs = { version = "6.0", optional = true }
 crossterm = { version = "0.29", optional = true }
+arboard = { version = "3.4", optional = true, default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_Console"] }

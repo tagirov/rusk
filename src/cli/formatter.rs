@@ -111,6 +111,25 @@ impl HandlerCLI {
             return vec![String::new()];
         }
 
+        // Preserve hard line breaks from the input, then word-wrap each source line.
+        let has_hard_breaks = text.contains('\n');
+        if has_hard_breaks {
+            let mut out: Vec<String> = Vec::new();
+            for src_line in text.split('\n') {
+                let wrapped = Self::wrap_single_line_by_words(src_line, width);
+                out.extend(wrapped);
+            }
+            if out.is_empty() {
+                vec![String::new()]
+            } else {
+                out
+            }
+        } else {
+            Self::wrap_single_line_by_words(text, width)
+        }
+    }
+
+    fn wrap_single_line_by_words(text: &str, width: usize) -> Vec<String> {
         let mut lines = Vec::new();
         let mut current_line = String::new();
 
@@ -170,21 +189,4 @@ impl HandlerCLI {
         }
     }
 
-    pub(crate) fn print_unchanged_task_message(current_text: &str, edited_info: &[(u8, String)]) {
-        let prefix = if !edited_info.is_empty() {
-            let edited_texts: Vec<String> = edited_info
-                .iter()
-                .map(|(eid, text)| format!("{eid}: {text}"))
-                .collect();
-            format!(
-                "{} {} {}",
-                "Task already has this content:".magenta(),
-                "(edited:".cyan(),
-                format!("{})", edited_texts.join(", ")).bold()
-            )
-        } else {
-            format!("{}", "Task already has this content:".magenta())
-        };
-        Self::print_task_text_with_wrapping(&prefix, &current_text.bold().to_string());
-    }
 }

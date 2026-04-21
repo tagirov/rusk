@@ -263,37 +263,6 @@ fn test_jump_next_word_with_punctuation() {
 }
 
 #[test]
-fn test_calculate_ghost_suffix_inactive() {
-    let result = HandlerCLI::calculate_ghost_suffix(false, 0, "hello");
-    assert_eq!(result, None);
-}
-
-#[test]
-fn test_calculate_ghost_suffix_cursor_at_start() {
-    let result = HandlerCLI::calculate_ghost_suffix(true, 0, "hello world");
-    assert_eq!(result, Some("hello world"));
-}
-
-#[test]
-fn test_calculate_ghost_suffix_cursor_in_middle() {
-    let result = HandlerCLI::calculate_ghost_suffix(true, 3, "hello world");
-    assert_eq!(result, Some("lo world"));
-}
-
-#[test]
-fn test_calculate_ghost_suffix_cursor_at_end() {
-    let text = "hello";
-    let result = HandlerCLI::calculate_ghost_suffix(true, text.len(), text);
-    assert_eq!(result, None);
-}
-
-#[test]
-fn test_calculate_ghost_suffix_empty_prefill() {
-    let result = HandlerCLI::calculate_ghost_suffix(true, 0, "");
-    assert_eq!(result, Some(""));
-}
-
-#[test]
 fn test_format_date_for_display_none() {
     let result = HandlerCLI::format_date_for_display(None);
     assert_eq!(result, "empty");
@@ -343,5 +312,215 @@ fn test_normalize_terminal_width_large() {
 #[test]
 fn test_normalize_terminal_width_one() {
     assert_eq!(HandlerCLI::normalize_terminal_width(1), 1);
+}
+
+// ── wrap_text_by_words with hard line breaks ────────────────────────────────
+
+#[test]
+fn test_wrap_text_by_words_preserves_newlines() {
+    let result = HandlerCLI::wrap_text_by_words("line one\nline two", 40);
+    assert_eq!(result, vec!["line one", "line two"]);
+}
+
+#[test]
+fn test_wrap_text_by_words_newlines_and_wrapping() {
+    let result = HandlerCLI::wrap_text_by_words("one two three four\nfive six", 10);
+    assert_eq!(result, vec!["one two", "three four", "five six"]);
+}
+
+#[test]
+fn test_wrap_text_by_words_blank_line_between_paragraphs() {
+    let result = HandlerCLI::wrap_text_by_words("para one\n\npara two", 20);
+    assert_eq!(result, vec!["para one", "", "para two"]);
+}
+
+#[test]
+fn test_wrap_text_by_words_trailing_newline() {
+    let result = HandlerCLI::wrap_text_by_words("hello\n", 20);
+    assert_eq!(result, vec!["hello", ""]);
+}
+
+// ── Multi-line editor helpers ───────────────────────────────────────────────
+
+#[test]
+fn test_split_multi_line_prefill_empty() {
+    let result = HandlerCLI::split_multi_line_prefill("");
+    assert!(result.is_empty());
+}
+
+#[test]
+fn test_split_multi_line_prefill_single_line() {
+    let result = HandlerCLI::split_multi_line_prefill("hello");
+    assert_eq!(result, vec!["hello".to_string()]);
+}
+
+#[test]
+fn test_split_multi_line_prefill_lf() {
+    let result = HandlerCLI::split_multi_line_prefill("a\nb\nc");
+    assert_eq!(
+        result,
+        vec!["a".to_string(), "b".to_string(), "c".to_string()]
+    );
+}
+
+#[test]
+fn test_split_multi_line_prefill_crlf_normalized() {
+    let result = HandlerCLI::split_multi_line_prefill("a\r\nb\rc\n");
+    assert_eq!(
+        result,
+        vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn test_ml_char_to_byte_ascii() {
+    assert_eq!(HandlerCLI::ml_char_to_byte("hello", 0), 0);
+    assert_eq!(HandlerCLI::ml_char_to_byte("hello", 3), 3);
+    assert_eq!(HandlerCLI::ml_char_to_byte("hello", 10), 5);
+}
+
+#[test]
+fn test_ml_char_to_byte_unicode() {
+    // "привет" — 2 bytes per char.
+    assert_eq!(HandlerCLI::ml_char_to_byte("привет", 0), 0);
+    assert_eq!(HandlerCLI::ml_char_to_byte("привет", 3), 6);
+    assert_eq!(HandlerCLI::ml_char_to_byte("привет", 6), 12);
+    assert_eq!(HandlerCLI::ml_char_to_byte("привет", 100), 12);
+}
+
+#[test]
+fn test_ml_move_left_within_line() {
+    let lines = vec!["hello".to_string(), "world".to_string()];
+    assert_eq!(HandlerCLI::ml_move_left(&lines, 0, 3), (0, 2));
+}
+
+#[test]
+fn test_ml_move_left_wraps_to_prev_line_end() {
+    let lines = vec!["hi".to_string(), "there".to_string()];
+    assert_eq!(HandlerCLI::ml_move_left(&lines, 1, 0), (0, 2));
+}
+
+#[test]
+fn test_ml_move_left_at_buffer_start_is_noop() {
+    let lines = vec!["x".to_string()];
+    assert_eq!(HandlerCLI::ml_move_left(&lines, 0, 0), (0, 0));
+}
+
+#[test]
+fn test_ml_move_right_within_line() {
+    let lines = vec!["hello".to_string()];
+    assert_eq!(HandlerCLI::ml_move_right(&lines, 0, 2), (0, 3));
+}
+
+#[test]
+fn test_ml_move_right_wraps_to_next_line_start() {
+    let lines = vec!["hi".to_string(), "there".to_string()];
+    assert_eq!(HandlerCLI::ml_move_right(&lines, 0, 2), (1, 0));
+}
+
+#[test]
+fn test_ml_move_right_at_buffer_end_is_noop() {
+    let lines = vec!["ab".to_string()];
+    assert_eq!(HandlerCLI::ml_move_right(&lines, 0, 2), (0, 2));
+}
+
+#[test]
+fn test_ml_word_left_within_line() {
+    // jump_prev_word skips the current word and stops at the start of the previous one.
+    let lines = vec!["one two three".to_string()];
+    assert_eq!(HandlerCLI::ml_word_left(&lines, 0, 10), (0, 4));
+}
+
+#[test]
+fn test_ml_word_left_jumps_to_prev_line_end() {
+    let lines = vec!["abc".to_string(), "def".to_string()];
+    assert_eq!(HandlerCLI::ml_word_left(&lines, 1, 0), (0, 3));
+}
+
+#[test]
+fn test_ml_word_right_within_line() {
+    let lines = vec!["hello world".to_string()];
+    assert_eq!(HandlerCLI::ml_word_right(&lines, 0, 0), (0, 6));
+}
+
+#[test]
+fn test_ml_word_right_jumps_to_next_line_start() {
+    let lines = vec!["abc".to_string(), "def".to_string()];
+    assert_eq!(HandlerCLI::ml_word_right(&lines, 0, 3), (1, 0));
+}
+
+#[test]
+fn test_ml_backspace_within_line() {
+    let mut lines = vec!["hello".to_string()];
+    let mut row = 0usize;
+    let mut col = 3usize;
+    HandlerCLI::ml_backspace(&mut lines, &mut row, &mut col);
+    assert_eq!(lines, vec!["helo".to_string()]);
+    assert_eq!((row, col), (0, 2));
+}
+
+#[test]
+fn test_ml_backspace_joins_lines() {
+    let mut lines = vec!["hi".to_string(), "there".to_string()];
+    let mut row = 1usize;
+    let mut col = 0usize;
+    HandlerCLI::ml_backspace(&mut lines, &mut row, &mut col);
+    assert_eq!(lines, vec!["hithere".to_string()]);
+    assert_eq!((row, col), (0, 2));
+}
+
+#[test]
+fn test_ml_backspace_at_start_is_noop() {
+    let mut lines = vec!["hi".to_string()];
+    let mut row = 0usize;
+    let mut col = 0usize;
+    HandlerCLI::ml_backspace(&mut lines, &mut row, &mut col);
+    assert_eq!(lines, vec!["hi".to_string()]);
+    assert_eq!((row, col), (0, 0));
+}
+
+#[test]
+fn test_ml_delete_within_line() {
+    let mut lines = vec!["hello".to_string()];
+    let mut col = 2usize;
+    HandlerCLI::ml_delete(&mut lines, 0, &mut col);
+    assert_eq!(lines, vec!["helo".to_string()]);
+    assert_eq!(col, 2);
+}
+
+#[test]
+fn test_ml_delete_joins_with_next_line() {
+    let mut lines = vec!["hi".to_string(), "there".to_string()];
+    let mut col = 2usize;
+    HandlerCLI::ml_delete(&mut lines, 0, &mut col);
+    assert_eq!(lines, vec!["hithere".to_string()]);
+    assert_eq!(col, 2);
+}
+
+#[test]
+fn test_ml_delete_word_left_within_line() {
+    // Using a 3-word buffer so jump_prev_word lands inside the second word,
+    // leaving the first word and the trailing space untouched.
+    let mut lines = vec!["one two three".to_string()];
+    let mut row = 0usize;
+    let mut col = 13usize;
+    HandlerCLI::ml_delete_word_left(&mut lines, &mut row, &mut col);
+    assert_eq!(lines, vec!["one ".to_string()]);
+    assert_eq!((row, col), (0, 4));
+}
+
+#[test]
+fn test_ml_delete_word_left_at_line_start_joins_with_prev() {
+    let mut lines = vec!["abc".to_string(), "def".to_string()];
+    let mut row = 1usize;
+    let mut col = 0usize;
+    HandlerCLI::ml_delete_word_left(&mut lines, &mut row, &mut col);
+    assert_eq!(lines, vec!["abcdef".to_string()]);
+    assert_eq!((row, col), (0, 3));
 }
 

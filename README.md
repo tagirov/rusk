@@ -13,7 +13,7 @@
 - [Install](#install)
 - [Usage](#usage)
   - [Working with Multiple Tasks](#working-with-multiple-tasks)
-  - [Interactive Editing](#interactive-editing)
+  - [Interactive Editor](#interactive-editor)
   - [Data Safety & Backup](#data-safety--backup)
     - [Automatic Backups](#automatic-backups)
     - [Manual Restore](#manual-restore)
@@ -152,18 +152,29 @@ rusk edit 1,2,3 Update status to completed
 rusk del 1,2,3
 ```
 
-## Interactive Editing
+## Interactive Editor
+
+The interactive multi-line editor supports selection, system clipboard,
+undo/redo, word navigation, mouse, crash-safe autosave, and a colored date
+header on the first line. Its full reference lives in
+[EDITOR.md](EDITOR.md).
 
 ```bash
-# Edit task text interactively
+# Edit task text interactively.
 rusk edit 1
 
-# Edit task text and date interactively (absolute or relative dates; empty line keeps date, _ clears it)
+# Edit text, then date.
 rusk edit 1 --date
 
-# Interactive editing of tasks in sequence
+# Edit several tasks in one session.
 rusk edit 1,2,3
 ```
+
+Quick keys: `Ctrl+S` save, `Esc` cancel (confirms if dirty), `Ctrl+G` or `F1`
+in-editor help, `Ctrl+R` restore original text, `Ctrl+Z` / `Ctrl+Y` undo /
+redo, `Ctrl+C` / `Ctrl+X` / `Ctrl+V` copy / cut / paste, `Ctrl+A` select all.
+See [EDITOR.md](EDITOR.md) for the complete list, mouse gestures, dirty-state
+confirmation, and draft recovery behaviour.
 
 
 ## Data Safety & Backup

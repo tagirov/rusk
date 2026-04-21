@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use colored::*;
 use rusk::{
-    TaskManager, cli::HandlerCLI, is_cli_date_help_value, parse_edit_args,
+    TaskManager, cli::HandlerCLI, error::AppError, is_cli_date_help_value, parse_edit_args,
     parse_flexible_ids, windows_console,
     args::{Cli, Command},
 };
@@ -31,7 +31,21 @@ fn args_have_date_then_help(args: &[String]) -> bool {
     false
 }
 
-fn main() -> Result<()> {
+fn main() {
+    match run() {
+        Ok(()) => {}
+        Err(err) => match err.downcast_ref::<AppError>() {
+            Some(AppError::UserCancel) | Some(AppError::SkipTask) => std::process::exit(0),
+            Some(AppError::UserAbort) => std::process::exit(130),
+            None => {
+                eprintln!("{}", format!("Error: {err}").red());
+                std::process::exit(1);
+            }
+        },
+    }
+}
+
+fn run() -> Result<()> {
     windows_console::enable_ansi_support();
 
     // RUSK_NO_COLORS: disable ANSI colors when set to any non-empty value
@@ -66,16 +80,6 @@ fn main() -> Result<()> {
             HandlerCLI::handle_delete_tasks(&mut tm, parsed_ids, done)?;
         }
         Some(Command::Mark { ids, priority }) => {
-            // `trailing_var_arg` on `ids` makes clap swallow flags into the Vec instead of
-            // binding them to `priority`. Recover `-p` / `--priority` manually here.
-            let mut priority = priority;
-            for arg in &ids {
-                let t = arg.trim();
-                if t == "-p" || t == "--priority" {
-                    priority = true;
-                }
-            }
-
             let filtered_ids: Vec<String> = ids.iter()
                 .filter(|arg| {
                     let trimmed = arg.trim();

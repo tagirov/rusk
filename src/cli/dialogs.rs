@@ -19,32 +19,29 @@ impl HandlerCLI {
         stdout.flush().context("Failed to flush stdout")?;
 
         loop {
-            match read()? {
-                Event::Key(KeyEvent { code, modifiers, .. }) => {
-                    match (code, modifiers) {
-                        (KeyCode::Char('y') | KeyCode::Char('Y'), _) => {
-                            disable_raw_mode().ok();
-                            println!("y");
-                            return Ok(true);
-                        }
-                        (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                            disable_raw_mode().ok();
-                            println!("\n");
-                            std::process::exit(130);
-                        }
-                        (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
-                            disable_raw_mode().ok();
-                            println!("\n");
-                            std::process::exit(0);
-                        }
-                        _ => {
-                            disable_raw_mode().ok();
-                            println!();
-                            return Ok(false);
-                        }
+            if let Event::Key(KeyEvent { code, modifiers, .. }) = read()? {
+                match (code, modifiers) {
+                    (KeyCode::Char('y') | KeyCode::Char('Y'), _) => {
+                        disable_raw_mode().ok();
+                        println!("y");
+                        return Ok(true);
+                    }
+                    (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                        disable_raw_mode().ok();
+                        println!("\n");
+                        return Err(crate::error::AppError::UserAbort.into());
+                    }
+                    (KeyCode::Char('d'), KeyModifiers::CONTROL) => {
+                        disable_raw_mode().ok();
+                        println!("\n");
+                        return Err(crate::error::AppError::UserCancel.into());
+                    }
+                    _ => {
+                        disable_raw_mode().ok();
+                        println!();
+                        return Ok(false);
                     }
                 }
-                _ => {}
             }
         }
     }

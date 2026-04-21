@@ -12,7 +12,9 @@ fn test_corrupted_database_error_message() {
   {
     "id": 1,
     "text": "Task 1",
-    "done": false
+    "date": null,
+    "done": false,
+    "priority": false
   }
 ]invalid_trailing_content"#;
 
@@ -58,7 +60,9 @@ fn test_invalid_json_structure() {
     {
       "id": 1,
       "text": "Task 1",
-      "done": false
+      "date": null,
+      "done": false,
+      "priority": false
     }
   ]
 }"#;

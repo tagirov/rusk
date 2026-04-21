@@ -48,9 +48,9 @@ fn main() {
 fn run() -> Result<()> {
     windows_console::enable_ansi_support();
 
-    // RUSK_NO_COLORS: disable ANSI colors when set to any non-empty value
+    // RUSK_NO_COLOR: disable ANSI colors when set to any non-empty value
     // (mirrors NO_COLOR semantics, which `colored` also respects on its own).
-    if std::env::var_os("RUSK_NO_COLORS").is_some_and(|v| !v.is_empty()) {
+    if std::env::var_os("RUSK_NO_COLOR").is_some_and(|v| !v.is_empty()) {
         colored::control::set_override(false);
     }
 

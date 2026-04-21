@@ -265,10 +265,10 @@ In debug mode, the `RUSK_DB` environment variable is ignored, and the database p
 
 ### Disabling Colors
 
-Set `RUSK_NO_COLORS` to any non-empty value to disable ANSI colors in all output (dialogs, task list, errors):
+Set `RUSK_NO_COLOR` to any non-empty value to disable ANSI colors in all output (dialogs, task list, errors):
 
 ```bash
-export RUSK_NO_COLORS=1
+export RUSK_NO_COLOR=1
 ```
 
 The standard `NO_COLOR` environment variable (see [no-color.org](https://no-color.org)) is also respected.

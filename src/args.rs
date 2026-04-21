@@ -16,8 +16,8 @@ Date value for -d / --date (and interactive date entry when `edit … --date` wi
 #[command(
     version,
     about,
-    after_help = "Without COMMAND, lists all tasks (same as `rusk list`).\n\nEnvironment:\n  RUSK_DB           Optional path to the tasks database file or directory.\n  RUSK_NO_COLORS    Disable ANSI colors when set to any non-empty value (NO_COLOR is also respected).\n\nShell tab completion:\n  rusk completions install <shell> [<shell> ...]\n  rusk completions show <shell>",
-    after_long_help = "Due dates: calendar form (DD-MM-YYYY) or relative (e.g. 2w, 10d5w) on add/edit. See `rusk add --help` for the full date syntax.\n\nEnvironment:\n  RUSK_DB           Optional path to the tasks database file or directory.\n  RUSK_NO_COLORS    Disable ANSI colors when set to any non-empty value (NO_COLOR is also respected).\n"
+    after_help = "Without COMMAND, lists all tasks (same as `rusk list`).\n\nEnvironment:\n  RUSK_DB           Optional path to the tasks database file or directory.\n  RUSK_NO_COLOR      Disable ANSI colors when set to any non-empty value (NO_COLOR is also respected).\n\nShell tab completion:\n  rusk completions install <shell> [<shell> ...]\n  rusk completions show <shell>",
+    after_long_help = "Due dates: calendar form (DD-MM-YYYY) or relative (e.g. 2w, 10d5w) on add/edit. See `rusk add --help` for the full date syntax.\n\nEnvironment:\n  RUSK_DB           Optional path to the tasks database file or directory.\n  RUSK_NO_COLOR      Disable ANSI colors when set to any non-empty value (NO_COLOR is also respected).\n"
 )]
 pub struct Cli {
     #[command(subcommand)]

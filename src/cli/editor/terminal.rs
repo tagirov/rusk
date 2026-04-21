@@ -73,42 +73,49 @@ pub(super) fn show_help(stdout: &mut io::Stdout) -> Result<()> {
     ];
     let hint = "(press any key to return)";
 
-    let (term_cols_u16, term_rows_u16) = size().unwrap_or((80, 24));
-    let term_cols = term_cols_u16 as usize;
-    let term_rows = term_rows_u16 as usize;
+    let paint = |stdout: &mut io::Stdout| -> Result<()> {
+        let (term_cols_u16, term_rows_u16) = size().unwrap_or((80, 24));
+        let term_cols = term_cols_u16 as usize;
+        let term_rows = term_rows_u16 as usize;
 
-    let block_height = lines.len() + 2;
-    let block_width = lines
-        .iter()
-        .map(|s| s.chars().count())
-        .max()
-        .unwrap_or(0)
-        .max(hint.chars().count());
-    let start_row = term_rows.saturating_sub(block_height) / 2;
-    let start_col = term_cols.saturating_sub(block_width) / 2;
+        let block_height = lines.len() + 2;
+        let body = &lines[2..];
+        let body_width = body
+            .iter()
+            .map(|s| s.chars().count())
+            .max()
+            .unwrap_or(0);
+        let body_start_col = term_cols.saturating_sub(body_width) / 2;
+        let start_row = term_rows.saturating_sub(block_height) / 2;
 
-    stdout.queue(Clear(ClearType::All))?;
-    for (i, line) in lines.iter().enumerate() {
-        if i == 0 {
-            let title_col = start_col
-                + block_width.saturating_sub(line.chars().count()) / 2;
-            stdout.queue(MoveTo(title_col as u16, (start_row + i) as u16))?;
-            stdout.queue(Print(line.bold()))?;
-        } else {
-            stdout.queue(MoveTo(start_col as u16, (start_row + i) as u16))?;
+        stdout.queue(Clear(ClearType::All))?;
+
+        let title = lines[0];
+        let title_col = term_cols.saturating_sub(title.chars().count()) / 2;
+        stdout.queue(MoveTo(title_col as u16, start_row as u16))?;
+        stdout.queue(Print(title.bold()))?;
+
+        for (i, line) in body.iter().enumerate() {
+            let row = start_row + 2 + i;
+            stdout.queue(MoveTo(body_start_col as u16, row as u16))?;
             stdout.queue(Print(line.truecolor(200, 200, 200)))?;
         }
-    }
-    let hint_row = start_row + lines.len() + 1;
-    let hint_col = term_cols.saturating_sub(hint.chars().count()) / 2;
-    stdout.queue(MoveTo(hint_col as u16, hint_row as u16))?;
-    stdout.queue(Print(hint.truecolor(128, 128, 128)))?;
-    stdout.flush().ok();
 
-    // Dismiss on any key Press or left mouse button Down, then drain any
-    // queued follow-up events so they never reach the editor loop.
+        let hint_row = start_row + lines.len() + 1;
+        let hint_col = term_cols.saturating_sub(hint.chars().count()) / 2;
+        stdout.queue(MoveTo(hint_col as u16, hint_row as u16))?;
+        stdout.queue(Print(hint.truecolor(128, 128, 128)))?;
+        stdout.flush().ok();
+        Ok(())
+    };
+
+    paint(stdout)?;
+
+    // Dismiss on any key Press or left mouse button Down; redraw on resize.
+    // Drain queued follow-up events so they never reach the editor loop.
     loop {
         match read()? {
+            Event::Resize(_, _) => paint(stdout)?,
             Event::Key(KeyEvent { kind: KeyEventKind::Press, .. }) => break,
             Event::Mouse(MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),

@@ -198,3 +198,69 @@ fn test_binary_mark_error_when_only_flags() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("No valid task IDs"));
 }
+
+#[test]
+fn test_binary_root_help_documents_rusk_no_colors() {
+    let out = rusk_command().args(["--help"]).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("RUSK_NO_COLORS"),
+        "root --help should document RUSK_NO_COLORS:\n{stdout}"
+    );
+}
+
+#[test]
+fn test_binary_rusk_no_colors_disables_ansi_escapes() {
+    let _guard = BIN_TEST_MUTEX.lock().unwrap();
+    setup_test_db(r#"[{"id":1,"text":"Task","date":null,"done":false}]"#);
+
+    // Force colors on via CLICOLOR_FORCE; baseline run should contain ANSI escapes.
+    let out_colored = rusk_command()
+        .env("CLICOLOR_FORCE", "1")
+        .env_remove("NO_COLOR")
+        .env_remove("RUSK_NO_COLORS")
+        .args(["mark", "--", "-"])
+        .output()
+        .unwrap();
+    let stderr_colored = String::from_utf8_lossy(&out_colored.stderr);
+    assert!(
+        stderr_colored.contains("\x1b["),
+        "baseline stderr should contain ANSI escapes when CLICOLOR_FORCE=1:\n{stderr_colored:?}"
+    );
+
+    // With RUSK_NO_COLORS=1 the same run must not contain ANSI escapes.
+    let out_plain = rusk_command()
+        .env("CLICOLOR_FORCE", "1")
+        .env_remove("NO_COLOR")
+        .env("RUSK_NO_COLORS", "1")
+        .args(["mark", "--", "-"])
+        .output()
+        .unwrap();
+    let stderr_plain = String::from_utf8_lossy(&out_plain.stderr);
+    assert!(
+        !stderr_plain.contains("\x1b["),
+        "RUSK_NO_COLORS=1 stderr must not contain ANSI escapes:\n{stderr_plain:?}"
+    );
+    assert!(stderr_plain.contains("No valid task IDs"));
+}
+
+#[test]
+fn test_binary_rusk_no_colors_empty_does_not_disable() {
+    let _guard = BIN_TEST_MUTEX.lock().unwrap();
+    setup_test_db(r#"[{"id":1,"text":"Task","date":null,"done":false}]"#);
+
+    // Empty value is treated as "not set" (NO_COLOR semantics); colors stay forced on.
+    let out = rusk_command()
+        .env("CLICOLOR_FORCE", "1")
+        .env_remove("NO_COLOR")
+        .env("RUSK_NO_COLORS", "")
+        .args(["mark", "--", "-"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("\x1b["),
+        "empty RUSK_NO_COLORS should not disable colors:\n{stderr:?}"
+    );
+}

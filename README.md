@@ -242,6 +242,16 @@ When running in debug mode (`cargo run` or debug builds), Rusk uses a temporary 
 
 In debug mode, the `RUSK_DB` environment variable is ignored, and the database path is printed to the console when the program starts.
 
+**Disabling Colors**
+
+Set `RUSK_NO_COLORS` to any non-empty value to disable ANSI colors in all output (dialogs, task list, errors):
+
+```bash
+export RUSK_NO_COLORS=1
+```
+
+The standard `NO_COLOR` environment variable (see [no-color.org](https://no-color.org)) is also respected.
+
 <br />
 
 

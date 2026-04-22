@@ -142,9 +142,8 @@ fn test_edit_tasks_clear_date_with_underscore() {
     tm.tasks = vec![create_test_task(1, "Task 1", false)];
     tm.tasks[0].date = NaiveDate::parse_from_str("01-01-2025", "%d-%m-%Y").ok();
 
-    let (edited, unchanged, not_found) = tm
-        .edit_tasks(vec![1], None, Some("_".to_string()))
-        .unwrap();
+    let (edited, unchanged, not_found) =
+        tm.edit_tasks(vec![1], None, Some("_".to_string())).unwrap();
 
     assert_eq!(edited, vec![1]);
     assert!(unchanged.is_empty());
@@ -157,9 +156,8 @@ fn test_edit_tasks_clear_date_already_empty_is_unchanged() {
     let mut tm = TaskManager::new_empty().unwrap();
     tm.tasks = vec![create_test_task(1, "Task 1", false)];
 
-    let (edited, unchanged, not_found) = tm
-        .edit_tasks(vec![1], None, Some("_".to_string()))
-        .unwrap();
+    let (edited, unchanged, not_found) =
+        tm.edit_tasks(vec![1], None, Some("_".to_string())).unwrap();
 
     assert!(edited.is_empty());
     assert_eq!(unchanged, vec![1]);

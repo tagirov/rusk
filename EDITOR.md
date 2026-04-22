@@ -164,15 +164,17 @@ key returns to the editor.
 
 The due date (if any) is **only** the first whitespace-delimited token at the
 **very start of the first line**. It may be an absolute date (`DD-MM-YYYY`,
-slashes or short year ok) or a relative offset from today (`2d`, `2w`, `10d5w`,
-`1m3q`, …), same rules as `rusk add -d`. Use `_` as the only date token to clear
+slashes or short year ok), a relative offset from today (`2d`, `2w`, `10d5w`,
+`1m3q`, …), or a relative offset from **this task's current due date** using a
+leading `+` (`+2w`, `+10d5w`, …; if the task had no due date yet, `+` uses
+today, same as `rusk add -d`). Use `_` as the only date token to clear
 the deadline. A **recognized** token is **highlighted in color** on that line
 (green for today or later, red if before today); text that does not parse as a
 date is not colored. The rest of the first line is the task title; following
 lines are the body.
 
-`rusk edit <id> -d <date>` (with a value, same as `rusk add -d`) sets the date
-without opening the TUI. **Bare** `-d` / `--date` (no value) is not supported;
+`rusk edit <id> -d <date>` (with a value; same relative rules as this first-line
+token, including leading `+`) sets the date without opening the TUI. **Bare** `-d` / `--date` (no value) is not supported;
 use the TUI to edit the first line. The interactive buffer is still the
 authoritative place for a due date: whatever appears as the first token on the
 first line (or absent). Full syntax, including relative forms, is in the

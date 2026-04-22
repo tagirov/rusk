@@ -79,7 +79,8 @@ pub(super) fn show_help(stdout: &mut io::Stdout) -> Result<()> {
         "",
         "  Due date: only the first line, at the very start, as the first",
         "    token. Absolute: DD-MM-YYYY, DD/MM/YYYY, or DD.MM.YYYY (short year",
-        "    ok), or relative from today (2d, 2w, 10d5w, …), same as rusk add -d.",
+        "    ok). Relative from today: 2d, 2w, 10d5w, … Relative from this task's",
+        "    current due date: +2w, +10d5w, … (+ uses today if there was no date).",
         "    A recognized token is shown in color on that line (green = today or",
         "    later, red = before today; invalid or non-date text is not colored).",
         "    Use `_` alone as the first token to clear. No date token = no due date;",
@@ -91,13 +92,7 @@ pub(super) fn show_help(stdout: &mut io::Stdout) -> Result<()> {
     const CHROME: usize = 4;
 
     let body: &[&str] = &lines[2..];
-    let body_width = || {
-        body
-            .iter()
-            .map(|s| s.chars().count())
-            .max()
-            .unwrap_or(0)
-    };
+    let body_width = || body.iter().map(|s| s.chars().count()).max().unwrap_or(0);
 
     let mut body_scroll: usize = 0;
     let _show_cursor = ShowCursorOnDrop;
@@ -218,7 +213,10 @@ pub(super) fn show_help(stdout: &mut io::Stdout) -> Result<()> {
                 }
                 _ => break,
             },
-            Event::Key(KeyEvent { kind: KeyEventKind::Press, .. }) => break,
+            Event::Key(KeyEvent {
+                kind: KeyEventKind::Press,
+                ..
+            }) => break,
             Event::Mouse(MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
                 ..
@@ -270,7 +268,13 @@ pub(super) fn confirm_discard(stdout: &mut io::Stdout, dialog_row: Option<u16>) 
     stdout.queue(Print(prompt.truecolor(255, 165, 0)))?;
     stdout.flush().ok();
     loop {
-        if let Event::Key(KeyEvent { code, kind, modifiers, .. }) = read()? {
+        if let Event::Key(KeyEvent {
+            code,
+            kind,
+            modifiers,
+            ..
+        }) = read()?
+        {
             if kind != KeyEventKind::Press {
                 continue;
             }

@@ -39,7 +39,15 @@ fn test_restore_from_backup() -> Result<()> {
     assert_eq!(tm.tasks.len(), 2);
     assert_eq!(tm.tasks[0].text, "Original task 1");
     assert_eq!(tm.tasks[1].text, "Original task 2");
-    assert_eq!(tm.tasks[1].date.as_ref().unwrap().format("%d-%m-%Y").to_string(), "15-01-2025");
+    assert_eq!(
+        tm.tasks[1]
+            .date
+            .as_ref()
+            .unwrap()
+            .format("%d-%m-%Y")
+            .to_string(),
+        "15-01-2025"
+    );
 
     Ok(())
 }

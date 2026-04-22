@@ -101,6 +101,7 @@ pub(crate) fn run_editor(
                 validate: validate.as_ref(),
                 selection,
                 dirty,
+                relative_date_base: extras.relative_date_base,
             },
         )
     };
@@ -151,9 +152,7 @@ pub(crate) fn run_editor(
             }
             Action::Save => {
                 let joined = state.joined();
-                if validate.is_some_and(|v| {
-                    !joined.trim().is_empty() && !v(joined.as_str())
-                }) {
+                if validate.is_some_and(|v| !joined.trim().is_empty() && !v(joined.as_str())) {
                     print!("\x07");
                     stdout.flush().ok();
                     continue;
@@ -211,7 +210,14 @@ impl HandlerCLI {
         allow_skip: bool,
         extras: EditorExtras,
     ) -> Result<String> {
-        run_editor(prompt, prefill, cursor_at_start, validate, allow_skip, extras)
+        run_editor(
+            prompt,
+            prefill,
+            cursor_at_start,
+            validate,
+            allow_skip,
+            extras,
+        )
     }
 
     #[cfg(feature = "interactive")]

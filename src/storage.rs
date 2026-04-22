@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 use crate::model::Task;
-use crate::parse_cli_date;
+use crate::parse_cli_date_for_edit;
 use crate::parser::date::is_cli_date_clear_value;
 
 pub type MarkResult = (Vec<(u8, bool)>, Vec<u8>);
@@ -114,7 +114,10 @@ struct DbReporter {
 
 impl Drop for DbReporter {
     fn drop(&mut self) {
-        eprintln!("{}", format!("Database path: {}", self.path.display()).blue());
+        eprintln!(
+            "{}",
+            format!("Database path: {}", self.path.display()).blue()
+        );
     }
 }
 
@@ -137,7 +140,9 @@ impl TaskManager {
     fn maybe_log_db_path(path: &std::path::Path) {
         static REPORTER: OnceLock<DbReporter> = OnceLock::new();
         if Self::is_test_mode() {
-            let _ = REPORTER.get_or_init(|| DbReporter { path: path.to_path_buf() });
+            let _ = REPORTER.get_or_init(|| DbReporter {
+                path: path.to_path_buf(),
+            });
         } else if cfg!(debug_assertions) {
             eprintln!("{}", format!("Database path: {}", path.display()).blue());
         }
@@ -175,7 +180,10 @@ impl TaskManager {
 
         if cfg!(debug_assertions) && !Self::is_test_mode() && tasks.is_empty() {
             tasks = Self::create_sample_tasks();
-            let tm = Self { tasks, db_path: db_path.clone() };
+            let tm = Self {
+                tasks,
+                db_path: db_path.clone(),
+            };
             tm.save()?;
             return Ok(tm);
         }
@@ -231,7 +239,7 @@ impl TaskManager {
 
         let date = match date {
             None => None,
-            Some(d) => Some(parse_cli_date(&d)?),
+            Some(d) => Some(parse_cli_date_for_edit(&d, None)?),
         };
         let id = self.generate_next_id()?;
 
@@ -358,7 +366,7 @@ impl TaskManager {
                             was_changed = true;
                         }
                     } else {
-                        let parsed_date = parse_cli_date(new_date)?;
+                        let parsed_date = parse_cli_date_for_edit(new_date, task.date)?;
                         if task.date != Some(parsed_date) {
                             task.date = Some(parsed_date);
                             was_changed = true;

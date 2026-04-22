@@ -39,7 +39,9 @@ pub(super) fn handle_key(
     if ev.kind != KeyEventKind::Press {
         return Ok(Action::Continue);
     }
-    let KeyEvent { code, modifiers, .. } = ev;
+    let KeyEvent {
+        code, modifiers, ..
+    } = ev;
     let shift = modifiers.contains(KeyModifiers::SHIFT);
     let ctrl = modifiers.contains(KeyModifiers::CONTROL);
     let alt = modifiers.contains(KeyModifiers::ALT);
@@ -319,7 +321,12 @@ pub(super) fn handle_mouse(
     click_tracker: &mut ClickTracker,
     ctx: &EditorContext<'_>,
 ) -> Result<Action> {
-    let MouseEvent { kind, column, row: mrow, modifiers } = ev;
+    let MouseEvent {
+        kind,
+        column,
+        row: mrow,
+        modifiers,
+    } = ev;
     let shift = modifiers.contains(KeyModifiers::SHIFT);
     let vw = view::visible_width(ctx.prompt_width);
     let content_left = view::content_left(ctx.prompt_width);

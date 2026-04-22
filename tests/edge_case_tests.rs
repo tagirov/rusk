@@ -336,8 +336,11 @@ fn test_edge_case_delete_all_tasks() {
 fn test_edge_case_edit_with_same_values() {
     let mut tm = TaskManager::new_empty().unwrap();
 
-    tm.add_task(vec!["Original text".to_string()], Some("01-01-2025".to_string()))
-        .unwrap();
+    tm.add_task(
+        vec!["Original text".to_string()],
+        Some("01-01-2025".to_string()),
+    )
+    .unwrap();
 
     // Edit with same text and date
     let (edited, unchanged, not_found) = tm
@@ -418,7 +421,11 @@ fn test_edge_case_edit_empty_task_list() {
 
     // Try to edit tasks when list is empty
     let (edited, unchanged, not_found) = tm
-        .edit_tasks(vec![1, 2], Some(vec!["New".to_string(), "text".to_string()]), None)
+        .edit_tasks(
+            vec![1, 2],
+            Some(vec!["New".to_string(), "text".to_string()]),
+            None,
+        )
         .unwrap();
 
     assert_eq!(edited, vec![] as Vec<u8>);

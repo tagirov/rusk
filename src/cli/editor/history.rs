@@ -36,8 +36,7 @@ impl History {
     /// Push `snap` onto the undo stack unless this op should be coalesced
     /// with the previous one (consecutive single-char edits of the same kind).
     pub fn record(&mut self, snap: Snapshot, op: OpKind) {
-        let coalesce =
-            matches!(op, OpKind::InsertChar | OpKind::Backspace) && self.last == op;
+        let coalesce = matches!(op, OpKind::InsertChar | OpKind::Backspace) && self.last == op;
         if !coalesce {
             self.undo.push(snap);
             if self.undo.len() > self.cap {
@@ -151,4 +150,3 @@ mod tests {
         assert!(h.redo(snap("ay")).is_none());
     }
 }
-

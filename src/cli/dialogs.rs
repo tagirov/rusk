@@ -19,7 +19,10 @@ impl HandlerCLI {
         stdout.flush().context("Failed to flush stdout")?;
 
         loop {
-            if let Event::Key(KeyEvent { code, modifiers, .. }) = read()? {
+            if let Event::Key(KeyEvent {
+                code, modifiers, ..
+            }) = read()?
+            {
                 match (code, modifiers) {
                     (KeyCode::Char('y') | KeyCode::Char('Y'), _) => {
                         disable_raw_mode().ok();
@@ -67,7 +70,8 @@ impl HandlerCLI {
         let last_line_width = last_line.chars().count();
         let space_needed_for_prompt = prompt_width;
 
-        let prompt_fits_on_last_line = last_line_width + space_needed_for_prompt <= available_width_for_text;
+        let prompt_fits_on_last_line =
+            last_line_width + space_needed_for_prompt <= available_width_for_text;
 
         println!(
             "{}{}{}{}",

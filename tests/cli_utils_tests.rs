@@ -1,5 +1,5 @@
-use rusk::cli::HandlerCLI;
 use chrono::NaiveDate;
+use rusk::cli::HandlerCLI;
 
 #[test]
 fn test_wrap_text_by_words_empty() {
@@ -323,12 +323,18 @@ fn test_trim_trailing_punctuation_basic() {
 
 #[test]
 fn test_trim_trailing_punctuation_preserves_underscore() {
-    assert_eq!(HandlerCLI::trim_trailing_punctuation("snake_case"), "snake_case");
+    assert_eq!(
+        HandlerCLI::trim_trailing_punctuation("snake_case"),
+        "snake_case"
+    );
 }
 
 #[test]
 fn test_trim_first_line_for_compact_list_spaces() {
-    assert_eq!(HandlerCLI::trim_first_line_for_compact_list("hello. "), "hello");
+    assert_eq!(
+        HandlerCLI::trim_first_line_for_compact_list("hello. "),
+        "hello"
+    );
     assert_eq!(HandlerCLI::trim_first_line_for_compact_list("a . "), "a");
 }
 
@@ -565,4 +571,3 @@ fn test_ml_delete_word_left_at_line_start_joins_with_prev() {
     assert_eq!(lines, vec!["abcdef".to_string()]);
     assert_eq!((row, col), (0, 3));
 }
-

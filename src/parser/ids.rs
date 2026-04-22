@@ -7,7 +7,9 @@ pub struct BareEditDateFlag;
 /// `rusk edit 1 -d -h` is handled as help, not an error, before this runs.
 /// Returns [`BareEditDateFlag`] when the flag has no value or the next token starts with `-` (a flag)
 /// and is not a date string.
-pub fn strip_edit_date_flag(args: Vec<String>) -> Result<(Vec<String>, Option<String>), BareEditDateFlag> {
+pub fn strip_edit_date_flag(
+    args: Vec<String>,
+) -> Result<(Vec<String>, Option<String>), BareEditDateFlag> {
     let mut out = Vec::with_capacity(args.len());
     let mut i = 0;
     let mut last_date: Option<String> = None;

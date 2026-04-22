@@ -71,7 +71,10 @@ fn test_binary_mark_help_after_id_leaves_db_unchanged() {
     setup_test_db(db);
 
     let out = rusk_command().args(["mark", "1", "-h"]).output().unwrap();
-    assert!(out.status.success(), "mark 1 -h should print help and exit 0");
+    assert!(
+        out.status.success(),
+        "mark 1 -h should print help and exit 0"
+    );
 
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
@@ -154,7 +157,10 @@ fn test_binary_edit_trailing_help_after_id() {
         let out = rusk_command().args(args).output().unwrap();
         assert!(out.status.success(), "args={args:?}");
         let stdout = String::from_utf8_lossy(&out.stdout);
-        assert!(stdout.contains("Edit tasks"), "args={args:?} stdout={stdout}");
+        assert!(
+            stdout.contains("Edit tasks"),
+            "args={args:?} stdout={stdout}"
+        );
     }
 }
 
@@ -164,9 +170,35 @@ fn test_binary_edit_help_includes_relative_date_syntax() {
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.to_lowercase().contains("relative") && stdout.contains("first line"),
-        "edit long help should document relative + absolute dates and first-line due date:\n{stdout}"
+        stdout.to_lowercase().contains("relative")
+            && stdout.contains("first line")
+            && stdout.contains("leading `+`")
+            && stdout.contains("current due date"),
+        "edit long help should document relative, + from current due date, and first line:\n{stdout}"
     );
+}
+
+#[test]
+fn test_binary_edit_plus_relative_from_existing_date() {
+    let _guard = BIN_TEST_MUTEX.lock().unwrap();
+
+    let db = r#"[
+        {"id":1,"text":"Task","date":"2025-06-01","done":false,"priority":false}
+    ]"#;
+    setup_test_db(db);
+
+    let out = rusk_command()
+        .args(["edit", "1", "-d", "+1w"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "edit -d +1w should succeed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let db_after: Vec<serde_json::Value> = serde_json::from_str(&read_db()).unwrap();
+    assert_eq!(db_after[0]["date"], "2025-06-08");
 }
 
 #[test]
@@ -278,7 +310,10 @@ fn test_binary_mark_priority_toggles_and_preserves_across_done() {
     assert_eq!(db[0]["priority"], true);
     assert_eq!(db[0]["done"], false);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("priority"), "stdout should mention priority:\n{stdout}");
+    assert!(
+        stdout.contains("priority"),
+        "stdout should mention priority:\n{stdout}"
+    );
 
     // `rusk m 1` → done=true, priority preserved.
     rusk_command().args(["mark", "1"]).output().unwrap();

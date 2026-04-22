@@ -2,12 +2,15 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use colored::*;
 use rusk::{
-    BareEditDateFlag, TaskManager, cli::HandlerCLI, error::AppError, is_cli_date_help_value,
-    parse_edit_args, parse_flexible_ids, strip_edit_date_flag, windows_console,
+    BareEditDateFlag, TaskManager,
     args::{Cli, Command},
+    cli::HandlerCLI,
+    error::AppError,
+    is_cli_date_help_value, parse_edit_args, parse_flexible_ids, strip_edit_date_flag,
+    windows_console,
 };
 #[cfg(feature = "completions")]
-use rusk::{completions::Shell, args::CompletionAction};
+use rusk::{args::CompletionAction, completions::Shell};
 
 fn print_subcommand_help(name: &str) -> anyhow::Result<()> {
     let mut cmd = Cli::command();
@@ -90,7 +93,8 @@ fn run() -> Result<()> {
             }
         }
         Some(Command::Del { ids, done }) => {
-            let filtered_ids: Vec<String> = ids.iter()
+            let filtered_ids: Vec<String> = ids
+                .iter()
                 .filter(|arg| !arg.trim_start().starts_with('-'))
                 .cloned()
                 .collect();
@@ -99,7 +103,8 @@ fn run() -> Result<()> {
             HandlerCLI::handle_delete_tasks(&mut tm, parsed_ids, done)?;
         }
         Some(Command::Mark { ids, priority }) => {
-            let filtered_ids: Vec<String> = ids.iter()
+            let filtered_ids: Vec<String> = ids
+                .iter()
                 .filter(|arg| {
                     let trimmed = arg.trim();
                     !trimmed.starts_with('-')
@@ -124,10 +129,7 @@ fn run() -> Result<()> {
                 print_subcommand_help("edit")?;
                 return Ok(());
             }
-            if args
-                .last()
-                .is_some_and(|a| is_cli_date_help_value(a))
-            {
+            if args.last().is_some_and(|a| is_cli_date_help_value(a)) {
                 print_subcommand_help("edit")?;
                 return Ok(());
             }
@@ -173,7 +175,9 @@ fn run() -> Result<()> {
                         std::process::exit(1);
                     }
                 }
-                (Some(text), None) => HandlerCLI::handle_edit_tasks(&mut tm, ids, Some(text), None)?,
+                (Some(text), None) => {
+                    HandlerCLI::handle_edit_tasks(&mut tm, ids, Some(text), None)?
+                }
             }
         }
         Some(Command::List {
@@ -251,7 +255,11 @@ fn handle_completions_install(shells: Vec<Shell>) -> Result<()> {
     for (idx, (shell, path)) in installed_paths.iter().enumerate() {
         let instructions = shell.get_instructions(path);
         if shells_count > 1 {
-            println!("{} {}:", "Setup instructions for".cyan(), shell_name(shell).cyan().bold());
+            println!(
+                "{} {}:",
+                "Setup instructions for".cyan(),
+                shell_name(shell).cyan().bold()
+            );
         }
         println!("{}", instructions.cyan());
         if idx < installed_paths.len() - 1 {
@@ -270,7 +278,8 @@ fn shell_name(shell: &Shell) -> String {
         Shell::Fish => "Fish",
         Shell::Nu => "Nu Shell",
         Shell::PowerShell => "PowerShell",
-    }.to_string()
+    }
+    .to_string()
 }
 
 #[cfg(feature = "completions")]

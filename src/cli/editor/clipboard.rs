@@ -6,7 +6,9 @@ pub(super) struct EditorClipboard {
 
 impl EditorClipboard {
     pub fn new() -> Self {
-        Self { internal: String::new() }
+        Self {
+            internal: String::new(),
+        }
     }
 
     pub fn copy(&mut self, text: &str) {

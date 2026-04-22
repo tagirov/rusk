@@ -34,7 +34,7 @@ impl Shell {
     pub fn get_default_path(&self) -> Result<std::path::PathBuf, anyhow::Error> {
         let home = dirs::home_dir()
             .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
-        
+
         let path = match self {
             Shell::Bash => {
                 // Prefer user-specific location (doesn't require root)
@@ -47,7 +47,10 @@ impl Shell {
             }
             Shell::Fish => {
                 // Works on Unix/Linux, macOS, and WSL with Fish
-                home.join(".config").join("fish").join("completions").join("rusk.fish")
+                home.join(".config")
+                    .join("fish")
+                    .join("completions")
+                    .join("rusk.fish")
             }
             Shell::Nu => {
                 // Works on Unix/Linux, macOS, Windows, and WSL
@@ -58,12 +61,19 @@ impl Shell {
                     if let Some(appdata) = dirs::config_dir() {
                         appdata.join("nushell").join("completions").join("rusk.nu")
                     } else {
-                        home.join("AppData").join("Roaming").join("nushell").join("completions").join("rusk.nu")
+                        home.join("AppData")
+                            .join("Roaming")
+                            .join("nushell")
+                            .join("completions")
+                            .join("rusk.nu")
                     }
                 }
                 #[cfg(not(windows))]
                 {
-                    home.join(".config").join("nushell").join("completions").join("rusk.nu")
+                    home.join(".config")
+                        .join("nushell")
+                        .join("completions")
+                        .join("rusk.nu")
                 }
             }
             Shell::PowerShell => {
@@ -74,17 +84,21 @@ impl Shell {
                     if let Some(documents) = dirs::document_dir() {
                         documents.join("PowerShell").join("rusk-completions.ps1")
                     } else {
-                        home.join("Documents").join("PowerShell").join("rusk-completions.ps1")
+                        home.join("Documents")
+                            .join("PowerShell")
+                            .join("rusk-completions.ps1")
                     }
                 }
                 #[cfg(not(windows))]
                 {
                     // On Unix/Linux/macOS with PowerShell Core
-                    home.join(".config").join("powershell").join("rusk-completions.ps1")
+                    home.join(".config")
+                        .join("powershell")
+                        .join("rusk-completions.ps1")
                 }
             }
         };
-        
+
         Ok(path)
     }
 
@@ -132,4 +146,3 @@ impl Shell {
         }
     }
 }
-

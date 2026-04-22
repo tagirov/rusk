@@ -119,4 +119,3 @@ fn test_parse_flexible_ids_empty_parts_with_spaces() {
     let ids = parse_flexible_ids(&["1, ,3".to_string()]);
     assert_eq!(ids, vec![1, 3]);
 }
-

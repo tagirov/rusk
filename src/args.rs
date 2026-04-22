@@ -15,10 +15,11 @@ Date value for -d / --date (see `rusk add --help`):
 pub const EDIT_SUBCOMMAND_LONG_HELP: &str = "\
 Interactive edit (`rusk edit <id>`) uses the TUI: the due date (if any) is only the \
 first whitespace-delimited token at the start of the first line of the task text \
-(absolute, relative, or `_` to clear). A valid date token is highlighted in color; \
+(absolute, relative from today, leading `+` on a relative offset from the task's \
+current due date — today if none — or `_` to clear). A valid date token is highlighted in color; \
 see Ctrl+G / F1 in the editor for the full date syntax. \
 One-shot date or text+date without opening the TUI: `rusk edit <id> -d <date>` (same \
-values as `rusk add -d`; `_` clears). Bare `-d` / `--date` (no value) is not \
+relative rules as in the TUI; `_` clears). Bare `-d` / `--date` (no value) is not \
 supported. For new tasks, use `rusk add -d`.\n";
 
 #[derive(Parser)]
@@ -44,7 +45,13 @@ pub enum Command {
     Add {
         #[arg(value_name = "TEXT", help = "Task text (one or more words)")]
         text: Vec<String>,
-        #[arg(short, long, value_name = "DATE", allow_hyphen_values = true, help = "Due date: DD-MM-YYYY (slashes/dots ok, 1-7-25 ok), or relative from today (2d, 3q, 10d5w, …). See `rusk add --help` for full syntax. Pass `-d -h` for this command's help")]
+        #[arg(
+            short,
+            long,
+            value_name = "DATE",
+            allow_hyphen_values = true,
+            help = "Due date: DD-MM-YYYY (slashes/dots ok, 1-7-25 ok), or relative from today (2d, 3q, 10d5w, …). See `rusk add --help` for full syntax. Pass `-d -h` for this command's help"
+        )]
         date: Option<String>,
     },
     #[command(
@@ -53,7 +60,11 @@ pub enum Command {
         help_template = "{about-section}\n\nUsage: rusk del [OPTIONS] [IDS]...\n\n{all-args}"
     )]
     Del {
-        #[arg(trailing_var_arg = true, value_name = "IDS", help = "Task IDs: comma-separated (e.g. 1,2,3); without commas only the first ID is used")]
+        #[arg(
+            trailing_var_arg = true,
+            value_name = "IDS",
+            help = "Task IDs: comma-separated (e.g. 1,2,3); without commas only the first ID is used"
+        )]
         ids: Vec<String>,
         #[arg(long, help = "Delete all completed tasks (ignores IDS)")]
         done: bool,
@@ -63,9 +74,16 @@ pub enum Command {
         about = "Toggle task completion by ID, or priority with -p (orange `p` instead of `•`). Examples: rusk mark 3; rusk mark 1,2,3; rusk mark 1 -p"
     )]
     Mark {
-        #[arg(short, long, help = "Toggle the priority flag instead of the done flag. Priority is preserved across done/undone toggles")]
+        #[arg(
+            short,
+            long,
+            help = "Toggle the priority flag instead of the done flag. Priority is preserved across done/undone toggles"
+        )]
         priority: bool,
-        #[arg(value_name = "IDS", help = "Task IDs: comma-separated (e.g. 1,2,3); without commas only the first ID is used")]
+        #[arg(
+            value_name = "IDS",
+            help = "Task IDs: comma-separated (e.g. 1,2,3); without commas only the first ID is used"
+        )]
         ids: Vec<String>,
     },
     #[command(
@@ -75,7 +93,12 @@ pub enum Command {
         after_long_help = EDIT_SUBCOMMAND_LONG_HELP
     )]
     Edit {
-        #[arg(trailing_var_arg = true, allow_hyphen_values = false, value_name = "ARGS", help = "Task IDs (comma-separated) followed by optional new text. Without text, opens the interactive editor")]
+        #[arg(
+            trailing_var_arg = true,
+            allow_hyphen_values = false,
+            value_name = "ARGS",
+            help = "Task IDs (comma-separated) followed by optional new text. Without text, opens the interactive editor"
+        )]
         args: Vec<String>,
     },
     #[command(
@@ -111,7 +134,9 @@ pub enum Command {
 #[cfg(feature = "completions")]
 #[derive(Subcommand)]
 pub enum CompletionAction {
-    #[command(about = "Install completions for one or more shells (bash, zsh, fish, nu, powershell)")]
+    #[command(
+        about = "Install completions for one or more shells (bash, zsh, fish, nu, powershell)"
+    )]
     Install {
         #[arg(value_enum, required = true, num_args = 1.., value_name = "SHELL", help = "One or more target shells")]
         shells: Vec<Shell>,

@@ -19,7 +19,11 @@ impl HandlerCLI {
     pub fn normalize_terminal_width(raw: u16) -> usize {
         const DEFAULT_WIDTH: usize = 80;
         let w = raw as usize;
-        if w == 0 { DEFAULT_WIDTH } else { w.min(DEFAULT_WIDTH) }
+        if w == 0 {
+            DEFAULT_WIDTH
+        } else {
+            w.min(DEFAULT_WIDTH)
+        }
     }
 
     #[doc(hidden)]
@@ -35,7 +39,9 @@ impl HandlerCLI {
 
         let text_plain = Self::strip_ansi_codes(text);
         let (ansi_prefix, ansi_suffix) = Self::extract_ansi_codes(text);
-        let available_width = max_line_width.saturating_sub(LEFT_MARGIN).saturating_sub(RIGHT_MARGIN);
+        let available_width = max_line_width
+            .saturating_sub(LEFT_MARGIN)
+            .saturating_sub(RIGHT_MARGIN);
         let wrapped_lines_plain = Self::wrap_text_by_words(&text_plain, available_width);
 
         println!("{}", prefix);
@@ -266,5 +272,4 @@ impl HandlerCLI {
             println!("{} {}", "Tasks not found IDs:".yellow(), list);
         }
     }
-
 }

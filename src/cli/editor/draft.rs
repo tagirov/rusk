@@ -16,6 +16,8 @@ pub struct EditorExtras {
     pub draft_path: Option<PathBuf>,
     /// Identifier written alongside the draft content.
     pub draft_key: Option<String>,
+    /// Task due date before edit: first-line tokens starting with `+` resolve relative to this.
+    pub relative_date_base: Option<chrono::NaiveDate>,
 }
 
 /// Periodic autosave tick. Call once per event-loop iteration; the function
@@ -27,7 +29,9 @@ pub(super) fn tick(
     last_saved: &mut String,
     last_autosave: &mut Instant,
 ) {
-    let Some(draft_path) = &extras.draft_path else { return };
+    let Some(draft_path) = &extras.draft_path else {
+        return;
+    };
     if last_autosave.elapsed() < Duration::from_millis(AUTOSAVE_INTERVAL_MS) {
         return;
     }

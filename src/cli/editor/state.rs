@@ -521,4 +521,3 @@ mod tests {
         assert_eq!((s.row, s.col), (0, 0));
     }
 }
-

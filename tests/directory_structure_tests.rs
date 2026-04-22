@@ -18,11 +18,14 @@ fn test_default_directory_structure() -> Result<()> {
 
     // In test mode, should use /tmp/rusk_debug/tasks.json (same as debug mode)
     assert!(db_path.file_name().unwrap() == "tasks.json");
-    
+
     // Parent directory should be "rusk_debug" (from /tmp/rusk_debug/tasks.json)
     let parent = db_path.parent().unwrap();
     let parent_name = parent.file_name().unwrap().to_string_lossy();
-    assert_eq!(parent_name, "rusk_debug", "Expected parent directory to be 'rusk_debug', got '{parent_name}'");
+    assert_eq!(
+        parent_name, "rusk_debug",
+        "Expected parent directory to be 'rusk_debug', got '{parent_name}'"
+    );
 
     Ok(())
 }
@@ -148,7 +151,7 @@ fn test_restore_files_in_custom_directory() -> Result<()> {
 #[test]
 fn test_get_db_dir_function() -> Result<()> {
     let temp_dir = TempDir::new()?;
-    
+
     // In test mode, RUSK_DB is ignored, so it should always use /tmp/rusk_debug/tasks.json
     // Even if RUSK_DB is set, it will be ignored
     unsafe {

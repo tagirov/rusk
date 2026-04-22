@@ -8,57 +8,97 @@ use tempfile::TempDir;
 #[test]
 fn test_nu_completion_script_structure() {
     let script = Shell::Nu.get_script();
-    
+
     // Check for main export function
-    assert!(script.contains("export def rusk-completions-main"), 
-        "Script should export main completion function");
-    
+    assert!(
+        script.contains("export def rusk-completions-main"),
+        "Script should export main completion function"
+    );
+
     // Check for all command completion functions
-    assert!(script.contains("def complete-add"), 
-        "Script should have complete-add function");
-    assert!(script.contains("def complete-edit"), 
-        "Script should have complete-edit function");
-    assert!(script.contains("def complete-mark-del"), 
-        "Script should have complete-mark-del function");
-    assert!(script.contains("def complete-list-restore"), 
-        "Script should have complete-list-restore function");
-    assert!(script.contains("def get-list-flags"), 
-        "Script should have get-list-flags for list -f/--first-line");
-    assert!(script.contains("def complete-completions"), 
-        "Script should have complete-completions function");
-    
+    assert!(
+        script.contains("def complete-add"),
+        "Script should have complete-add function"
+    );
+    assert!(
+        script.contains("def complete-edit"),
+        "Script should have complete-edit function"
+    );
+    assert!(
+        script.contains("def complete-mark-del"),
+        "Script should have complete-mark-del function"
+    );
+    assert!(
+        script.contains("def complete-list-restore"),
+        "Script should have complete-list-restore function"
+    );
+    assert!(
+        script.contains("def get-list-flags"),
+        "Script should have get-list-flags for list -f/--first-line"
+    );
+    assert!(
+        script.contains("def complete-completions"),
+        "Script should have complete-completions function"
+    );
+
     // Check for utility functions
-    assert!(script.contains("def get-task-ids"), 
-        "Script should have get-task-ids function");
-    assert!(script.contains("def get-task-text"), 
-        "Script should have get-task-text function");
-    
+    assert!(
+        script.contains("def get-task-ids"),
+        "Script should have get-task-ids function"
+    );
+    assert!(
+        script.contains("def get-task-text"),
+        "Script should have get-task-text function"
+    );
+
     // Check for constant functions
-    assert!(script.contains("def get-commands"), 
-        "Script should have get-commands function");
-    assert!(script.contains("def get-common-flags"), 
-        "Script should have get-common-flags function");
-    assert!(script.contains("def get-date-flags"), 
-        "Script should have get-date-flags function");
+    assert!(
+        script.contains("def get-commands"),
+        "Script should have get-commands function"
+    );
+    assert!(
+        script.contains("def get-common-flags"),
+        "Script should have get-common-flags function"
+    );
+    assert!(
+        script.contains("def get-date-flags"),
+        "Script should have get-date-flags function"
+    );
 }
 
 /// Test that Nu Shell completion script contains all commands from help
 #[test]
 fn test_nu_completion_has_all_commands() {
     let script = Shell::Nu.get_script();
-    
+
     // Commands from rusk -h
-    let commands = vec!["add", "edit", "mark", "del", "list", "restore", "completions"];
+    let commands = vec![
+        "add",
+        "edit",
+        "mark",
+        "del",
+        "list",
+        "restore",
+        "completions",
+    ];
     for cmd in commands {
-        assert!(script.contains(&format!("\"{}\"", cmd)) || script.contains(&format!("value: \"{}\"", cmd)),
-            "Script should contain command: {}", cmd);
+        assert!(
+            script.contains(&format!("\"{}\"", cmd))
+                || script.contains(&format!("value: \"{}\"", cmd)),
+            "Script should contain command: {}",
+            cmd
+        );
     }
-    
+
     // Aliases
     let aliases = vec!["a", "e", "m", "d", "l", "r", "c"];
     for alias in aliases {
-        assert!(script.contains(&format!("\"{}\"", alias)) || script.contains(&format!("value: \"{}\"", alias)),
-            "Script should contain alias: {}", alias);
+        assert!(
+            script.contains(&format!("\"{}\"", alias))
+                || script.contains(&format!("value: \"{}\"", alias)),
+            "Script should contain alias: {}",
+            alias
+        );
     }
 }
 
@@ -66,46 +106,68 @@ fn test_nu_completion_has_all_commands() {
 #[test]
 fn test_nu_completion_has_all_flags() {
     let script = Shell::Nu.get_script();
-    
+
     // Common flags
-    assert!(script.contains("--help") || script.contains("\"--help\""), 
-        "Script should contain --help flag");
-    assert!(script.contains("-h") || script.contains("\"-h\""), 
-        "Script should contain -h flag");
-    
+    assert!(
+        script.contains("--help") || script.contains("\"--help\""),
+        "Script should contain --help flag"
+    );
+    assert!(
+        script.contains("-h") || script.contains("\"-h\""),
+        "Script should contain -h flag"
+    );
+
     // Version flags
-    assert!(script.contains("--version") || script.contains("\"--version\""), 
-        "Script should contain --version flag");
-    assert!(script.contains("-V") || script.contains("\"-V\""), 
-        "Script should contain -V flag");
-    
+    assert!(
+        script.contains("--version") || script.contains("\"--version\""),
+        "Script should contain --version flag"
+    );
+    assert!(
+        script.contains("-V") || script.contains("\"-V\""),
+        "Script should contain -V flag"
+    );
+
     // Date flags
-    assert!(script.contains("--date") || script.contains("\"--date\""), 
-        "Script should contain --date flag");
-    assert!(script.contains("-d") || script.contains("\"-d\""), 
-        "Script should contain -d flag");
-    
+    assert!(
+        script.contains("--date") || script.contains("\"--date\""),
+        "Script should contain --date flag"
+    );
+    assert!(
+        script.contains("-d") || script.contains("\"-d\""),
+        "Script should contain -d flag"
+    );
+
     // Done flag for del command
-    assert!(script.contains("--done") || script.contains("\"--done\""), 
-        "Script should contain --done flag");
+    assert!(
+        script.contains("--done") || script.contains("\"--done\""),
+        "Script should contain --done flag"
+    );
 }
 
 /// Test that Nu Shell completion script handles completions subcommands
 #[test]
 fn test_nu_completion_has_completions_subcommands() {
     let script = Shell::Nu.get_script();
-    
+
     // Subcommands
-    assert!(script.contains("install") || script.contains("\"install\""), 
-        "Script should contain install subcommand");
-    assert!(script.contains("show") || script.contains("\"show\""), 
-        "Script should contain show subcommand");
-    
+    assert!(
+        script.contains("install") || script.contains("\"install\""),
+        "Script should contain install subcommand"
+    );
+    assert!(
+        script.contains("show") || script.contains("\"show\""),
+        "Script should contain show subcommand"
+    );
+
     // Shells
     let shells = vec!["bash", "zsh", "fish", "nu", "powershell"];
     for shell in shells {
-        assert!(script.contains(&format!("\"{}\"", shell)) || script.contains(&format!("value: \"{}\"", shell)),
-            "Script should contain shell: {}", shell);
+        assert!(
+            script.contains(&format!("\"{}\"", shell))
+                || script.contains(&format!("value: \"{}\"", shell)),
+            "Script should contain shell: {}",
+            shell
+        );
     }
 }
 
@@ -116,26 +178,26 @@ fn test_nu_completion_syntax() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let script_path = temp_dir.path().join("rusk.nu");
     fs::write(&script_path, script)?;
-    
+
     // Try to parse the script using nu
     // We use -c with a command that attempts to load the script
     let check_command = format!(
         r#"try {{ use {} *; exit 0 }} catch {{ |err| echo $err; exit 1 }}"#,
         script_path.to_string_lossy()
     );
-    
-    let output = Command::new("nu")
-        .arg("-c")
-        .arg(&check_command)
-        .output();
-    
+
+    let output = Command::new("nu").arg("-c").arg(&check_command).output();
+
     // Nu might not be installed, so we skip the test if command not found
     match output {
         Ok(result) => {
             if !result.status.success() {
                 let stderr = String::from_utf8_lossy(&result.stderr);
                 let stdout = String::from_utf8_lossy(&result.stdout);
-                panic!("Nu syntax check failed:\nSTDERR: {}\nSTDOUT: {}", stderr, stdout);
+                panic!(
+                    "Nu syntax check failed:\nSTDERR: {}\nSTDOUT: {}",
+                    stderr, stdout
+                );
             }
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -145,7 +207,7 @@ fn test_nu_completion_syntax() -> Result<()> {
         }
         Err(e) => return Err(e.into()),
     }
-    
+
     Ok(())
 }
 
@@ -156,18 +218,15 @@ fn test_nu_completion_main_function() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let script_path = temp_dir.path().join("rusk.nu");
     fs::write(&script_path, script)?;
-    
+
     // Try to call the main function with empty spans
     let test_command = format!(
         r#"use {} *; rusk-completions-main []"#,
         script_path.to_string_lossy()
     );
-    
-    let output = Command::new("nu")
-        .arg("-c")
-        .arg(&test_command)
-        .output();
-    
+
+    let output = Command::new("nu").arg("-c").arg(&test_command).output();
+
     match output {
         Ok(result) => {
             // Function should exist and return empty list for empty input
@@ -182,7 +241,7 @@ fn test_nu_completion_main_function() -> Result<()> {
         }
         Err(e) => return Err(e.into()),
     }
-    
+
     Ok(())
 }
 
@@ -193,18 +252,15 @@ fn test_nu_completion_root_commands() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let script_path = temp_dir.path().join("rusk.nu");
     fs::write(&script_path, script)?;
-    
+
     // Test completion for "rusk " (with space)
     let test_command = format!(
         r#"use {} *; rusk-completions-main ["rusk", ""] | length"#,
         script_path.to_string_lossy()
     );
-    
-    let output = Command::new("nu")
-        .arg("-c")
-        .arg(&test_command)
-        .output();
-    
+
+    let output = Command::new("nu").arg("-c").arg(&test_command).output();
+
     match output {
         Ok(result) => {
             if result.status.success() {
@@ -221,7 +277,7 @@ fn test_nu_completion_root_commands() -> Result<()> {
         }
         Err(e) => return Err(e.into()),
     }
-    
+
     Ok(())
 }
 
@@ -232,18 +288,15 @@ fn test_nu_completion_rusk_tab() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let script_path = temp_dir.path().join("rusk.nu");
     fs::write(&script_path, script)?;
-    
+
     // Test completion for "rusk" (without space - this is what happens when user types "rusk" and presses Tab)
     let test_command = format!(
         r#"use {} *; rusk-completions-main ["rusk"] | length"#,
         script_path.to_string_lossy()
     );
-    
-    let output = Command::new("nu")
-        .arg("-c")
-        .arg(&test_command)
-        .output();
-    
+
+    let output = Command::new("nu").arg("-c").arg(&test_command).output();
+
     match output {
         Ok(result) => {
             if result.status.success() {
@@ -251,7 +304,11 @@ fn test_nu_completion_rusk_tab() -> Result<()> {
                 let count: Result<usize, _> = stdout.trim().parse();
                 if let Ok(count) = count {
                     // Should return all commands and flags (at least 10+ items)
-                    assert!(count >= 10, "Should return completions when typing 'rusk' and pressing Tab. Got: {}", count);
+                    assert!(
+                        count >= 10,
+                        "Should return completions when typing 'rusk' and pressing Tab. Got: {}",
+                        count
+                    );
                 } else {
                     panic!("Failed to parse completion count. Output: {}", stdout);
                 }
@@ -266,7 +323,7 @@ fn test_nu_completion_rusk_tab() -> Result<()> {
         }
         Err(e) => return Err(e.into()),
     }
-    
+
     Ok(())
 }
 
@@ -277,28 +334,31 @@ fn test_nu_completion_root_flags() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let script_path = temp_dir.path().join("rusk.nu");
     fs::write(&script_path, script)?;
-    
+
     // Test completion for "rusk -"
     let test_command = format!(
         r#"use {} *; rusk-completions-main ["rusk", "-"] | to json"#,
         script_path.to_string_lossy()
     );
-    
-    let output = Command::new("nu")
-        .arg("-c")
-        .arg(&test_command)
-        .output();
-    
+
+    let output = Command::new("nu").arg("-c").arg(&test_command).output();
+
     match output {
         Ok(result) => {
             if result.status.success() {
                 let stdout = String::from_utf8_lossy(&result.stdout);
                 // Should contain help or version flags, or be a valid JSON array (even if empty)
                 // The completion might return an empty array or flags
-                assert!(stdout.contains("help") || stdout.contains("version") || 
-                        stdout.contains("-h") || stdout.contains("-V") || 
-                        stdout.contains("[]") || stdout.len() > 0,
-                    "Should return flag completions or valid response. Got: {}", stdout);
+                assert!(
+                    stdout.contains("help")
+                        || stdout.contains("version")
+                        || stdout.contains("-h")
+                        || stdout.contains("-V")
+                        || stdout.contains("[]")
+                        || stdout.len() > 0,
+                    "Should return flag completions or valid response. Got: {}",
+                    stdout
+                );
             } else {
                 // If command failed, check stderr for more info
                 let stderr = String::from_utf8_lossy(&result.stderr);
@@ -313,7 +373,7 @@ fn test_nu_completion_root_flags() -> Result<()> {
         }
         Err(e) => return Err(e.into()),
     }
-    
+
     Ok(())
 }
 
@@ -324,18 +384,15 @@ fn test_nu_completion_add_command() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let script_path = temp_dir.path().join("rusk.nu");
     fs::write(&script_path, script)?;
-    
+
     // Test completion for "rusk add "
     let test_command = format!(
         r#"use {} *; rusk-completions-main ["rusk", "add", ""] | to json"#,
         script_path.to_string_lossy()
     );
-    
-    let output = Command::new("nu")
-        .arg("-c")
-        .arg(&test_command)
-        .output();
-    
+
+    let output = Command::new("nu").arg("-c").arg(&test_command).output();
+
     match output {
         Ok(result) => {
             if result.status.success() {
@@ -356,7 +413,7 @@ fn test_nu_completion_add_command() -> Result<()> {
         }
         Err(e) => return Err(e.into()),
     }
-    
+
     Ok(())
 }
 
@@ -367,18 +424,15 @@ fn test_nu_completion_edit_command() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let script_path = temp_dir.path().join("rusk.nu");
     fs::write(&script_path, script)?;
-    
+
     // Test completion for "rusk edit "
     let test_command = format!(
         r#"use {} *; rusk-completions-main ["rusk", "edit", ""] | length"#,
         script_path.to_string_lossy()
     );
-    
-    let output = Command::new("nu")
-        .arg("-c")
-        .arg(&test_command)
-        .output();
-    
+
+    let output = Command::new("nu").arg("-c").arg(&test_command).output();
+
     match output {
         Ok(result) => {
             // Should not panic, may return empty list if no tasks
@@ -393,7 +447,7 @@ fn test_nu_completion_edit_command() -> Result<()> {
         }
         Err(e) => return Err(e.into()),
     }
-    
+
     Ok(())
 }
 
@@ -404,18 +458,15 @@ fn test_nu_completion_mark_command() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let script_path = temp_dir.path().join("rusk.nu");
     fs::write(&script_path, script)?;
-    
+
     // Test completion for "rusk mark "
     let test_command = format!(
         r#"use {} *; rusk-completions-main ["rusk", "mark", ""] | length"#,
         script_path.to_string_lossy()
     );
-    
-    let output = Command::new("nu")
-        .arg("-c")
-        .arg(&test_command)
-        .output();
-    
+
+    let output = Command::new("nu").arg("-c").arg(&test_command).output();
+
     match output {
         Ok(result) => {
             // Should not panic
@@ -430,7 +481,7 @@ fn test_nu_completion_mark_command() -> Result<()> {
         }
         Err(e) => return Err(e.into()),
     }
-    
+
     Ok(())
 }
 
@@ -441,18 +492,15 @@ fn test_nu_completion_del_command() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let script_path = temp_dir.path().join("rusk.nu");
     fs::write(&script_path, script)?;
-    
+
     // Test completion for "rusk del "
     let test_command = format!(
         r#"use {} *; rusk-completions-main ["rusk", "del", ""] | length"#,
         script_path.to_string_lossy()
     );
-    
-    let output = Command::new("nu")
-        .arg("-c")
-        .arg(&test_command)
-        .output();
-    
+
+    let output = Command::new("nu").arg("-c").arg(&test_command).output();
+
     match output {
         Ok(result) => {
             // Should not panic
@@ -467,7 +515,7 @@ fn test_nu_completion_del_command() -> Result<()> {
         }
         Err(e) => return Err(e.into()),
     }
-    
+
     Ok(())
 }
 
@@ -478,18 +526,15 @@ fn test_nu_completion_completions_command() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let script_path = temp_dir.path().join("rusk.nu");
     fs::write(&script_path, script)?;
-    
+
     // Test completion for "rusk completions "
     let test_command = format!(
         r#"use {} *; rusk-completions-main ["rusk", "completions", ""] | to json"#,
         script_path.to_string_lossy()
     );
-    
-    let output = Command::new("nu")
-        .arg("-c")
-        .arg(&test_command)
-        .output();
-    
+
+    let output = Command::new("nu").arg("-c").arg(&test_command).output();
+
     match output {
         Ok(result) => {
             if result.status.success() {
@@ -510,7 +555,7 @@ fn test_nu_completion_completions_command() -> Result<()> {
         }
         Err(e) => return Err(e.into()),
     }
-    
+
     Ok(())
 }
 
@@ -572,18 +617,15 @@ fn test_nu_completion_completions_install() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let script_path = temp_dir.path().join("rusk.nu");
     fs::write(&script_path, script)?;
-    
+
     // Test completion for "rusk completions install "
     let test_command = format!(
         r#"use {} *; rusk-completions-main ["rusk", "completions", "install", ""] | to json"#,
         script_path.to_string_lossy()
     );
-    
-    let output = Command::new("nu")
-        .arg("-c")
-        .arg(&test_command)
-        .output();
-    
+
+    let output = Command::new("nu").arg("-c").arg(&test_command).output();
+
     match output {
         Ok(result) => {
             if result.status.success() {
@@ -608,7 +650,7 @@ fn test_nu_completion_completions_install() -> Result<()> {
         }
         Err(e) => return Err(e.into()),
     }
-    
+
     Ok(())
 }
 
@@ -619,7 +661,7 @@ fn test_nu_completion_after_date_flag() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let script_path = temp_dir.path().join("rusk.nu");
     fs::write(&script_path, script)?;
-    
+
     let after_space = format!(
         r#"use {} *; rusk-completions-main ["rusk", "add", "x", "-d", ""] | to json"#,
         script_path.to_string_lossy()
@@ -628,16 +670,10 @@ fn test_nu_completion_after_date_flag() -> Result<()> {
         r#"use {} *; rusk-completions-main ["rusk", "add", "x", "-d"] | to json"#,
         script_path.to_string_lossy()
     );
-    
-    let output_space = Command::new("nu")
-        .arg("-c")
-        .arg(&after_space)
-        .output();
-    let output_d = Command::new("nu")
-        .arg("-c")
-        .arg(&after_d_no_space)
-        .output();
-    
+
+    let output_space = Command::new("nu").arg("-c").arg(&after_space).output();
+    let output_d = Command::new("nu").arg("-c").arg(&after_d_no_space).output();
+
     match (output_space, output_d) {
         (Ok(r1), Ok(r2)) => {
             assert!(
@@ -670,7 +706,11 @@ fn test_nu_completion_after_date_flag() -> Result<()> {
                 script_path.to_string_lossy()
             );
             let r3 = Command::new("nu").arg("-c").arg(&edit_after_id).output()?;
-            assert!(r3.status.success(), "nu edit after id: {}", String::from_utf8_lossy(&r3.stderr));
+            assert!(
+                r3.status.success(),
+                "nu edit after id: {}",
+                String::from_utf8_lossy(&r3.stderr)
+            );
             let s3 = String::from_utf8_lossy(&r3.stdout);
             assert!(s3.contains("help"), "edit after id should offer help: {s3}");
             assert!(
@@ -684,7 +724,7 @@ fn test_nu_completion_after_date_flag() -> Result<()> {
         }
         (Err(e), _) | (_, Err(e)) => return Err(e.into()),
     }
-    
+
     Ok(())
 }
 
@@ -695,25 +735,24 @@ fn test_nu_completion_partial_commands() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let script_path = temp_dir.path().join("rusk.nu");
     fs::write(&script_path, script)?;
-    
+
     // Test completion for "rusk ad" (partial "add")
     let test_command = format!(
         r#"use {} *; rusk-completions-main ["rusk", "ad"] | to json"#,
         script_path.to_string_lossy()
     );
-    
-    let output = Command::new("nu")
-        .arg("-c")
-        .arg(&test_command)
-        .output();
-    
+
+    let output = Command::new("nu").arg("-c").arg(&test_command).output();
+
     match output {
         Ok(result) => {
             if result.status.success() {
                 let stdout = String::from_utf8_lossy(&result.stdout);
                 // Should suggest "add"
-                assert!(stdout.contains("add") || stdout.contains("\"add\""),
-                    "Should suggest 'add' for partial 'ad' input");
+                assert!(
+                    stdout.contains("add") || stdout.contains("\"add\""),
+                    "Should suggest 'add' for partial 'ad' input"
+                );
             }
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -722,7 +761,7 @@ fn test_nu_completion_partial_commands() -> Result<()> {
         }
         Err(e) => return Err(e.into()),
     }
-    
+
     Ok(())
 }
 
@@ -733,18 +772,15 @@ fn test_nu_completion_aliases() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let script_path = temp_dir.path().join("rusk.nu");
     fs::write(&script_path, script)?;
-    
+
     // Test completion for "rusk a " (alias for add)
     let test_command = format!(
         r#"use {} *; rusk-completions-main ["rusk", "a", ""] | to json"#,
         script_path.to_string_lossy()
     );
-    
-    let output = Command::new("nu")
-        .arg("-c")
-        .arg(&test_command)
-        .output();
-    
+
+    let output = Command::new("nu").arg("-c").arg(&test_command).output();
+
     match output {
         Ok(result) => {
             if result.status.success() {
@@ -762,7 +798,6 @@ fn test_nu_completion_aliases() -> Result<()> {
         }
         Err(e) => return Err(e.into()),
     }
-    
+
     Ok(())
 }
-

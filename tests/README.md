@@ -78,7 +78,7 @@ Tests for core library functions:
 - ID generation (`generate_next_id`)
 - Task management operations
 - Task filtering and querying
-- Date handling: absolute (DD-MM-YYYY) and relative offsets (e.g. 2w, 10d5w), first-line due date in interactive `rusk edit`, optional `rusk edit <id> -d <date>` (bare `-d` is invalid; see `rusk edit --help`)
+- Date handling: absolute (DD-MM-YYYY), relative from today (e.g. 2w, 10d5w), leading `+` on edit for offset from the task's current due date (e.g. +1w), first-line due date in interactive `rusk edit`, optional `rusk edit <id> -d <date>` (bare `-d` is invalid; see `rusk edit --help`)
 - Task validation
 
 #### `cli_tests.rs`
@@ -101,7 +101,7 @@ Integration tests for the rusk binary:
 - Main argument parsing
 - Flag filtering
 - End-to-end binary execution
-- `--help` text mentions date syntax (absolute and relative)
+- `--help` text mentions date syntax (absolute, relative, and edit `+` from current due date)
 
 ### Data Persistence Tests
 

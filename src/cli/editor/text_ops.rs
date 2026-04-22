@@ -6,7 +6,7 @@
 //! type) so they can be used both by the editor internals and by the
 //! public `HandlerCLI` shims re-exported in `editor/mod.rs`.
 
-use chrono::Local;
+use chrono::{Local, NaiveDate};
 use std::cmp::Ordering;
 
 // ── Byte / char helpers ─────────────────────────────────────────────────────
@@ -170,12 +170,13 @@ pub fn split_multi_line_prefill(prefill: &str) -> Vec<String> {
 
 /// Character length of a leading date prefix on the first logical line.
 /// Returns 0 if the leading whitespace-delimited token is not a valid CLI date.
-pub fn leading_date_char_len(line: &str) -> usize {
+/// `relative_edit_base` is the task due date before edit (`+`-prefixed relative tokens).
+pub fn leading_date_char_len(line: &str, relative_edit_base: Option<NaiveDate>) -> usize {
     let token: String = line.chars().take_while(|c| !c.is_whitespace()).collect();
     if token.is_empty() {
         return 0;
     }
-    if crate::parse_cli_date(&token).is_ok() {
+    if crate::parse_cli_date_for_edit(&token, relative_edit_base).is_ok() {
         token.chars().count()
     } else {
         0
@@ -183,12 +184,12 @@ pub fn leading_date_char_len(line: &str) -> usize {
 }
 
 /// `true` if the first line starts with a valid CLI date strictly before today.
-pub fn leading_date_is_past(line: &str) -> bool {
+pub fn leading_date_is_past(line: &str, relative_edit_base: Option<NaiveDate>) -> bool {
     let token: String = line.chars().take_while(|c| !c.is_whitespace()).collect();
     if token.is_empty() {
         return false;
     }
-    match crate::parse_cli_date(&token) {
+    match crate::parse_cli_date_for_edit(&token, relative_edit_base) {
         Ok(d) => d < Local::now().date_naive(),
         Err(_) => false,
     }
@@ -222,11 +223,7 @@ pub fn selection_range(
     })
 }
 
-pub fn selection_text(
-    lines: &[String],
-    start: (usize, usize),
-    end: (usize, usize),
-) -> String {
+pub fn selection_text(lines: &[String], start: (usize, usize), end: (usize, usize)) -> String {
     if start.0 == end.0 {
         return lines[start.0][start.1..end.1].to_string();
     }
@@ -550,7 +547,10 @@ mod tests {
     fn insert_string_with_newlines_splits_and_advances() {
         let mut l = lines(&["tail"]);
         let (r, c) = insert_string(&mut l, 0, 1, "A\nB\nC");
-        assert_eq!(l, vec!["tA".to_string(), "B".to_string(), "Cail".to_string()]);
+        assert_eq!(
+            l,
+            vec!["tA".to_string(), "B".to_string(), "Cail".to_string()]
+        );
         assert_eq!((r, c), (2, 1));
     }
 

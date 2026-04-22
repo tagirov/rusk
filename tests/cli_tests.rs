@@ -323,10 +323,7 @@ fn test_cli_date_handling() {
     let relative_cases = ["1d", "2w", "3m", "1q", "1y", "5d1w", "12d2q1y"];
     let base_len = tm.tasks.len();
     for (i, rel) in relative_cases.iter().enumerate() {
-        let result = tm.add_task(
-            vec![format!("Rel {}", i + 1)],
-            Some((*rel).to_string()),
-        );
+        let result = tm.add_task(vec![format!("Rel {}", i + 1)], Some((*rel).to_string()));
         assert!(result.is_ok(), "relative date {rel:?} should parse");
         let expected = parse_cli_date_with_base(rel, today).unwrap();
         assert_eq!(
@@ -335,4 +332,16 @@ fn test_cli_date_handling() {
             "relative {rel}"
         );
     }
+
+    let plus_idx = tm.tasks.len();
+    tm.add_task(
+        vec!["Leading plus on add".to_string()],
+        Some("+2w".to_string()),
+    )
+    .unwrap();
+    assert_eq!(
+        tm.tasks[plus_idx].date,
+        Some(parse_cli_date_with_base("2w", today).unwrap()),
+        "+2w on add should match 2w from today"
+    );
 }

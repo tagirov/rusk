@@ -1,5 +1,5 @@
-use crate::{Task, TaskManager, parse_cli_date};
 use crate::parser::date::is_cli_date_clear_value;
+use crate::{Task, TaskManager, validate_cli_date_edit_arg};
 use anyhow::Result;
 use chrono::Datelike;
 use colored::*;
@@ -82,22 +82,19 @@ impl HandlerCLI {
             }
         }
 
-        let mut extras = EditorExtras::default();
-        extras.draft_path = Some(draft_path);
-        extras.draft_key = Some(draft_key);
+        let extras = EditorExtras {
+            draft_path: Some(draft_path),
+            draft_key: Some(draft_key),
+            relative_date_base: task_date,
+            ..Default::default()
+        };
 
-        let edited = Self::run_multi_line_editor(
-            "    ",
-            &prefill_owned,
-            true,
-            None,
-            allow_skip,
-            extras,
-        )?;
+        let edited =
+            Self::run_multi_line_editor("    ", &prefill_owned, true, None, allow_skip, extras)?;
         if edited.trim().is_empty() {
             return Ok(None);
         }
-        let (parsed_date, stripped) = Self::extract_leading_date(&edited);
+        let (parsed_date, stripped) = Self::extract_leading_date(&edited, task_date);
         // If user removed all body text but kept the date, fall back to the
         // original text so the task never becomes empty on a date-only edit.
         let new_text = if stripped.trim().is_empty() {
@@ -109,7 +106,10 @@ impl HandlerCLI {
     }
 
     #[cfg(feature = "interactive")]
-    fn extract_leading_date(edited: &str) -> (Option<chrono::NaiveDate>, String) {
+    fn extract_leading_date(
+        edited: &str,
+        task_date: Option<chrono::NaiveDate>,
+    ) -> (Option<chrono::NaiveDate>, String) {
         let mut parts = edited.splitn(2, '\n');
         let first = parts.next().unwrap_or("");
         let rest = parts.next();
@@ -131,7 +131,7 @@ impl HandlerCLI {
             };
             return (None, new_text);
         }
-        match parse_cli_date(&token) {
+        match crate::parse_cli_date_for_edit(&token, task_date) {
             Ok(date) => {
                 let token_chars = token.chars().count();
                 let mut tail = first.chars().skip(token_chars);
@@ -196,7 +196,6 @@ impl HandlerCLI {
                         return Err(e);
                     }
                 }
-
             } else {
                 not_found.push(*id);
             }
@@ -369,11 +368,11 @@ impl HandlerCLI {
         }
 
         let is_clearing_date = date.as_deref().is_some_and(is_cli_date_clear_value);
-        let parsed_new_date: Option<chrono::NaiveDate> = match &date {
-            None => None,
-            Some(d) if is_cli_date_clear_value(d) => None,
-            Some(d) => Some(parse_cli_date(d)?),
-        };
+        if let Some(d) = &date
+            && !is_cli_date_clear_value(d)
+        {
+            validate_cli_date_edit_arg(d)?;
+        }
         let date_change_requested = date.is_some();
 
         let (edited, unchanged, not_found) = tm.edit_tasks(ids, text, date)?;
@@ -401,7 +400,7 @@ impl HandlerCLI {
                             format!("was: {}", old_date_str).cyan(),
                             ")".normal()
                         );
-                    } else if parsed_new_date.is_some() {
+                    } else {
                         if new_date != old_date {
                             let old_date_str = Self::format_date_for_display(old_date);
                             let new_date_str = Self::format_date_for_display(new_date);
@@ -474,7 +473,9 @@ impl HandlerCLI {
         let max_line_width = Self::get_max_line_width();
 
         let prefix_width = 19;
-        let available_width = max_line_width.saturating_sub(prefix_width).saturating_sub(4);
+        let available_width = max_line_width
+            .saturating_sub(prefix_width)
+            .saturating_sub(4);
 
         for task in tasks {
             let status = if task.done {
@@ -533,13 +534,7 @@ impl HandlerCLI {
 
             if !first_line_only {
                 for line in wrapped_lines.iter().skip(1) {
-                    println!(
-                        "  {} {:>3} {:>10} {}",
-                        " ",
-                        " ",
-                        " ",
-                        line
-                    );
+                    println!("  {} {:>3} {:>10} {}", " ", " ", " ", line);
                 }
             }
         }

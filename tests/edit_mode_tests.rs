@@ -1,4 +1,4 @@
-use rusk::{parse_edit_args, strip_edit_date_flag, BareEditDateFlag};
+use rusk::{BareEditDateFlag, parse_edit_args, strip_edit_date_flag};
 
 #[test]
 fn test_parse_edit_args_date_tokens_become_text() {
@@ -99,11 +99,7 @@ fn test_parse_edit_args_text_only_words() {
 
 #[test]
 fn test_parse_edit_args_dash_d_with_value_is_text() {
-    let (ids, text) = parse_edit_args(vec![
-        "7".to_string(),
-        "-d".to_string(),
-        "some".to_string(),
-    ]);
+    let (ids, text) = parse_edit_args(vec!["7".to_string(), "-d".to_string(), "some".to_string()]);
     assert_eq!(ids, vec![7]);
     assert_eq!(text, Some(vec!["-d".to_string(), "some".to_string()]));
 }

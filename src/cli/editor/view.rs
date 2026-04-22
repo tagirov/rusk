@@ -2,6 +2,7 @@
 //! and date-header coloring, footer with scroll indicators and dirty marker.
 
 use anyhow::Result;
+use chrono::NaiveDate;
 use colored::*;
 use crossterm::{
     QueueableCommand,
@@ -108,11 +109,7 @@ fn compute_footer_row(
 }
 
 /// Row of the help footer, matching the current [`render`] layout.
-pub(super) fn footer_row_for_state(
-    lines: &[String],
-    view_top: usize,
-    prompt_width: usize,
-) -> u16 {
+pub(super) fn footer_row_for_state(lines: &[String], view_top: usize, prompt_width: usize) -> u16 {
     let (term_cols_u16, term_rows_u16) = size().unwrap_or((0, 0));
     let term_rows = term_rows_u16 as usize;
     let term_cols = term_cols_u16 as usize;
@@ -182,6 +179,7 @@ pub(super) fn compute_visuals(lines: &[String], vw: usize) -> Vec<(usize, String
 
 /// Print one visual chunk with selection + optional validation colors and
 /// a bold date highlight (green, or red if the leading date is before today) on the first line.
+#[allow(clippy::too_many_arguments)]
 fn print_visual_chunk(
     stdout: &mut io::Stdout,
     lines: &[String],
@@ -190,6 +188,7 @@ fn print_visual_chunk(
     content: &str,
     sel: Option<((usize, usize), (usize, usize))>,
     full_text_valid: Option<bool>,
+    relative_date_base: Option<NaiveDate>,
 ) -> Result<()> {
     let chunk_chars: Vec<char> = content.chars().collect();
     let chunk_len = chunk_chars.len();
@@ -219,22 +218,22 @@ fn print_visual_chunk(
     let sel_in_chunk: Option<(usize, usize)> = sel_line_range.and_then(|(s, e)| {
         let a = s.max(start_char);
         let b = e.min(chunk_end);
-        if a >= b { None } else { Some((a - start_char, b - start_char)) }
+        if a >= b {
+            None
+        } else {
+            Some((a - start_char, b - start_char))
+        }
     });
 
     let date_end_in_chunk: usize = if buf_idx == 0 {
-        let date_end_in_line = text_ops::leading_date_char_len(&lines[0]);
+        let date_end_in_line = text_ops::leading_date_char_len(&lines[0], relative_date_base);
         date_end_in_line.saturating_sub(start_char).min(chunk_len)
     } else {
         0
     };
-    let date_past = buf_idx == 0 && text_ops::leading_date_is_past(&lines[0]);
+    let date_past = buf_idx == 0 && text_ops::leading_date_is_past(&lines[0], relative_date_base);
 
-    let emit = |stdout: &mut io::Stdout,
-                text: &str,
-                selected: bool,
-                is_date: bool|
-     -> Result<()> {
+    let emit = |stdout: &mut io::Stdout, text: &str, selected: bool, is_date: bool| -> Result<()> {
         if text.is_empty() {
             return Ok(());
         }
@@ -300,6 +299,7 @@ pub(super) struct RenderInput<'a> {
     pub validate: Option<&'a fn(&str) -> bool>,
     pub selection: Option<((usize, usize), (usize, usize))>,
     pub dirty: bool,
+    pub relative_date_base: Option<chrono::NaiveDate>,
 }
 
 pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> {
@@ -320,8 +320,7 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
             break;
         }
     }
-    let cursor_vis_row =
-        visual_start_of_cursor_line + (cursor_char_in_line / visible_width);
+    let cursor_vis_row = visual_start_of_cursor_line + (cursor_char_in_line / visible_width);
     let cursor_vis_col = cursor_char_in_line % visible_width;
 
     if cursor_vis_row < *r.view_top {
@@ -371,6 +370,7 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
             content,
             sel_range,
             full_text_valid,
+            r.relative_date_base,
         )?;
     }
 
@@ -406,7 +406,10 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
         const ARROW_PAIR_W: usize = 2;
         if footer_x > text_left + ARROW_PAIR_W.saturating_sub(1) {
             let arrow_start = text_left + (footer_x - text_left - ARROW_PAIR_W) / 2;
-            stdout.queue(MoveTo(arrow_start.min(u16::MAX as usize) as u16, footer_row))?;
+            stdout.queue(MoveTo(
+                arrow_start.min(u16::MAX as usize) as u16,
+                footer_row,
+            ))?;
             if has_down {
                 stdout.queue(Print("↓".truecolor(128, 128, 128)))?;
             } else {
@@ -435,11 +438,7 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
     } else if footer_end < text_right_excl {
         let lo = footer_end;
         let hi = text_right_excl.saturating_sub(1);
-        if lo <= hi {
-            (lo + hi) / 2
-        } else {
-            hi
-        }
+        if lo <= hi { (lo + hi) / 2 } else { hi }
     } else {
         text_right_excl.saturating_sub(1)
     }

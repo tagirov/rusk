@@ -13,6 +13,46 @@ pub fn parse_cli_date(date_str: &str) -> Result<NaiveDate> {
     parse_cli_date_with_base(date_str, Local::now().date_naive())
 }
 
+/// Leading `+` means relative offsets apply from `task_date`, or today when it is `None`.
+/// Without `+`, same as [`parse_cli_date`] (offsets from today).
+pub fn parse_cli_date_for_edit(date_str: &str, task_date: Option<NaiveDate>) -> Result<NaiveDate> {
+    let trimmed = date_str.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("Date cannot be empty");
+    }
+    if let Some(rest) = trimmed.strip_prefix('+') {
+        let rest = rest.trim_start();
+        if rest.is_empty() {
+            anyhow::bail!("Date cannot be empty");
+        }
+        let base = task_date.unwrap_or_else(|| Local::now().date_naive());
+        return parse_cli_date_with_base(rest, base);
+    }
+    parse_cli_date(trimmed)
+}
+
+/// Syntax check for a `--date` value before bulk edit: `+` offsets are validated per segment,
+/// absolute dates parse the same for any base.
+pub fn validate_cli_date_edit_arg(s: &str) -> Result<()> {
+    let t = s.trim();
+    if t.is_empty() {
+        anyhow::bail!("Date cannot be empty");
+    }
+    if is_cli_date_clear_value(t) {
+        return Ok(());
+    }
+    if let Some(rest) = t.strip_prefix('+') {
+        let rest = rest.trim_start();
+        if rest.is_empty() {
+            anyhow::bail!("Date cannot be empty");
+        }
+        parse_cli_date_with_base(rest, Local::now().date_naive())?;
+    } else {
+        parse_cli_date(t)?;
+    }
+    Ok(())
+}
+
 pub fn parse_cli_date_optional_empty(s: &str) -> Result<Option<NaiveDate>> {
     let trimmed = s.trim();
     if trimmed.is_empty() || is_cli_date_clear_value(trimmed) {
@@ -39,11 +79,7 @@ fn parse_english_abbrev_dash_date(s: &str) -> Option<NaiveDate> {
         if y < 0 {
             return None;
         }
-        if (0..=99).contains(&y) {
-            2000 + y
-        } else {
-            y
-        }
+        if (0..=99).contains(&y) { 2000 + y } else { y }
     } else {
         y_str.parse().ok()?
     };
@@ -92,7 +128,8 @@ pub fn parse_cli_date_with_base(date_str: &str, base: NaiveDate) -> Result<Naive
         format!(
             "Invalid date '{}': use DD-MM-YYYY, DD/MM/YYYY, or DD.MM.YYYY (D-M-YY is OK), \
 or DD-Mon-YY / DD-Mon-YYYY (e.g. 11-jan-25), \n\
-or a relative offset such as 2d, 2w, 5m, 3q, 2y (combinable, e.g. 10d5w)",
+or a relative offset such as 2d, 2w, 5m, 3q, 2y (combinable, e.g. 10d5w); \
+with a leading + when editing, count from the task's current due date (today if none)",
             trimmed
         )
     })
@@ -188,16 +225,16 @@ fn apply_relative_cli_segments(base: NaiveDate, segments: &[(u32, char)]) -> Res
                 .checked_add_months(Months::new(n))
                 .with_context(|| format!("Date out of range after adding {n} month(s)"))?,
             'q' => {
-                let qm = n.checked_mul(3).ok_or_else(|| {
-                    anyhow::anyhow!("Quarter count too large in relative date")
-                })?;
+                let qm = n
+                    .checked_mul(3)
+                    .ok_or_else(|| anyhow::anyhow!("Quarter count too large in relative date"))?;
                 d.checked_add_months(Months::new(qm))
                     .with_context(|| format!("Date out of range after adding {n} quarter(s)"))?
             }
             'y' => {
-                let ym = n.checked_mul(12).ok_or_else(|| {
-                    anyhow::anyhow!("Year count too large in relative date")
-                })?;
+                let ym = n
+                    .checked_mul(12)
+                    .ok_or_else(|| anyhow::anyhow!("Year count too large in relative date"))?;
                 d.checked_add_months(Months::new(ym))
                     .with_context(|| format!("Date out of range after adding {n} year(s)"))?
             }
@@ -214,7 +251,7 @@ fn parse_and_apply_relative_cli_date(trimmed: &str, base: NaiveDate) -> Result<N
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_cli_date_optional_empty, parse_cli_date_with_base};
+    use super::{parse_cli_date_for_edit, parse_cli_date_optional_empty, parse_cli_date_with_base};
     use chrono::{Local, NaiveDate};
 
     fn d(y: i32, m: u32, day: u32) -> NaiveDate {
@@ -226,16 +263,45 @@ mod tests {
         let base = d(2025, 1, 1);
         assert_eq!(parse_cli_date_with_base("2d", base).unwrap(), d(2025, 1, 3));
         assert_eq!(parse_cli_date_with_base("1w", base).unwrap(), d(2025, 1, 8));
-        assert_eq!(parse_cli_date_with_base("10d5w", base).unwrap(), d(2025, 2, 15));
+        assert_eq!(
+            parse_cli_date_with_base("10d5w", base).unwrap(),
+            d(2025, 2, 15)
+        );
+
+        assert_eq!(
+            parse_cli_date_for_edit("+1w", Some(base)).unwrap(),
+            d(2025, 1, 8)
+        );
+        assert_eq!(
+            parse_cli_date_for_edit("+ 2d", Some(base)).unwrap(),
+            d(2025, 1, 3)
+        );
+        let today = Local::now().date_naive();
+        assert_eq!(
+            parse_cli_date_for_edit("+3d", None).unwrap(),
+            parse_cli_date_with_base("3d", today).unwrap()
+        );
     }
 
     #[test]
     fn relative_months_quarters_years() {
         let base = d(2025, 1, 15);
-        assert_eq!(parse_cli_date_with_base("5m", base).unwrap(), d(2025, 6, 15));
-        assert_eq!(parse_cli_date_with_base("3q", base).unwrap(), d(2025, 10, 15));
-        assert_eq!(parse_cli_date_with_base("2y", base).unwrap(), d(2027, 1, 15));
-        assert_eq!(parse_cli_date_with_base("12d2q1y", base).unwrap(), d(2026, 7, 27));
+        assert_eq!(
+            parse_cli_date_with_base("5m", base).unwrap(),
+            d(2025, 6, 15)
+        );
+        assert_eq!(
+            parse_cli_date_with_base("3q", base).unwrap(),
+            d(2025, 10, 15)
+        );
+        assert_eq!(
+            parse_cli_date_with_base("2y", base).unwrap(),
+            d(2027, 1, 15)
+        );
+        assert_eq!(
+            parse_cli_date_with_base("12d2q1y", base).unwrap(),
+            d(2026, 7, 27)
+        );
     }
 
     #[test]
@@ -288,7 +354,9 @@ mod tests {
             parse_cli_date_optional_empty("5d").unwrap().unwrap(),
             parse_cli_date_with_base("5d", today).unwrap()
         );
-        let abs = parse_cli_date_optional_empty("01-06-2026").unwrap().unwrap();
+        let abs = parse_cli_date_optional_empty("01-06-2026")
+            .unwrap()
+            .unwrap();
         assert_eq!(abs, NaiveDate::from_ymd_opt(2026, 6, 1).unwrap());
     }
 }

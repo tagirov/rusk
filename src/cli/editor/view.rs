@@ -14,8 +14,10 @@ use std::io::{self, Write};
 use super::text_ops;
 
 pub(super) const ML_FOOTER: &str = "^S save  ·  ^G help  ·  Esc cancel";
+/// Lower the footer vs the prior 5-row band (wide: less padding under footer; compact: more gap above).
+const ML_FOOTER_SHIFT_DOWN: usize = 2;
 /// Blank full rows between the footer line and the bottom row of the terminal (wide layout only).
-const ML_FOOTER_FROM_BOTTOM: usize = 5;
+const ML_FOOTER_FROM_BOTTOM: usize = 5 - ML_FOOTER_SHIFT_DOWN;
 /// Blank lines above the editor text (content starts at this row) when layout allows.
 pub(super) const ML_TOP_MARGIN: u16 = 5;
 /// Below this width, skip the tall decorated vertical block (footer docked, top margin).
@@ -67,12 +69,9 @@ fn compact_vertical_layout(t: usize) -> (u16, usize, usize) {
     if t < 4 {
         return (ML_MIN_VPAD_TOP, 0, 1);
     }
-    let av = t.saturating_sub(ML_MIN_VPAD_TOP as usize + ML_MIN_VPAD_TEXT_TO_FOOTER + 1);
-    (
-        ML_MIN_VPAD_TOP,
-        ML_MIN_VPAD_TEXT_TO_FOOTER,
-        av.max(1),
-    )
+    let gap = ML_MIN_VPAD_TEXT_TO_FOOTER + ML_FOOTER_SHIFT_DOWN;
+    let av = t.saturating_sub(ML_MIN_VPAD_TOP as usize + gap + 1);
+    (ML_MIN_VPAD_TOP, gap, av.max(1))
 }
 
 /// Top row of the text area, matching the next [`render`].
@@ -375,7 +374,7 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
         )?;
     }
 
-    // Wide: footer is fixed 5 full rows above the last terminal line; narrow: under last text.
+    // Wide: footer is fixed ML_FOOTER_FROM_BOTTOM full rows above the last line; narrow: under last text.
     let footer_row = compute_footer_row(
         term_rows_u16 as usize,
         term_cols,
@@ -403,21 +402,24 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
     let has_up = *r.view_top > 0;
     let has_down = *r.view_top + available_text < visuals.len();
     if has_up || has_down {
-        let pair_w = usize::from(has_up && has_down) + 1;
-        if footer_x > text_left + pair_w.saturating_sub(1) {
-            let arrow_start = text_left + (footer_x - text_left - pair_w) / 2;
-            if has_up {
-                stdout.queue(MoveTo(arrow_start.min(u16::MAX as usize) as u16, footer_row))?;
-                stdout.queue(Print("↑".truecolor(128, 128, 128)))?;
-            }
+        // Two fixed columns: down (left), up (right). Order and placement never swap.
+        const ARROW_PAIR_W: usize = 2;
+        if footer_x > text_left + ARROW_PAIR_W.saturating_sub(1) {
+            let arrow_start = text_left + (footer_x - text_left - ARROW_PAIR_W) / 2;
+            stdout.queue(MoveTo(arrow_start.min(u16::MAX as usize) as u16, footer_row))?;
             if has_down {
-                let x = if has_up {
-                    arrow_start + 1
-                } else {
-                    arrow_start
-                };
-                stdout.queue(MoveTo(x.min(u16::MAX as usize) as u16, footer_row))?;
                 stdout.queue(Print("↓".truecolor(128, 128, 128)))?;
+            } else {
+                stdout.queue(Print(" "))?;
+            }
+            stdout.queue(MoveTo(
+                (arrow_start + 1).min(u16::MAX as usize) as u16,
+                footer_row,
+            ))?;
+            if has_up {
+                stdout.queue(Print("↑".truecolor(128, 128, 128)))?;
+            } else {
+                stdout.queue(Print(" "))?;
             }
         }
     }

@@ -16,6 +16,24 @@ pub struct TaskManager {
     pub db_path: PathBuf,
 }
 
+fn json_error_line_context(data: &str, e: &serde_json::Error) -> Option<String> {
+    let n = e.line() as usize;
+    if n == 0 {
+        return None;
+    }
+    let lines: Vec<_> = data.lines().collect();
+    let i = n - 1;
+    if i >= lines.len() {
+        return None;
+    }
+    Some(
+        (i.saturating_sub(1)..(i + 2).min(lines.len()))
+            .map(|j| format!("{}: {}", j + 1, lines[j].trim_end()))
+            .collect::<Vec<_>>()
+            .join(" | "),
+    )
+}
+
 struct DbReporter {
     path: PathBuf,
 }
@@ -438,9 +456,12 @@ impl TaskManager {
             match serde_json::from_str(&data) {
                 Ok(tasks) => Ok(tasks),
                 Err(e) => {
+                    let context_line = json_error_line_context(&data, &e)
+                        .map(|c| format!("\nContext: {c}"))
+                        .unwrap_or_default();
                     let error_msg = format!(
                         "Failed to parse the database file at '{}'. The file appears to be corrupted.\n\
-                        JSON parsing error: {}\n\
+                        JSON parsing error: {}{}\n\
                         \n\
                         To fix this issue, you can:\n\
                         1. Delete the corrupted file: rm '{}'\n\
@@ -448,6 +469,7 @@ impl TaskManager {
                         3. The application will create a new empty database on next run",
                         path.display(),
                         e,
+                        context_line,
                         path.display()
                     );
                     anyhow::bail!("{}", error_msg)

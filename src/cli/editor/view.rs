@@ -30,21 +30,24 @@ const ML_MIN_HPAD: usize = 2;
 const ML_MIN_VPAD_TOP: u16 = 1;
 /// Minimum one full blank text row between the last text line and the footer line.
 const ML_MIN_VPAD_TEXT_TO_FOOTER: usize = 1;
+/// Blank full row between the last text line and the footer in wide (docked) layout.
+const ML_VPAD_TEXT_TO_FOOTER_WIDE: usize = 1;
 
 /// Soft-wrap width and left padding to center the text block in the terminal.
 /// `(editor_row, footer_gap, available_text)`: on wide terminals tall enough to show
 /// at least [`MIN_TEXT_ROWS_FOR_VERTICAL_DECOR`] text rows with margins, text starts
-/// at `ML_TOP_MARGIN`, the footer is docked in [`render`], and `footer_gap` is 0. Otherwise
-/// a compact layout with at least one empty row at the top and one above the footer when the
-/// height allows; very short terminals use best-effort.
+/// at `ML_TOP_MARGIN`, the footer is docked in [`render`], and `footer_gap` is 0 (spacing is
+/// reserved in the row budget via [`ML_VPAD_TEXT_TO_FOOTER_WIDE`]). Otherwise a compact layout
+/// with at least one empty row at the top and one above the footer when the height allows; very
+/// short terminals use best-effort.
 fn vertical_layout(term_cols: u16, term_rows: u16) -> (u16, usize, usize) {
     let t = term_rows as usize;
     if term_cols < MIN_TERM_COLS_FOR_MARGINS {
         return compact_vertical_layout(t);
     }
     let v = ML_TOP_MARGIN as usize;
-    // Rows: v (top) + available_text (text) + 1 (footer) + ML_FOOTER_FROM_BOTTOM (blank to bottom)
-    let a = t.saturating_sub(v + 1 + ML_FOOTER_FROM_BOTTOM);
+    // Rows: v + text + gap + footer + ML_FOOTER_FROM_BOTTOM (blank to bottom)
+    let a = t.saturating_sub(v + ML_VPAD_TEXT_TO_FOOTER_WIDE + 1 + ML_FOOTER_FROM_BOTTOM);
     if a < MIN_TEXT_ROWS_FOR_VERTICAL_DECOR {
         return compact_vertical_layout(t);
     }

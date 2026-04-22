@@ -16,6 +16,52 @@ pub struct TaskManager {
     pub db_path: PathBuf,
 }
 
+/// Byte offset (0-based) of the first character of each 1-based line in `s`.
+fn line_starts(s: &str) -> Vec<usize> {
+    let mut v = vec![0];
+    for (i, c) in s.char_indices() {
+        if c == '\n' {
+            v.push(i + 1);
+        }
+    }
+    v
+}
+
+fn line_byte_end(data: &str, starts: &[usize], one_based_line: usize) -> Option<usize> {
+    if one_based_line < 1 || one_based_line > starts.len() {
+        return None;
+    }
+    let s = if one_based_line < starts.len() {
+        starts[one_based_line]
+    } else {
+        data.len()
+    };
+    Some(s)
+}
+
+fn error_byte_in_file(data: &str, line: usize, column: usize) -> Option<usize> {
+    if line < 1 {
+        return None;
+    }
+    let starts = line_starts(data);
+    if line > starts.len() {
+        return None;
+    }
+    let line0 = line - 1;
+    let line_start = starts[line0];
+    let after_line = if line0 + 1 < starts.len() {
+        starts[line0 + 1]
+    } else {
+        data.len()
+    };
+    let line_len = after_line - line_start;
+    let col0 = column.saturating_sub(1);
+    if col0 > line_len {
+        return None;
+    }
+    Some(line_start + col0)
+}
+
 fn json_error_line_context(data: &str, e: &serde_json::Error) -> Option<String> {
     let n = e.line() as usize;
     if n == 0 {
@@ -26,12 +72,40 @@ fn json_error_line_context(data: &str, e: &serde_json::Error) -> Option<String> 
     if i >= lines.len() {
         return None;
     }
-    Some(
-        (i.saturating_sub(1)..(i + 2).min(lines.len()))
-            .map(|j| format!("{}: {}", j + 1, lines[j].trim_end()))
-            .collect::<Vec<_>>()
-            .join(" | "),
-    )
+    let starts = line_starts(data);
+    let first = i.saturating_sub(1) + 1;
+    let last = (i + 2).min(lines.len());
+    let range_str = if first <= last {
+        match (
+            starts.get(first - 1).copied(),
+            line_byte_end(data, &starts, last),
+        ) {
+            (Some(a), Some(b)) if a <= b => format!("context file bytes {a}..{b}"),
+            _ => String::new(),
+        }
+    } else {
+        String::new()
+    };
+
+    let err_str = error_byte_in_file(data, n, e.column())
+        .map(|b| format!("(error at byte {b})"))
+        .unwrap_or_default();
+
+    let ctx = (i.saturating_sub(1)..(i + 2).min(lines.len()))
+        .map(|j| format!("{}: {}", j + 1, lines[j].trim_end()))
+        .collect::<Vec<_>>()
+        .join(" | ");
+
+    let parts = [err_str.as_str(), range_str.as_str()]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if parts.is_empty() {
+        Some(ctx)
+    } else {
+        Some(format!("{parts}: {ctx}"))
+    }
 }
 
 struct DbReporter {
@@ -457,7 +531,7 @@ impl TaskManager {
                 Ok(tasks) => Ok(tasks),
                 Err(e) => {
                     let context_line = json_error_line_context(&data, &e)
-                        .map(|c| format!("\nContext: {c}"))
+                        .map(|c| format!(" Context: {c}"))
                         .unwrap_or_default();
                     let error_msg = format!(
                         "Failed to parse the database file at '{}'. The file appears to be corrupted.\n\

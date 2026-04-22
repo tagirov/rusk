@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 use crate::completions::Shell;
 
 pub const DATE_FORMAT_LONG_HELP: &str = "\
-Date value for -d / --date (and interactive date entry when `edit … --date` with no value):
+Date value for -d / --date (see `rusk add --help`):
   Absolute    DD-MM-YYYY (slashes ok; short year ok, e.g. 1-3-25).
   Relative    Offset from today's local date. Chain segments with no spaces.
               Suffixes: d=days, w=weeks, m=months, q=quarters (3 months), y=years.
@@ -12,12 +12,21 @@ Date value for -d / --date (and interactive date entry when `edit … --date` wi
   Clear       Pass _ to remove the date from a task (e.g. -d _).
   Subcommand  Pass -h or --help as the date value for this command's help (e.g. -d -h).\n";
 
+pub const EDIT_SUBCOMMAND_LONG_HELP: &str = "\
+Interactive edit (`rusk edit <id>`) uses the TUI: the due date (if any) is only the \
+first whitespace-delimited token at the start of the first line of the task text \
+(absolute, relative, or `_` to clear). A valid date token is highlighted in color; \
+see Ctrl+G / F1 in the editor for the full date syntax. \
+One-shot date or text+date without opening the TUI: `rusk edit <id> -d <date>` (same \
+values as `rusk add -d`; `_` clears). Bare `-d` / `--date` (no value) is not \
+supported. For new tasks, use `rusk add -d`.\n";
+
 #[derive(Parser)]
 #[command(
     version,
     about,
     after_help = "Without COMMAND, lists all tasks (same as `rusk list`). Use `rusk list -f` for a compact single-line view.\n\nFor details on flags, dates, and environment variables run `rusk --help` or `rusk <COMMAND> --help`.",
-    after_long_help = "Running `rusk` without a COMMAND is equivalent to `rusk list`. Use `rusk list -f` / `--first-line` for a compact single-line view.\n\nDue dates: calendar form (DD-MM-YYYY, slashes or dots ok) or relative (e.g. 2w, 10d5w) on add/edit. Pass `_` to clear. See `rusk add --help` for the full date syntax.\n\nEnvironment:\n  RUSK_DB        Optional path to the tasks database file or directory.\n  RUSK_NO_COLOR  Disable ANSI colors when set to any non-empty value (NO_COLOR is also respected).\n\nShell tab completion:\n  rusk completions install <shell> [<shell> ...]\n  rusk completions show <shell>\n"
+    after_long_help = "Running `rusk` without a COMMAND is equivalent to `rusk list`. Use `rusk list -f` / `--first-line` for a compact single-line view.\n\nDue dates: use `rusk add -d ...` for new tasks, or the interactive editor (`rusk edit <id>`) — first line at the start, see `rusk edit --help`. Pass `_` to clear where `-d` is supported. See `rusk add --help` for date syntax.\n\nEnvironment:\n  RUSK_DB        Optional path to the tasks database file or directory.\n  RUSK_NO_COLOR  Disable ANSI colors when set to any non-empty value (NO_COLOR is also respected).\n\nShell tab completion:\n  rusk completions install <shell> [<shell> ...]\n  rusk completions show <shell>\n"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -61,15 +70,13 @@ pub enum Command {
     },
     #[command(
         visible_alias = "e",
-        about = "Edit tasks by ID. Without text opens the interactive editor; add --date to also edit the date. Examples: rusk e 1; rusk e 1 --date; rusk e 3 new text -d 01-11-2025; rusk e 1 -d 2w; rusk e 1 -d _",
-        help_template = "{about-section}\n\nUsage: rusk edit [OPTIONS] [ARGS]...\n\n{all-args}\n\n{after-help}",
-        after_long_help = DATE_FORMAT_LONG_HELP
+        about = "Edit tasks by ID. Without new text, opens the interactive editor (set or clear a due date on the first line). With text, sets task text in one shot. Optional `-d <date>` (non-TUI) sets the due date. Examples: rusk e 1; rusk e 1 -d 2w; rusk e 3 new text -d 15-06-2025; rusk e 1 -d _",
+        help_template = "{about-section}\n\nUsage: rusk edit [ARGS]...\n\n{all-args}\n\n{after-help}",
+        after_long_help = EDIT_SUBCOMMAND_LONG_HELP
     )]
     Edit {
         #[arg(trailing_var_arg = true, allow_hyphen_values = false, value_name = "ARGS", help = "Task IDs (comma-separated) followed by optional new text. Without text, opens the interactive editor")]
         args: Vec<String>,
-        #[arg(short, long, value_name = "DATE", num_args = 0..=1, allow_hyphen_values = true, help = "Set date: DD-MM-YYYY or relative (2w, 10d5w, …); use `_` to clear. Omit value to edit interactively. See `rusk edit --help` for full syntax. Pass `-d -h` for this command's help")]
-        date: Option<Option<String>>,
     },
     #[command(
         visible_alias = "l",

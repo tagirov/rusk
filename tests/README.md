@@ -78,7 +78,7 @@ Tests for core library functions:
 - ID generation (`generate_next_id`)
 - Task management operations
 - Task filtering and querying
-- Date handling: absolute (DD-MM-YYYY) and relative offsets (e.g. 2w, 10d5w), including interactive `edit … --date` prompts
+- Date handling: absolute (DD-MM-YYYY) and relative offsets (e.g. 2w, 10d5w), first-line due date in interactive `rusk edit`, optional `rusk edit <id> -d <date>` (bare `-d` is invalid; see `rusk edit --help`)
 - Task validation
 
 #### `cli_tests.rs`
@@ -156,16 +156,12 @@ Tests for environment variable handling:
 Tests for edit command argument parsing:
 - ID extraction
 - Text extraction
-- Date flag handling
+- Date changes when editing with an explicit date argument (non-interactive `handle_edit_tasks`)
 - Unchanged task detection
 - Save behavior optimization
 
 #### `edit_mode_tests.rs`
-Tests for edit command modes:
-- Date-only edits (`--date` flag)
-- Text-only edits
-- Combined text and date edits
-- Interactive mode handling
+Tests for `parse_edit_args` (IDs vs text tokens, including former `--date` tokens as plain text).
 
 ### ID Parsing Tests
 

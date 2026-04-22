@@ -16,7 +16,6 @@
 - [Dirty-state confirmation](#dirty-state-confirmation)
 - [Draft autosave and recovery](#draft-autosave-and-recovery)
 - [Task date header](#task-date-header)
-- [Date sub-editor](#date-sub-editor)
 - [Output after editing](#output-after-editing)
 
 ## Overview
@@ -28,11 +27,8 @@ selection, clipboard, undo/redo, word navigation, and crash-safe autosave.
 ## Launching
 
 ```bash
-# Edit task text interactively.
+# Edit task text and due date (first line) interactively.
 rusk edit 1
-
-# Edit text and date interactively in sequence.
-rusk edit 1 --date
 
 # Edit several tasks in one session (the editor opens once per id).
 rusk edit 1,2,3
@@ -49,8 +45,9 @@ rusk edit 1,2,3
 ```
 
 - Top rows: the editable text, soft-wrapped to fit the terminal width.
-- If a task has a date, the first row starts with the date in **green**; other
-  rows use equivalent-width indent so cursor math stays accurate.
+- If the first line starts with a valid due-date token, it is shown in color
+  (**green** for today or later, **red** if before today); other rows use
+  equivalent-width indent so cursor math stays accurate.
 - Footer (last row): hotkey hint that adapts to the terminal width.
 - Arrows `↑` / `↓` at the bottom-left appear when the buffer scrolls.
 - Status glyph at the bottom-right: `●` (dirty) / `○` (saved).
@@ -165,27 +162,26 @@ key returns to the editor.
 
 ## Task date header
 
-When the task has a date, the editor renders the date on the first visual row
-in `DD-MM-YYYY` format, in bold green, followed by the editable text:
+The due date (if any) is **only** the first whitespace-delimited token at the
+**very start of the first line**. It may be an absolute date (`DD-MM-YYYY`,
+slashes or short year ok) or a relative offset from today (`2d`, `2w`, `10d5w`,
+`1m3q`, …), same rules as `rusk add -d`. Use `_` as the only date token to clear
+the deadline. A **recognized** token is **highlighted in color** on that line
+(green for today or later, red if before today); text that does not parse as a
+date is not colored. The rest of the first line is the task title; following
+lines are the body.
+
+`rusk edit <id> -d <date>` (with a value, same as `rusk add -d`) sets the date
+without opening the TUI. **Bare** `-d` / `--date` (no value) is not supported;
+use the TUI to edit the first line. The interactive buffer is still the
+authoritative place for a due date: whatever appears as the first token on the
+first line (or absent). Full syntax, including relative forms, is in the
+in-editor help (`Ctrl+G` / `F1`).
 
 ```
 31-12-2025 Buy groceries: milk, bread, eggs
            Pick up the cake at 17:00
 ```
-
-The date is display-only inside the multi-line editor — use `rusk edit <id>
---date` to change it through the date sub-editor.
-
-## Date sub-editor
-
-`rusk edit <id> --date` opens the same full-screen editor after the text step,
-with a short `>` prompt and the usual footer (`^S` save, etc.). Hints:
-
-- An empty input keeps the current date.
-- `_` clears the date.
-- Absolute formats: `DD-MM-YYYY`, `DD/MM/YY`, `DD.MM.YY`.
-- Relative offsets from today: `2d`, `2w`, `10d5w`, `1m3q`, ...
-- `Tab` restores the original prefill value.
 
 ## Output after editing
 
@@ -197,9 +193,6 @@ Edited task: 3
 Task unchanged: 4
 Skipped task: 5
 ```
-
-Date changes through the date sub-editor still print a short `Date: …` status
-line.
 
 ## Resize handling
 

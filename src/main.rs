@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
 use colored::*;
 use rusk::{
-    TaskManager, cli::HandlerCLI, error::AppError, is_cli_date_help_value, parse_edit_args,
-    parse_flexible_ids, windows_console,
+    BareEditDateFlag, TaskManager, cli::HandlerCLI, error::AppError, is_cli_date_help_value,
+    parse_edit_args, parse_flexible_ids, strip_edit_date_flag, windows_console,
     args::{Cli, Command},
 };
 #[cfg(feature = "completions")]
@@ -31,6 +31,11 @@ fn args_have_date_then_help(args: &[String]) -> bool {
     false
 }
 
+/// Prints a CLI error with one blank line before and after (stderr).
+fn eprint_cli_error(msg: impl std::fmt::Display) {
+    eprintln!("\n{}\n", msg);
+}
+
 fn main() {
     match run() {
         Ok(()) => {}
@@ -38,7 +43,7 @@ fn main() {
             Some(AppError::UserCancel) | Some(AppError::SkipTask) => std::process::exit(0),
             Some(AppError::UserAbort) => std::process::exit(130),
             None => {
-                eprintln!("{}", format!("Error: {err}").red());
+                eprint_cli_error(format!("Error: {err}").red());
                 std::process::exit(1);
             }
         },
@@ -80,7 +85,7 @@ fn run() -> Result<()> {
                 }
             }
             if let Err(e) = HandlerCLI::handle_add_task(&mut tm, text, date) {
-                eprintln!("{}", format!("Error: {e}").red());
+                eprint_cli_error(format!("Error: {e}").red());
                 std::process::exit(1);
             }
         }
@@ -103,27 +108,21 @@ fn run() -> Result<()> {
                 .collect();
 
             if filtered_ids.is_empty() {
-                eprintln!("{}", "Error: No valid task IDs provided".red());
+                eprint_cli_error("Error: No valid task IDs provided".red());
                 std::process::exit(1);
             }
 
             let parsed_ids = parse_flexible_ids(&filtered_ids);
             if parsed_ids.is_empty() {
-                eprintln!("{}", "Error: No valid task IDs provided".red());
+                eprint_cli_error("Error: No valid task IDs provided".red());
                 std::process::exit(1);
             }
             HandlerCLI::handle_mark_tasks(&mut tm, parsed_ids, priority)?;
         }
-        Some(Command::Edit { args, date }) => {
+        Some(Command::Edit { args }) => {
             if args_have_date_then_help(&args) {
                 print_subcommand_help("edit")?;
                 return Ok(());
-            }
-            if let Some(Some(ref d)) = date {
-                if is_cli_date_help_value(d) {
-                    print_subcommand_help("edit")?;
-                    return Ok(());
-                }
             }
             if args
                 .last()
@@ -133,70 +132,48 @@ fn run() -> Result<()> {
                 return Ok(());
             }
             if args.is_empty() {
-                eprintln!("{}", "Error: No arguments provided for edit command".red());
+                eprint_cli_error("Error: No arguments provided for edit command".red());
                 std::process::exit(1);
             }
-
-            let (ids, text_option) = parse_edit_args(args.clone());
-
-            let mut date_flag_present = false;
-            let mut inline_date_value: Option<String> = None;
-            let mut i = 0usize;
-            while i < args.len() {
-                let a = &args[i];
-                if a == "-d" || a == "--date" {
-                    if i + 1 < args.len() {
-                        let next = &args[i + 1];
-                        if is_cli_date_help_value(next) {
-                            i += 1;
-                        } else if !next.starts_with('-') {
-                            inline_date_value = Some(next.clone());
-                            i += 1;
-                        } else {
-                            date_flag_present = true;
-                        }
-                    } else {
-                        date_flag_present = true;
-                    }
+            let (args, opt_date) = match strip_edit_date_flag(args) {
+                Ok(p) => p,
+                Err(BareEditDateFlag) => {
+                    eprint_cli_error(
+                        "Error: `rusk edit` does not support `-d` / `--date` without a value. \
+                         Use `rusk edit <id>` to set the due date on the first line of the task text in the editor, \
+                         or pass a date: `rusk edit <id> -d 31-12-2025` or `rusk edit <id> -d 2w` (see `rusk add --help` for syntax)."
+                            .red(),
+                    );
+                    std::process::exit(1);
                 }
-                i += 1;
-            }
-
-            if ids.is_empty() {
-                eprintln!("{}", "Error: No valid task IDs provided".red());
-                std::process::exit(1);
-            }
-
-            let effective_date_opt = match date {
-                Some(Some(d)) => Some(Some(d)),
-                Some(None) => Some(None),
-                None => inline_date_value
-                    .map(Some)
-                    .or(if date_flag_present { Some(None) } else { None }),
             };
 
-            match (text_option, effective_date_opt) {
-                (None, Some(Some(d))) => {
-                    HandlerCLI::handle_edit_tasks(&mut tm, ids, None, Some(d))?
-                }
-                #[cfg(feature = "interactive")]
-                (None, Some(None)) => HandlerCLI::handle_edit_tasks_interactive(&mut tm, ids)?,
-                #[cfg(not(feature = "interactive"))]
-                (None, Some(None)) => {
-                    eprintln!("{}", "Interactive editing requires the 'interactive' feature".red());
-                    std::process::exit(1);
-                }
-                #[cfg(feature = "interactive")]
-                (None, None) => HandlerCLI::handle_edit_tasks_interactive_text_only(&mut tm, ids)?,
-                #[cfg(not(feature = "interactive"))]
-                (None, None) => {
-                    eprintln!("{}", "Interactive editing requires the 'interactive' feature".red());
-                    std::process::exit(1);
-                }
-                (Some(text), Some(Some(d))) => {
+            let (ids, text_option) = parse_edit_args(args);
+
+            if ids.is_empty() {
+                eprint_cli_error("Error: No valid task IDs provided".red());
+                std::process::exit(1);
+            }
+
+            match (text_option, opt_date) {
+                (None, Some(d)) => HandlerCLI::handle_edit_tasks(&mut tm, ids, None, Some(d))?,
+                (Some(text), Some(d)) => {
                     HandlerCLI::handle_edit_tasks(&mut tm, ids, Some(text), Some(d))?
                 }
-                (Some(text), _) => HandlerCLI::handle_edit_tasks(&mut tm, ids, Some(text), None)?,
+                (None, None) => {
+                    #[cfg(feature = "interactive")]
+                    {
+                        HandlerCLI::handle_edit_tasks_interactive(&mut tm, ids)?
+                    }
+                    #[cfg(not(feature = "interactive"))]
+                    {
+                        eprint_cli_error(
+                            "Interactive editing requires the 'interactive' feature".red(),
+                        );
+                        std::process::exit(1);
+                    }
+                }
+                (Some(text), None) => HandlerCLI::handle_edit_tasks(&mut tm, ids, Some(text), None)?,
             }
         }
         Some(Command::List {
@@ -216,13 +193,13 @@ fn run() -> Result<()> {
             let mut restore_tm = match TaskManager::new_for_restore() {
                 Ok(tm) => tm,
                 Err(e) => {
-                    eprintln!("{}", format!("Error: {e}").red());
+                    eprint_cli_error(format!("Error: {e}").red());
                     std::process::exit(1);
                 }
             };
 
             if let Err(e) = HandlerCLI::handle_restore(&mut restore_tm) {
-                eprintln!("{}", format!("Error: {e}").red());
+                eprint_cli_error(format!("Error: {e}").red());
                 std::process::exit(1);
             }
         }
@@ -238,7 +215,7 @@ fn run() -> Result<()> {
 #[cfg(feature = "completions")]
 fn handle_completions_install(shells: Vec<Shell>) -> Result<()> {
     if shells.is_empty() {
-        eprintln!("{}", "Error: At least one shell must be specified".red());
+        eprint_cli_error("Error: At least one shell must be specified".red());
         std::process::exit(1);
     }
 

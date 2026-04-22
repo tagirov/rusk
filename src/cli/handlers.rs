@@ -1,6 +1,4 @@
 use crate::{Task, TaskManager, parse_cli_date};
-#[cfg(feature = "interactive")]
-use crate::parse_cli_date_optional_empty;
 use crate::parser::date::is_cli_date_clear_value;
 use anyhow::Result;
 use chrono::Datelike;
@@ -119,6 +117,20 @@ impl HandlerCLI {
         if token.is_empty() {
             return (None, edited.to_string());
         }
+        if is_cli_date_clear_value(&token) {
+            let token_chars = token.chars().count();
+            let mut tail = first.chars().skip(token_chars);
+            let peek = tail.clone().next();
+            if matches!(peek, Some(c) if c.is_whitespace()) {
+                tail.next();
+            }
+            let first_rest: String = tail.collect();
+            let new_text = match rest {
+                Some(r) => format!("{}\n{}", first_rest, r),
+                None => first_rest,
+            };
+            return (None, new_text);
+        }
         match parse_cli_date(&token) {
             Ok(date) => {
                 let token_chars = token.chars().count();
@@ -140,11 +152,7 @@ impl HandlerCLI {
     }
 
     #[cfg(feature = "interactive")]
-    fn handle_edit_tasks_interactive_internal(
-        tm: &mut TaskManager,
-        ids: Vec<u8>,
-        edit_date: bool,
-    ) -> Result<()> {
+    fn handle_edit_tasks_interactive_internal(tm: &mut TaskManager, ids: Vec<u8>) -> Result<()> {
         let mut any_changed = false;
         let mut edited: Vec<u8> = Vec::new();
         let mut unchanged: Vec<u8> = Vec::new();
@@ -189,91 +197,6 @@ impl HandlerCLI {
                     }
                 }
 
-                if edit_date {
-                    let current_date = tm.tasks()[idx]
-                        .date
-                        .map(|d| d.format("%d-%m-%Y").to_string())
-                        .unwrap_or_default();
-                    println!(
-                        "{} {}",
-                        "Current date:".cyan(),
-                        if current_date.is_empty() {
-                            "empty".bold()
-                        } else {
-                            current_date.bold()
-                        }
-                    );
-                    println!(
-                        "{}",
-                        "Enter new date: DD-MM-YYYY or DD/MM/YYYY (short year ok), or relative from today (2d, 2w, 10d5w, …). Leave empty to keep, _ to clear. Tab restores prefill.".cyan()
-                    );
-                    let date_editor =
-                        |s: &str| parse_cli_date(s.trim()).is_ok() || is_cli_date_clear_value(s.trim());
-                    match Self::run_multi_line_editor(
-                        "> ",
-                        &current_date,
-                        true,
-                        Some(date_editor),
-                        allow_skip,
-                        EditorExtras::default(),
-                    ) {
-                        Ok(date_input) => {
-                            let trimmed = date_input.trim();
-                            if is_cli_date_clear_value(trimmed) {
-                                let task = &mut tm.tasks_mut()[idx];
-                                if task.date.is_some() {
-                                    task.date = None;
-                                    if !edited.contains(id) {
-                                        edited.push(*id);
-                                    }
-                                    any_changed = true;
-                                    println!("{} {}", "Edited task:".green(), id);
-                                }
-                                println!("{} {}", "Date:".cyan(), "empty".bold());
-                            } else {
-                            let parsed_res = parse_cli_date_optional_empty(&date_input);
-                            if let Ok(Some(parsed)) = &parsed_res {
-                                let parsed = *parsed;
-                                let task = &mut tm.tasks_mut()[idx];
-                                if task.date != Some(parsed) {
-                                    task.date = Some(parsed);
-                                    if !edited.contains(id) {
-                                        edited.push(*id);
-                                    }
-                                    any_changed = true;
-                                    println!("{} {}", "Edited task:".green(), id);
-                                }
-                            }
-                            let final_date_display = match parsed_res {
-                                Ok(None) => {
-                                    if current_date.is_empty() {
-                                        "empty".to_string()
-                                    } else {
-                                        current_date.clone()
-                                    }
-                                }
-                                Ok(Some(p)) => p.format("%d-%m-%Y").to_string(),
-                                Err(_) => trimmed.to_string(),
-                            };
-                            println!(
-                                "{} {}",
-                                "Date:".cyan(),
-                                if final_date_display == "empty" {
-                                    "empty".bold()
-                                } else {
-                                    final_date_display.bold()
-                                }
-                            );
-                            }
-                        }
-                        Err(e) => {
-                            if Self::handle_skip_task_error(&e, *id) {
-                                continue;
-                            }
-                            return Err(e);
-                        }
-                    }
-                }
             } else {
                 not_found.push(*id);
             }
@@ -289,15 +212,7 @@ impl HandlerCLI {
 
     #[cfg(feature = "interactive")]
     pub fn handle_edit_tasks_interactive(tm: &mut TaskManager, ids: Vec<u8>) -> Result<()> {
-        Self::handle_edit_tasks_interactive_internal(tm, ids, true)
-    }
-
-    #[cfg(feature = "interactive")]
-    pub fn handle_edit_tasks_interactive_text_only(
-        tm: &mut TaskManager,
-        ids: Vec<u8>,
-    ) -> Result<()> {
-        Self::handle_edit_tasks_interactive_internal(tm, ids, false)
+        Self::handle_edit_tasks_interactive_internal(tm, ids)
     }
 
     #[cfg(feature = "interactive")]

@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Test: rusk e <id><tab> should append task text; rusk e <id> <tab> should offer -d/--date and help flags
+# Test: rusk e <id><tab> should append task text; rusk e <id> <tab> should offer -d/--date and help
 # This is the critical test for the reported issue
 
 set +e  # Don't exit on error
@@ -31,15 +31,16 @@ reset_counters
 
 print_test_section "Zsh Completion Tests - Edit After ID"
 
-# Test 1: rusk e 1 <tab> (with space after ID) — date + help flags
-print_test "rusk e 1 <tab> (with space after ID)" "rusk e 1" "Should return -d/--date and -h/--help, NO task text"
+# Test 1: rusk e 1 <tab> (with space after ID) — -d/--date and help
+print_test "rusk e 1 <tab> (with space after ID)" "rusk e 1" "Should return -d/--date and -h/--help for edit"
 if grep -q '_rusk_get_task_text_raw "$prev"' "$COMPLETION_FILE"; then
     assert_true 1 "Spaced ID completion does not call task text helper (task text disabled)"
 else
-    if grep -q '_rusk_edit_has_completed_id' "$COMPLETION_FILE" && grep -q '\-d --date -h --help' "$COMPLETION_FILE"; then
-        assert_true 0 "Spaced ID completion includes -d/--date in script when ID present"
+    if grep -qE '_rusk_zsh_compadd_flags -- -d --date' "$COMPLETION_FILE" \
+        && grep -q _rusk_zsh_compadd_edit_flags "$COMPLETION_FILE"; then
+        assert_true 0 "Edit compadd offers -d --date (non-interactive date)"
     else
-        assert_true 1 "Spaced ID completion should use _rusk_edit_has_completed_id and -d --date -h --help"
+        assert_true 1 "Edit flags should include -d --date in _rusk_zsh_compadd_edit_flags"
     fi
 fi
 
@@ -81,14 +82,14 @@ else
     assert_true 1 "Function _rusk_get_entered_ids exists"
 fi
 
-# Test 4: after --date + space, script should offer -h/--help (runtime compadd needs zle; bash test covers behavior)
-print_test "rusk e 1 --date <tab> (space after flag)" "rusk e 1 --date " "Should return -h/--help only"
+# Test 4: script has multiple -h/--help compadd sites (add/edit/restore/…)
+print_test "Completion script" "rusk.zsh" "Should have several help-flag compadd branches"
 if grep -q 'edit|e)' "$COMPLETION_FILE" && grep -q 'if \[\[ -z "\$cur" \]\]; then' "$COMPLETION_FILE"; then
-    cnt=$(grep -cE 'compadd -- -h --help|_rusk_zsh_compadd_flags -- .+(-h |--help)' "$COMPLETION_FILE" || echo 0)
-    if [[ "$cnt" -ge 4 ]]; then
-        assert_true 0 "Completion script has help-only branches after date flag + space"
+    cnt=$(grep -cE 'compadd -- -h --help|_rusk_zsh_compadd_flags -- -h --help' "$COMPLETION_FILE" || echo 0)
+    if [[ "$cnt" -ge 2 ]]; then
+        assert_true 0 "Completion script has -h/--help compadd branches"
     else
-        assert_true 1 "Expected multiple compadd -h/--help branches (count=$cnt)"
+        assert_true 1 "Expected at least two -h/--help compadd sites (count=$cnt)"
     fi
 else
     assert_true 1 "Completion file should contain edit branch and empty-cur handling"

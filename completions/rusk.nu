@@ -439,6 +439,11 @@ def add-has-prior-task-text [spans: list<string>] {
   false
 }
 
+# True if edit has at least one task id before cursor (skips -d value)
+def edit-has-prior-id [spans: list<string>] {
+  (get-entered-ids $spans | length) > 0
+}
+
 # Complete add command
 def complete-add [spans: list<string>, cur: string, prev: string] {
   # After -d/--date: more flags only (-h/--help), including while the flag token is still current
@@ -462,24 +467,29 @@ def complete-add [spans: list<string>, cur: string, prev: string] {
   []
 }
 
-# Complete edit command
+# Complete edit: optional -d <date> after id(s), else TUI (first line for date)
 def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_space: bool, command: string] {
-  let entered_ids = (get-entered-ids $spans)
-  
-  # After -d/--date: date value, next flag, or empty — never suggest -d/--date again
   if ($prev == "-d" or $prev == "--date") and (($cur == "") or ($cur | str starts-with "-")) {
     return (complete-flags (get-common-flags) $cur)
   }
+
+  let entered_ids = (get-entered-ids $spans)
+  let args_done = (add-completed-args-after $spans)
+  let has_date_on_line = ($args_done | any {|t| $t == "-d" or $t == "--date"}) or $cur == "-d" or $cur == "--date"
+  let has_id = (edit-has-prior-id $spans)
   
   let prev_ends_with_comma = (ends-with-comma $prev)
-  let cur_ends_with_comma = (ends-with-comma $cur)
   let prev_id = (extract-id $prev)
-  let cur_id = (extract-id $cur)
 
-  # Space after single ID: flags including -d/--date
+  # Space after single ID: -d/--date and help if no -d on line yet, else -h only
   if ($cur == "") and (is-number $prev_id) and not $prev_ends_with_comma {
     if ($entered_ids | length) == 1 {
-      return (complete-flags ((get-date-flags) | append (get-common-flags)) $cur)
+      let all_flags = if $has_id and not $has_date_on_line {
+        ((get-date-flags) | append (get-common-flags))
+      } else {
+        (get-common-flags)
+      }
+      return (complete-flags $all_flags $cur)
     }
   }
   
@@ -516,23 +526,9 @@ def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_
     }
   }
   
-  # Flags: after id(s) offer -d/--date unless those flags already appear (avoids repeat after `... -d <tab>`).
   if ($cur == "") or ($cur | str starts-with "-") {
-    let filtered = ($spans | where $it != "")
-    let rusk_ix = try {
-      ($filtered | enumerate | where {|it| $it.item == "rusk"} | get 0.index)
-    } catch {
-      -1
-    }
-    let args_after_cmd = if $rusk_ix >= 0 {
-      ($filtered | skip ($rusk_ix + 2))
-    } else {
-      []
-    }
-    let has_date_flag_tok = ($args_after_cmd | any {|t| $t == "-d" or $t == "--date"}) or $cur == "-d" or $cur == "--date"
-    let ids = (get-entered-ids $spans)
-    let all_flags = if ($ids | length) >= 1 and not $has_date_flag_tok {
-      (get-date-flags) | append (get-common-flags)
+    let all_flags = if $has_id and not $has_date_on_line {
+      ((get-date-flags) | append (get-common-flags))
     } else {
       (get-common-flags)
     }

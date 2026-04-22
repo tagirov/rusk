@@ -185,44 +185,6 @@ _rusk_count_ids() {
     echo $count
 }
 
-# True if a completed word before the cursor is a task ID (for edit flag suggestions)
-_rusk_edit_has_completed_id() {
-    local rusk_idx=-1
-    local i
-    for ((i=0; i<${#COMP_WORDS[@]}; i++)); do
-        if [[ "${COMP_WORDS[i]}" == "rusk" ]]; then
-            rusk_idx=$i
-            break
-        fi
-    done
-    (( rusk_idx < 0 )) && return 1
-    local start=$((rusk_idx + 2))
-    local j
-    local w
-    local prev=""
-    for ((j=start; j<COMP_CWORD; j++)); do
-        w="${COMP_WORDS[j]}"
-        [[ -n "$w" ]] || continue
-        if [[ "$prev" == "-d" || "$prev" == "--date" ]]; then
-            prev="$w"
-            continue
-        fi
-        if [[ "$w" == "-d" || "$w" == "--date" ]]; then
-            prev="$w"
-            continue
-        fi
-        if [[ "$w" == -* ]]; then
-            prev="$w"
-            continue
-        fi
-        if [[ "$w" =~ ^[0-9]+$ ]] || [[ "$w" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
-            return 0
-        fi
-        prev="$w"
-    done
-    return 1
-}
-
 # Complete task IDs with filtering
 _rusk_complete_task_ids() {
     local ids=$(_rusk_get_task_ids)
@@ -285,10 +247,48 @@ _rusk_add_help_after_date_only() {
     return 1
 }
 
-# Same for edit: cursor on -d/--date or empty word after the flag.
+# True if edit has at least one task ID token (skips -d/--date value)
+_rusk_edit_has_task_id() {
+    local rusk_idx=-1
+    local i
+    for ((i=0; i<${#COMP_WORDS[@]}; i++)); do
+        if [[ "${COMP_WORDS[i]}" == "rusk" ]]; then
+            rusk_idx=$i
+            break
+        fi
+    done
+    (( rusk_idx >= 0 )) || return 1
+    local cmd="${COMP_WORDS[$((rusk_idx+1))]}"
+    [[ "$cmd" == "edit" || "$cmd" == "e" ]] || return 1
+    local start=$((rusk_idx+2))
+    local prev=""
+    local w
+    for ((i=start; i<COMP_CWORD; i++)); do
+        w="${COMP_WORDS[i]}"
+        [[ -n "$w" ]] || continue
+        if [[ "$prev" == "-d" || "$prev" == "--date" ]]; then
+            prev="$w"
+            continue
+        fi
+        if [[ "$w" == "-d" || "$w" == "--date" ]]; then
+            prev="$w"
+            continue
+        fi
+        if [[ "$w" == -* ]]; then
+            prev="$w"
+            continue
+        fi
+        if [[ "$w" =~ ^[0-9,]+$ ]]; then
+            return 0
+        fi
+        prev="$w"
+    done
+    return 1
+}
+
 _rusk_edit_help_after_date_only() {
     [[ "$prev" == "-d" || "$prev" == "--date" ]] && return 0
-    if [[ "$cur" == "-d" || "$cur" == "--date" ]] && _rusk_edit_has_completed_id; then
+    if [[ "$cur" == "-d" || "$cur" == "--date" ]] && _rusk_edit_has_task_id; then
         return 0
     fi
     return 1
@@ -306,14 +306,42 @@ _rusk_complete_add_edit_flags() {
     return 0
 }
 
-# Complete flags for edit: $1=1 → subcommand token only (-h/--help); else after id/text → -d/--date too
+# Complete flags for edit: -d/--date only after a task id (TUI: first line; CLI: -d <date>)
 _rusk_complete_edit_flags() {
     local gcur="$cur"
     [[ "${1:-0}" == 1 ]] && gcur=""
-    if [[ "${1:-0}" == 1 ]]; then
-        COMPREPLY=($(compgen -W "-h --help" -- "$gcur"))
-    elif _rusk_edit_has_completed_id; then
-        COMPREPLY=($(compgen -W "-d --date -h --help" -- "$gcur"))
+    if _rusk_edit_has_task_id; then
+        local have_d=0
+        local p=""
+        local rusk_i=-1
+        local j
+        for ((j=0; j<${#COMP_WORDS[@]}; j++)); do
+            if [[ "${COMP_WORDS[j]}" == "rusk" ]]; then
+                rusk_i=$j
+                break
+            fi
+        done
+        if (( rusk_i >= 0 )); then
+            local a
+            p=""
+            for ((j=rusk_i+2; j<COMP_CWORD; j++)); do
+                a="${COMP_WORDS[j]}"
+                [[ -n "$a" ]] || continue
+                if [[ "$p" == "-d" || "$p" == "--date" ]]; then
+                    p="$a"
+                    continue
+                fi
+                if [[ "$a" == "-d" || "$a" == "--date" ]]; then
+                    have_d=1
+                fi
+                p="$a"
+            done
+        fi
+        if (( have_d == 0 )); then
+            COMPREPLY=($(compgen -W "-d --date -h --help" -- "$gcur"))
+        else
+            COMPREPLY=($(compgen -W "-h --help" -- "$gcur"))
+        fi
     else
         COMPREPLY=($(compgen -W "-h --help" -- "$gcur"))
     fi
@@ -444,21 +472,18 @@ _rusk_completion() {
             ;;
             
         edit|e)
-            # Support completion without a space after ID: `rusk edit <id><TAB>`
-            # Here `$cur` is the numeric ID being edited; we append task text after it.
-            if [[ "$cur" =~ ^[0-9]+$ ]] && ([[ "$prev" == "edit" ]] || [[ "$prev" == "e" ]]); then
+            if _rusk_edit_help_after_date_only; then
+                if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+                    COMPREPLY=($(compgen -W "-h --help" -- "$cur"))
+                fi
+            # `rusk edit <id><TAB>` with no space: append task text when available.
+            elif [[ "$cur" =~ ^[0-9]+$ ]] && [[ "$prev" == "edit" || "$prev" == "e" ]]; then
                 if [ $(_rusk_count_ids) -eq 0 ]; then
                     local task_text=$(_rusk_get_task_text "$cur")
                     if [ -n "$task_text" ]; then
                         COMPREPLY=("$cur $task_text")
                         return 0
                     fi
-                fi
-            fi
-            
-            if _rusk_edit_help_after_date_only; then
-                if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
-                    COMPREPLY=($(compgen -W "-h --help" -- "$cur"))
                 fi
             elif [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; }; then
                 if [[ -n "$cur" ]] && [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; then

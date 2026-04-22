@@ -1,4 +1,34 @@
-use super::date::is_cli_date_help_value;
+/// `-d` / `--date` on `edit` with no value (a value is required; bare `-d` is not supported).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BareEditDateFlag;
+
+/// Remove `-d` / `--date` and the following value from `rusk edit` argv (non-interactive date change).
+/// Callers must run `args_have_date_then_help` (or equivalent) on the original argv first, so
+/// `rusk edit 1 -d -h` is handled as help, not an error, before this runs.
+/// Returns [`BareEditDateFlag`] when the flag has no value or the next token starts with `-` (a flag)
+/// and is not a date string.
+pub fn strip_edit_date_flag(args: Vec<String>) -> Result<(Vec<String>, Option<String>), BareEditDateFlag> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut i = 0;
+    let mut last_date: Option<String> = None;
+    while i < args.len() {
+        let a = &args[i];
+        if a == "-d" || a == "--date" {
+            if i + 1 < args.len() {
+                let next = &args[i + 1];
+                if !next.starts_with('-') {
+                    last_date = Some(next.clone());
+                    i += 2;
+                    continue;
+                }
+            }
+            return Err(BareEditDateFlag);
+        }
+        out.push(a.clone());
+        i += 1;
+    }
+    Ok((out, last_date))
+}
 
 /// Parse comma-separated IDs from a single string segment.
 /// Shared logic used by both `parse_flexible_ids` and `parse_edit_args`.
@@ -54,22 +84,6 @@ pub fn parse_edit_args(args: Vec<String>) -> EditArgs {
     let mut i = 0;
     while i < args.len() {
         let arg = &args[i];
-
-        if arg == "-d" || arg == "--date" {
-            if i + 1 < args.len() {
-                let next = &args[i + 1];
-                if is_cli_date_help_value(next) {
-                    i += 2;
-                    continue;
-                }
-                if !next.starts_with('-') {
-                    i += 2;
-                    continue;
-                }
-            }
-            i += 1;
-            continue;
-        }
 
         if parsing_ids {
             let trimmed_arg = arg.trim();

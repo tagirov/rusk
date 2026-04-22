@@ -114,18 +114,9 @@ rusk mark 1 -p     # `•` → `p`
 rusk mark 1        # `p` → `✔`
 rusk mark 1        # `✔` → `p` (not `•`)
 
-# Edit task text (replace)
+# Edit task text in one shot (optional -d for date without opening the TUI)
 rusk edit 1 Complete the project documentation
-
-# Edit task date
-rusk edit 1 --date 25.12.2025
-rusk edit 1 --date 1m3q
-
-# Remove the deadline (clear date)
-rusk edit 1 --date _
-
-# Edit both text and date
-rusk edit 1 Update documentation --date 23-12-25
+rusk edit 1 -d 2w
 
 # Delete a task
 rusk del 1
@@ -140,9 +131,8 @@ rusk --help
 rusk add --help
 rusk edit --help
 
-# Help via the date flag (handy inside add/edit)
+# Date flag help (rusk add -d; rusk edit -d with a value, see rusk edit --help)
 rusk add -d -h
-rusk edit -d --help
 ```
 
 ## Working with Multiple Tasks
@@ -168,21 +158,23 @@ header on the first line. Its full reference lives in
 [EDITOR.md](EDITOR.md).
 
 ```bash
-# Edit task text interactively.
+# Edit task text and optional due date on the first line (see Ctrl+G in the editor).
 rusk edit 1
-
-# Edit text, then date.
-rusk edit 1 --date
 
 # Edit several tasks in one session.
 rusk edit 1,2,3
 ```
 
-Quick keys: `Ctrl+S` save, `Esc` cancel (confirms if dirty), `Ctrl+G` or `F1`
-in-editor help, `Ctrl+R` restore original text, `Ctrl+Z` / `Ctrl+Y` undo /
-redo, `Ctrl+C` / `Ctrl+X` / `Ctrl+V` copy / cut / paste, `Ctrl+A` select all.
-See [EDITOR.md](EDITOR.md) for the complete list, mouse gestures, dirty-state
-confirmation, and draft recovery behaviour.
+Set or change the due date **only on the first line, at the very start** (first
+token): absolute `DD-MM-YYYY` / `DD/MM/YYYY` (short year ok) or relative (`2w`,
+`10d5w`, …). A **valid** token is **highlighted in color** on that line; invalid
+text is not. Use `_` alone as the first token to clear. For non-interactive date
+changes use `rusk edit <id> -d <date>` (same values as `rusk add`); **bare** `-d` /
+`--date` (no value) is not allowed — use the TUI to edit the first line. Quick keys: `Ctrl+S` save, `Esc`
+cancel (confirms if dirty), `Ctrl+G` or `F1` in-editor help (full date syntax),
+`Ctrl+R` restore original text, `Ctrl+Z` / `Ctrl+Y` undo / redo, `Ctrl+C` / `Ctrl+X` /
+`Ctrl+V` copy / cut / paste, `Ctrl+A` select all. See [EDITOR.md](EDITOR.md) for the
+complete list, mouse gestures, dirty-state confirmation, and draft recovery behaviour.
 
 
 ## Data Safety & Backup
@@ -219,7 +211,7 @@ rusk c (completions)
 -V (--version)
 
 # Command flags
--d (--date)          # add, edit
+-d (--date)          # add; optional on `edit` with a value (e.g. -d 2w, -d _); bare -d is invalid; TUI: first line
 -f (--first-line)    # list
 -p (--priority)      # mark
    --done            # del (no short form)
@@ -237,14 +229,14 @@ It provides autocomplete for commands and task text during editing by pressing `
 **Features**
 - Command completion: `add`, `edit`, `mark`, `del`, `completions`, etc. and their aliases
 - Task text completion: `rusk edit <id><tab>` appends the task text for that ID. If the text contains shell-special characters  (``| ; & > < ( ) [ ] { } $ " ' \` * ? ~ # @ ! % ^ = + - / : ,``), it is automatically wrapped in single quotes (double quotes if the text has `'`)
-- Flag completion: Autocomplete `--date`, `--done`, etc.
+- Flag completion: Autocomplete `--date` (add), `--done`, etc.; `edit` offers help flags only
 
 **Windows Support**
 - Git Bash: Works with `bash` completions (uses Unix-style paths)
 - WSL: Works with `bash`, `zsh`, `fish`, and `nu` completions
 - Nu Shell: Works natively on Windows (uses `%APPDATA%\nushell\completions\`)
 - PowerShell: Works natively on Windows (uses `Documents\PowerShell\rusk-completions.ps1`)
-- CMD: Basic commands work (add, list, mark, del, edit with text/date). Interactive editing (`rusk edit` without arguments) requires Windows 10+ and may have limited functionality. Tab completion is not supported. Colors work on Windows 10+ (build 1511 and later)
+- CMD: Basic commands work (add, list, mark, del, edit with text). Due dates: interactive editor (`rusk edit` without argv text) on the first line, or `rusk edit <id> -d <date>`. Interactive editing requires Windows 10+ and may have limited functionality. Tab completion is not supported. Colors work on Windows 10+ (build 1511 and later)
 
 ### Database Location
 

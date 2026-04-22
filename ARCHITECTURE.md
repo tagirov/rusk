@@ -73,9 +73,9 @@ completions
 Without `interactive`: edit commands only work with inline text (`rusk edit 1 new text`),
 delete skips confirmation. Terminal width falls back to 80 columns.
 
-With `interactive`, `rusk edit <id>` opens the full-screen editor for task text:
-`Enter` inserts a newline, `Ctrl+S` saves, `Esc` skips, `Ctrl+G` / `F1` shows in-editor help.
-The same editor is used for the date step when `--date` is set (typically one line of input).
+With `interactive`, `rusk edit <id>` opens the full-screen editor for task text and an
+optional due date on the first line: `Enter` inserts a newline, `Ctrl+S` saves, `Esc` skips,
+`Ctrl+G` / `F1` shows in-editor help (including date syntax).
 
 Without `completions`: `rusk completions` subcommand is unavailable.
 

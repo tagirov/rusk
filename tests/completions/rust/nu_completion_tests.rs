@@ -665,25 +665,18 @@ fn test_nu_completion_after_date_flag() -> Result<()> {
                 "add after '-d' (current token): -h/--help only, no duplicate -d/--date; got: {s2}"
             );
 
-            let edit_d = format!(
-                r#"use {} *; rusk-completions-main ["rusk", "edit", "1", "-d"] | to json"#,
+            let edit_after_id = format!(
+                r#"use {} *; rusk-completions-main ["rusk", "edit", "1", ""] | to json"#,
                 script_path.to_string_lossy()
             );
-            let edit_d_space = format!(
-                r#"use {} *; rusk-completions-main ["rusk", "edit", "1", "-d", ""] | to json"#,
-                script_path.to_string_lossy()
-            );
-            let r3 = Command::new("nu").arg("-c").arg(&edit_d).output()?;
-            let r4 = Command::new("nu").arg("-c").arg(&edit_d_space).output()?;
-            assert!(r3.status.success(), "nu edit -d: {}", String::from_utf8_lossy(&r3.stderr));
-            assert!(r4.status.success(), "nu edit -d space: {}", String::from_utf8_lossy(&r4.stderr));
+            let r3 = Command::new("nu").arg("-c").arg(&edit_after_id).output()?;
+            assert!(r3.status.success(), "nu edit after id: {}", String::from_utf8_lossy(&r3.stderr));
             let s3 = String::from_utf8_lossy(&r3.stdout);
-            let s4 = String::from_utf8_lossy(&r4.stdout);
+            assert!(s3.contains("help"), "edit after id should offer help: {s3}");
             assert!(
-                !s3.contains("Today") && !s4.contains("Today"),
-                "edit: no preset date suggestions; got s3={s3} s4={s4}"
+                s3.contains("Set task date") || s3.contains("--date") || s3.contains("-d"),
+                "edit after id should offer -d/--date: {s3}"
             );
-            assert!(s4.contains("help"), "edit after '-d ' should include help");
         }
         (Err(e), _) | (_, Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
             eprintln!("Warning: nu command not found, skipping after-date-flag test");

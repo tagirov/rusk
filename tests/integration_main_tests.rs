@@ -104,10 +104,8 @@ fn test_binary_add_help_includes_relative_date_syntax() {
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("Relative")
-            && stdout.contains("10d5w")
-            && stdout.contains("interactive date entry"),
-        "long help should document relative and interactive edit dates:\n{stdout}"
+        stdout.contains("Relative") && stdout.contains("10d5w"),
+        "long help should document relative dates:\n{stdout}"
     );
 }
 
@@ -117,8 +115,8 @@ fn test_binary_root_long_help_mentions_dates() {
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("2w") || stdout.contains("10d5w") || stdout.contains("relative"),
-        "root --help should point at date forms:\n{stdout}"
+        stdout.contains("rusk add -d") && stdout.contains("rusk edit"),
+        "root --help should point at due dates (add flag vs edit first line):\n{stdout}"
     );
 }
 
@@ -166,15 +164,30 @@ fn test_binary_edit_help_includes_relative_date_syntax() {
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("Relative")
-            && stdout.contains("10d5w")
-            && stdout.contains("interactive date entry"),
-        "edit long help should document relative and interactive dates:\n{stdout}"
+        stdout.to_lowercase().contains("relative") && stdout.contains("first line"),
+        "edit long help should document relative + absolute dates and first-line due date:\n{stdout}"
     );
 }
 
 #[test]
-fn test_binary_edit_inline_date() {
+fn test_binary_edit_rejects_bare_date_flag() {
+    let _guard = BIN_TEST_MUTEX.lock().unwrap();
+
+    setup_test_db(r#"[{"id":1,"text":"T","date":null,"done":false,"priority":false}]"#);
+
+    let out = rusk_command().args(["edit", "1", "-d"]).output().unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("without a value")
+            || stderr.contains("--date")
+            || stderr.contains("first line of the task"),
+        "stderr={stderr}"
+    );
+}
+
+#[test]
+fn test_binary_edit_with_date_flag_sets_date_and_text() {
     let _guard = BIN_TEST_MUTEX.lock().unwrap();
 
     let db = r#"[
@@ -186,9 +199,7 @@ fn test_binary_edit_inline_date() {
         .args(["edit", "1", "Updated text", "-d", "15-06-2025"])
         .output()
         .unwrap();
-    assert!(out.status.success());
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Updated") || stdout.is_empty());
+    assert!(out.status.success(), "edit with -d and text should succeed");
 
     let db_after: Vec<serde_json::Value> = serde_json::from_str(&read_db()).unwrap();
     let t = &db_after[0];

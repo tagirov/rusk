@@ -373,23 +373,51 @@ function __rusk_should_complete_add_flags
     return 1
 end
 
-# Check if there are ID arguments after edit command
-function __rusk_has_edit_id
+# True if edit has a task id token in completed words
+function __rusk_edit_has_task_id
     set -l cmdline (__rusk_get_cmdline)
-    if test (count $cmdline) -ge 3
-        set -l args $cmdline[3..-1]
-        for arg in $args
-            if not __rusk_is_flag "$arg"
-                if __rusk_is_number "$arg"
-                    return 0
-                end
-            end
+    set -l n (count $cmdline)
+    test $n -ge 3; or return 1
+    set -l rusk_idx -1
+    for i in (seq 1 $n)
+        if test "$cmdline[$i]" = rusk
+            set rusk_idx $i
+            break
         end
+    end
+    test $rusk_idx -ge 1; or return 1
+    set -l cmd_idx (math $rusk_idx + 1)
+    test $cmd_idx -le $n; or return 1
+    if not contains -- "$cmdline[$cmd_idx]" edit e
+        return 1
+    end
+    set -l start (math $cmd_idx + 1)
+    test $start -le $n; or return 1
+    set -l prev ""
+    for j in (seq $start $n)
+        set -l w "$cmdline[$j]"
+        test -n "$w"; or continue
+        if test "$prev" = -d; or test "$prev" = --date
+            set prev "$w"
+            continue
+        end
+        if test "$w" = -d; or test "$w" = --date
+            set prev "$w"
+            continue
+        end
+        if __rusk_is_flag "$w"
+            set prev "$w"
+            continue
+        end
+        if string match -qr '^[0-9,]+$' -- "$w"
+            return 0
+        end
+        set prev "$w"
     end
     return 1
 end
 
-# Complete flags for edit command
+# Complete flags for edit: -d/--date after a task id (unless -d already present)
 function __rusk_complete_edit_flags
     if __rusk_is_after_date_flag
         set -l cw (__rusk_get_current_word)
@@ -398,10 +426,36 @@ function __rusk_complete_edit_flags
             return
         end
     end
-    # After at least one ID: date + help; before any ID: help only (matches add semantics).
     set -l all_flags -h --help
-    if __rusk_has_edit_id
-        set all_flags -d --date -h --help
+    if __rusk_edit_has_task_id
+        set -l cmdline (__rusk_get_cmdline)
+        set -l n (count $cmdline)
+        set -l has_d 0
+        set -l rusk_i -1
+        for i in (seq 1 $n)
+            if test "$cmdline[$i]" = rusk
+                set rusk_i $i
+                break
+            end
+        end
+        if test $rusk_i -ge 1
+            set -l p ""
+            for j in (seq (math $rusk_i + 2) (math $n - 1))
+                set -l a "$cmdline[$j]"
+                test -n "$a"; or continue
+                if test "$p" = -d; or test "$p" = --date
+                    set p "$a"
+                    continue
+                end
+                if test "$a" = -d; or test "$a" = --date
+                    set has_d 1
+                end
+                set p "$a"
+            end
+        end
+        if test $has_d -eq 0
+            set all_flags -d --date -h --help
+        end
     end
     __rusk_complete_flags $all_flags
 end

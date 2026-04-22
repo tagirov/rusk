@@ -305,6 +305,44 @@ function _rusk_add_has_prior_task_text {
     return $false
 }
 
+# edit: at least one id-like token in completed args (skips -d value)
+function _rusk_edit_has_task_id {
+    param($tokens, $wordToComplete)
+    $endIndex = $tokens.Count
+    if ($tokens.Count -gt 2) {
+        if (-not [string]::IsNullOrEmpty($wordToComplete)) {
+            $endIndex = $tokens.Count - 1
+        } elseif ([string]::IsNullOrEmpty($wordToComplete)) {
+            $lastTokenValue = _rusk_token_text $tokens[$tokens.Count - 1]
+            if ([string]::IsNullOrEmpty($lastTokenValue)) {
+                $endIndex = $tokens.Count - 1
+            }
+        }
+    }
+    $prev = ""
+    for ($i = 2; $i -lt $endIndex; $i++) {
+        $w = _rusk_token_text $tokens[$i]
+        if ([string]::IsNullOrEmpty($w)) { continue }
+        if ($prev -eq '-d' -or $prev -eq '--date') {
+            $prev = $w
+            continue
+        }
+        if ($w -eq '-d' -or $w -eq '--date') {
+            $prev = $w
+            continue
+        }
+        if ($w.StartsWith('-')) {
+            $prev = $w
+            continue
+        }
+        if ($w -match '^[0-9,]+$') {
+            return $true
+        }
+        $prev = $w
+    }
+    return $false
+}
+
 # Complete task IDs with filtering and descriptions
 function _rusk_complete_task_ids {
     param($tokens, $wordToComplete)
@@ -353,7 +391,7 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
         if ([string]::IsNullOrEmpty($wordToComplete)) {
             # When wordToComplete is empty, cursor is after the last token.
             # If the last AST element is an empty word (cursor after a space), use the token before it
-            # so `rusk add text -d <tab>` / `rusk edit 1 text -d <tab>` get prev = -d, not "".
+            # so `rusk add text -d <tab>` gets prev = -d, not "".
             $lastVal = _rusk_token_text $tokens[$tokens.Count - 1]
             if ([string]::IsNullOrEmpty($lastVal) -and $tokens.Count -ge 3) {
                 $prev = _rusk_token_text $tokens[$tokens.Count - 2]
@@ -437,15 +475,13 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
         }
 
         { $_ -in 'edit', 'e' } {
-            $enteredIds = _rusk_get_entered_ids $tokens $wordToComplete
-            
-            # After -d/--date: next token is date value, empty word, or another flag — never offer -d/--date again
-            if ($prev -eq '--date' -or $prev -eq '-d') {
+            if (_rusk_is_after_date_flag $prev $tokens $commandAst) {
                 if ([string]::IsNullOrEmpty($cur) -or $cur -like '-*') {
                     return _rusk_emit_flag_completions @('--help', '-h') $wordToComplete $tokens $command $cur
                 }
                 return @()
             }
+            $enteredIds = _rusk_get_entered_ids $tokens $wordToComplete
 
             # Suggest task text if current word is a number (ID) and it's the first ID
             # This handles "rusk e 1<tab>" case (without space after ID)
@@ -459,19 +495,19 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
                 }
             }
 
-            # After at least one entered ID: -d/--date + help unless -d/--date already on the line (covers bad $prev).
             if ([string]::IsNullOrEmpty($cur) -or $cur -like '-*' -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
-                $hasDateFlag = ($wordToComplete -eq '-d' -or $wordToComplete -eq '--date')
-                if (-not $hasDateFlag) {
+                $lineHasDateFlag = ($wordToComplete -eq '-d' -or $wordToComplete -eq '--date')
+                if (-not $lineHasDateFlag) {
                     for ($i = 2; $i -lt $tokens.Count; $i++) {
-                        $tv = _rusk_token_text $tokens[$i]
-                        if ($tv -eq '-d' -or $tv -eq '--date') {
-                            $hasDateFlag = $true
+                        $v = _rusk_token_text $tokens[$i]
+                        if ($v -eq '-d' -or $v -eq '--date') {
+                            $lineHasDateFlag = $true
                             break
                         }
                     }
                 }
-                $flags = if ($enteredIds.Count -ge 1 -and -not $hasDateFlag) {
+                $hasId = _rusk_edit_has_task_id $tokens $wordToComplete
+                $flags = if ($hasId -and -not $lineHasDateFlag) {
                     @('--date', '-d', '--help', '-h')
                 } else {
                     @('--help', '-h')

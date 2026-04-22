@@ -49,7 +49,7 @@ pub(super) fn finish(stdout: &mut io::Stdout) -> Result<()> {
 /// Render the in-editor help overlay, wait for a key or click to dismiss it,
 /// and then clear the screen so the caller can re-render the editor.
 pub(super) fn show_help(stdout: &mut io::Stdout) -> Result<()> {
-    let lines: [&str; 27] = [
+    let lines: &[&str] = &[
         "Rusk Interactive Editor Keys",
         "",
         "  Enter              new line",
@@ -76,6 +76,14 @@ pub(super) fn show_help(stdout: &mut io::Stdout) -> Result<()> {
         "  Double-click       select word",
         "  Triple-click       select line",
         "  Middle-click       paste from clipboard",
+        "",
+        "  Due date: only the first line, at the very start, as the first",
+        "    token. Absolute: DD-MM-YYYY, DD/MM/YYYY, or DD.MM.YYYY (short year",
+        "    ok), or relative from today (2d, 2w, 10d5w, …), same as rusk add -d.",
+        "    A recognized token is shown in color on that line (green = today or",
+        "    later, red = before today; invalid or non-date text is not colored).",
+        "    Use `_` alone as the first token to clear. No date token = no due date;",
+        "    keep the preloaded first line, or Ctrl+R to restore the original.",
         "  Ctrl+G / F1        show this help",
     ];
     let hint = "(press any key to return)";

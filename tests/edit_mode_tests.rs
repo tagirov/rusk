@@ -1,36 +1,36 @@
-use rusk::parse_edit_args;
+use rusk::{parse_edit_args, strip_edit_date_flag, BareEditDateFlag};
 
 #[test]
-fn test_parse_edit_args_date_only_long_flag() {
-    // rusk edit 3 --date 2025-12-31
+fn test_parse_edit_args_date_tokens_become_text() {
+    // `rusk edit` no longer treats --date specially; these are text tokens (CLI rejects -d for edit).
     let (ids, text) = parse_edit_args(vec![
         "3".to_string(),
         "--date".to_string(),
         "2025-12-31".to_string(),
     ]);
     assert_eq!(ids, vec![3]);
-    assert!(text.is_none());
+    assert_eq!(
+        text,
+        Some(vec!["--date".to_string(), "2025-12-31".to_string()])
+    );
 }
 
 #[test]
 fn test_parse_edit_args_only_id_text_none() {
-    // rusk edit 3  -> interactive text-only expected; text should be None
     let (ids, text) = parse_edit_args(vec!["3".to_string()]);
     assert_eq!(ids, vec![3]);
     assert!(text.is_none());
 }
 
 #[test]
-fn test_parse_edit_args_interactive_short_flag() {
-    // rusk edit 3 -d (interactive expected at CLI routing; parser should not treat -d as text)
+fn test_parse_edit_args_dash_d_is_text_after_id() {
     let (ids, text) = parse_edit_args(vec!["3".to_string(), "-d".to_string()]);
     assert_eq!(ids, vec![3]);
-    assert!(text.is_none());
+    assert_eq!(text, Some(vec!["-d".to_string()]));
 }
 
 #[test]
-fn test_parse_edit_args_mixed_ids_and_text_with_date() {
-    // rusk edit 1,2 new text --date 2025-06-15
+fn test_parse_edit_args_mixed_ids_and_text_with_date_tokens() {
     let (ids, text) = parse_edit_args(vec![
         "1,2".to_string(),
         "new".to_string(),
@@ -39,12 +39,19 @@ fn test_parse_edit_args_mixed_ids_and_text_with_date() {
         "2025-06-15".to_string(),
     ]);
     assert_eq!(ids, vec![1, 2]);
-    assert_eq!(text, Some(vec!["new".to_string(), "text".to_string()]));
+    assert_eq!(
+        text,
+        Some(vec![
+            "new".to_string(),
+            "text".to_string(),
+            "--date".to_string(),
+            "2025-06-15".to_string(),
+        ])
+    );
 }
 
 #[test]
-fn test_parse_edit_args_comma_separated_ids_and_text_with_short_date() {
-    // rusk edit 1,2,3 some words -d 2025-01-01
+fn test_parse_edit_args_comma_separated_ids_and_text_including_dash_d() {
     let (ids, text) = parse_edit_args(vec![
         "1,2,3".to_string(),
         "some".to_string(),
@@ -53,12 +60,19 @@ fn test_parse_edit_args_comma_separated_ids_and_text_with_short_date() {
         "2025-01-01".to_string(),
     ]);
     assert_eq!(ids, vec![1, 2, 3]);
-    assert_eq!(text, Some(vec!["some".to_string(), "words".to_string()]));
+    assert_eq!(
+        text,
+        Some(vec![
+            "some".to_string(),
+            "words".to_string(),
+            "-d".to_string(),
+            "2025-01-01".to_string(),
+        ])
+    );
 }
 
 #[test]
 fn test_parse_edit_args_comma_separated_ids_no_text() {
-    // rusk edit 1,2,3 -> text None
     let (ids, text) = parse_edit_args(vec!["1,2,3".to_string()]);
     assert_eq!(ids, vec![1, 2, 3]);
     assert!(text.is_none());
@@ -66,7 +80,6 @@ fn test_parse_edit_args_comma_separated_ids_no_text() {
 
 #[test]
 fn test_parse_edit_args_text_only_words() {
-    // rusk edit 5 new title here
     let (ids, text) = parse_edit_args(vec![
         "5".to_string(),
         "new".to_string(),
@@ -85,17 +98,18 @@ fn test_parse_edit_args_text_only_words() {
 }
 
 #[test]
-fn test_parse_edit_args_short_date_without_value_then_text_ignored_as_date_value() {
-    // rusk edit 7 -d some -> parser treats 'some' as date value and skips it
-    // so text remains None and ids parsed
-    let (ids, text) = parse_edit_args(vec!["7".to_string(), "-d".to_string(), "some".to_string()]);
+fn test_parse_edit_args_dash_d_with_value_is_text() {
+    let (ids, text) = parse_edit_args(vec![
+        "7".to_string(),
+        "-d".to_string(),
+        "some".to_string(),
+    ]);
     assert_eq!(ids, vec![7]);
-    assert!(text.is_none());
+    assert_eq!(text, Some(vec!["-d".to_string(), "some".to_string()]));
 }
 
 #[test]
 fn test_parse_edit_args_with_space_before_comma() {
-    // Handle case like "1,5,4 ,6" which becomes ["1,5,4", " ,6"]
     let (ids, text) = parse_edit_args(vec!["1,5,4".to_string(), " ,6".to_string()]);
     assert_eq!(ids, vec![1, 5, 4, 6]);
     assert!(text.is_none());
@@ -103,7 +117,6 @@ fn test_parse_edit_args_with_space_before_comma() {
 
 #[test]
 fn test_parse_edit_args_with_space_before_comma_and_text() {
-    // Handle case like "1,5,4 ,6" with text
     let (ids, text) = parse_edit_args(vec![
         "1,5,4".to_string(),
         " ,6".to_string(),
@@ -116,7 +129,6 @@ fn test_parse_edit_args_with_space_before_comma_and_text() {
 
 #[test]
 fn test_parse_edit_args_with_comma_at_start() {
-    // Handle case like "1,2" ",3" ",4"
     let (ids, text) = parse_edit_args(vec!["1,2".to_string(), ",3".to_string(), ",4".to_string()]);
     assert_eq!(ids, vec![1, 2, 3, 4]);
     assert!(text.is_none());
@@ -124,7 +136,6 @@ fn test_parse_edit_args_with_comma_at_start() {
 
 #[test]
 fn test_parse_edit_args_with_comma_at_start_and_text() {
-    // Handle case like "1,2" ",3" ",4" with text
     let (ids, text) = parse_edit_args(vec![
         "1,2".to_string(),
         ",3".to_string(),
@@ -137,8 +148,7 @@ fn test_parse_edit_args_with_comma_at_start_and_text() {
 }
 
 #[test]
-fn test_parse_edit_args_with_space_before_comma_and_date() {
-    // Handle case like "1,5,4 ,6" with date flag
+fn test_parse_edit_args_with_space_before_comma_and_extra_tokens() {
     let (ids, text) = parse_edit_args(vec![
         "1,5,4".to_string(),
         " ,6".to_string(),
@@ -146,12 +156,11 @@ fn test_parse_edit_args_with_space_before_comma_and_date() {
         "2025-01-01".to_string(),
     ]);
     assert_eq!(ids, vec![1, 5, 4, 6]);
-    assert!(text.is_none());
+    assert_eq!(text, Some(vec!["-d".to_string(), "2025-01-01".to_string()]));
 }
 
 #[test]
-fn test_parse_edit_args_with_space_before_comma_text_and_date() {
-    // Handle case like "1,5,4 ,6" with text and date
+fn test_parse_edit_args_with_space_before_comma_text_and_date_tokens() {
     let (ids, text) = parse_edit_args(vec![
         "1,5,4".to_string(),
         " ,6".to_string(),
@@ -161,12 +170,19 @@ fn test_parse_edit_args_with_space_before_comma_text_and_date() {
         "2025-01-01".to_string(),
     ]);
     assert_eq!(ids, vec![1, 5, 4, 6]);
-    assert_eq!(text, Some(vec!["new".to_string(), "text".to_string()]));
+    assert_eq!(
+        text,
+        Some(vec![
+            "new".to_string(),
+            "text".to_string(),
+            "--date".to_string(),
+            "2025-01-01".to_string(),
+        ])
+    );
 }
 
 #[test]
 fn test_parse_edit_args_empty_parts_in_comma_separated() {
-    // Handle case with empty parts: "1,,3"
     let (ids, text) = parse_edit_args(vec!["1,,3".to_string()]);
     assert_eq!(ids, vec![1, 3]);
     assert!(text.is_none());
@@ -174,8 +190,29 @@ fn test_parse_edit_args_empty_parts_in_comma_separated() {
 
 #[test]
 fn test_parse_edit_args_multiple_comma_args() {
-    // Handle case with multiple comma-separated arguments
     let (ids, text) = parse_edit_args(vec!["1,2".to_string(), "3,4".to_string()]);
     assert_eq!(ids, vec![1, 2, 3, 4]);
     assert!(text.is_none());
+}
+
+#[test]
+fn test_strip_edit_date_flag_removes_d_and_value() {
+    let (out, d) = strip_edit_date_flag(vec![
+        "1".to_string(),
+        "a".to_string(),
+        "b".to_string(),
+        "-d".to_string(),
+        "2w".to_string(),
+    ])
+    .unwrap();
+    assert_eq!(d, Some("2w".to_string()));
+    assert_eq!(out, vec!["1", "a", "b"]);
+}
+
+#[test]
+fn test_strip_edit_date_flag_bare_returns_error() {
+    assert_eq!(
+        strip_edit_date_flag(vec!["1".to_string(), "-d".to_string()]),
+        Err(BareEditDateFlag)
+    );
 }

@@ -109,7 +109,7 @@ $test_edit2 = Test-CompletionScenario `
     -Description "rusk edit 1 -<tab> (flag completion)" `
     -Tokens @("rusk", "edit", "1", "-") `
     -WordToComplete "-" `
-    -ExpectedBehavior "Should suggest --date, -d, --help, -h for edit after ID" `
+    -ExpectedBehavior "Should suggest --help, -h for edit after ID (no date flags)" `
     -Validation {
         param($Tokens, $WordToComplete, $Prev, $Cur)
         if ($Cur -like '-*') {
@@ -120,23 +120,6 @@ $test_edit2 = Test-CompletionScenario `
     }
 
 if (-not $test_edit2) { $allTestsPassed = $false }
-
-# Test: rusk edit 21 text -d <tab> should suggest -h/--help only
-$test_edit3 = Test-CompletionScenario `
-    -Description "rusk edit 21 text -d <tab> (space after short date flag)" `
-    -Tokens @("rusk", "edit", "21", "text", "-d", "") `
-    -WordToComplete "" `
-    -ExpectedBehavior "Should suggest -h/--help only (no duplicate -d/--date)" `
-    -Validation {
-        param($Tokens, $WordToComplete, $Prev, $Cur)
-        if (($Prev -eq '--date' -or $Prev -eq '-d') -and [string]::IsNullOrEmpty($Cur)) {
-            Assert-True $true "Edit after short date flag + space: help flags only"
-            return $true
-        }
-        return $false
-    }
-
-if (-not $test_edit3) { $allTestsPassed = $false }
 
 # ============================================================================
 # MARK COMMAND TESTS

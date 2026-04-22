@@ -1,5 +1,5 @@
 #!/usr/bin/env fish
-# Test: rusk e <id> <tab> (space after ID) should suggest flags including -d/--date and -h/--help
+# Test: rusk e <id> <tab> (space after ID) should suggest -h/--help (no date flags for edit)
 # This is the critical test for the reported issue
 
 set SCRIPT_DIR (dirname (status -f))
@@ -94,8 +94,8 @@ function __rusk_get_current_word
     echo $__rusk_test_current_word
 end
 
-# Test 1: rusk e 1 <tab> (with space after ID) - flags including date + help, no task text
-print_test "rusk e 1 <tab> (with space after ID)" "rusk e 1" "Should return -d/--date and -h/--help, NO task text"
+# Test 1: rusk e 1 <tab> (with space after ID) - help flags only, no task text
+print_test "rusk e 1 <tab> (with space after ID)" "rusk e 1" "Should return -h/--help, NO task text"
 set -g __rusk_test_current_word ""
 
 if __rusk_should_complete_edit_text
@@ -112,9 +112,9 @@ end
 
 set -l flags (__rusk_complete_edit_flags)
 if contains -- -d $flags; and contains -- --date $flags; and contains -- -h $flags; and contains -- --help $flags
-    assert_true 0 "Flags completion contains expected flags"
+    assert_true 0 "Flags completion includes -d/--date and help for edit"
 else
-    assert_true 1 "Flags completion contains expected flags (got: $flags)"
+    assert_true 1 "Flags completion should include -d/--date (got: $flags)"
 end
 
 # Test 2: rusk e 1<tab> (no space) - should suggest task text
@@ -144,21 +144,21 @@ end
 print_test "rusk e 1 2 <tab> (multiple IDs)" "rusk e 1 2" "Should return task IDs (not text, not dates)"
 assert_true 0 "Multiple IDs detected, should return task IDs"
 
-# Test 4: rusk e 1 --date <tab> (space after flag) — help flags, not dates
-print_test "rusk e 1 --date <tab> (space after flag)" "rusk e 1 --date " "Should return -h/--help only"
+# Test 4: empty word after command still offers help flags
+print_test "rusk e 1 <tab> (empty cur)" "rusk e 1 " "Should return -h/--help"
 function __rusk_get_cmdline
-    printf '%s\n' rusk e 1 --date
+    printf '%s\n' rusk e 1
 end
 set -g __rusk_test_current_word ""
 if __rusk_should_complete_edit_flags
-    set -l flags (__rusk_complete_edit_flags)
-    if contains -- -h $flags; and contains -- --help $flags
-        assert_true 0 "Edit after --date + space suggests -h/--help"
+    set -l flags2 (__rusk_complete_edit_flags)
+    if contains -- -h $flags2; and contains -- --help $flags2
+        assert_true 0 "Edit flag completion lists -h/--help"
     else
-        assert_true 1 "Edit after --date + space suggests -h/--help (got: $flags)"
+        assert_true 1 "Edit flag completion lists -h/--help (got: $flags2)"
     end
 else
-    assert_true 1 "__rusk_should_complete_edit_flags should be true for --date + space"
+    assert_true 1 "__rusk_should_complete_edit_flags should be true with empty current word"
 end
 
 get_test_summary

@@ -46,53 +46,109 @@ pub(super) fn finish(stdout: &mut io::Stdout) -> Result<()> {
     Ok(())
 }
 
+/// A single row in the help overlay body.
+enum HelpRow {
+    Section(&'static str),
+    Pair(&'static str, &'static str),
+    Note(&'static str),
+    Blank,
+}
+
+const HELP_TITLE: &str = "Rusk Interactive Editor";
+const HELP_HINT: &str = "press any key to return";
+
+const HELP_ROWS: &[HelpRow] = &[
+    HelpRow::Section("Navigation"),
+    HelpRow::Pair("← / →", "move by character"),
+    HelpRow::Pair("Ctrl+← / Ctrl+→", "jump by word"),
+    HelpRow::Pair("↑ / ↓", "move by visual row"),
+    HelpRow::Pair("Ctrl+↑ / Ctrl+↓", "move by 5 visual rows"),
+    HelpRow::Pair("Home / End", "smart line start / line end"),
+    HelpRow::Pair("Ctrl+Home / Ctrl+End", "buffer start / buffer end"),
+    HelpRow::Pair("PageUp / PageDown", "scroll one page"),
+    HelpRow::Pair("Ctrl+PageUp / Ctrl+PageDown", "buffer start / buffer end"),
+    HelpRow::Blank,
+    HelpRow::Section("Selection"),
+    HelpRow::Pair("Shift + <movement>", "extend selection"),
+    HelpRow::Pair("Ctrl+A", "select all"),
+    HelpRow::Blank,
+    HelpRow::Section("Editing"),
+    HelpRow::Pair("Enter", "insert newline"),
+    HelpRow::Pair("Tab", "insert four spaces"),
+    HelpRow::Pair("Backspace / Delete", "delete char or selection"),
+    HelpRow::Pair("Ctrl+W, Ctrl+Backspace", "delete word to the left"),
+    HelpRow::Pair("Ctrl+Delete", "delete word to the right"),
+    HelpRow::Pair("Ctrl+K", "kill to end of line"),
+    HelpRow::Pair("Ctrl+Shift+K", "delete whole line"),
+    HelpRow::Pair("Ctrl+U", "kill to beginning of line"),
+    HelpRow::Pair("Ctrl+R", "restore original text"),
+    HelpRow::Blank,
+    HelpRow::Section("Clipboard & History"),
+    HelpRow::Pair("Ctrl+C / Ctrl+X / Ctrl+V", "copy / cut / paste"),
+    HelpRow::Pair("Ctrl+Z / Ctrl+Y", "undo / redo"),
+    HelpRow::Blank,
+    HelpRow::Section("Mouse"),
+    HelpRow::Pair("Click / drag", "move cursor / extend selection"),
+    HelpRow::Pair("Double-click", "select word"),
+    HelpRow::Pair("Triple-click", "select line"),
+    HelpRow::Pair("Shift + click", "extend selection to click point"),
+    HelpRow::Pair("Middle-click", "paste at cursor"),
+    HelpRow::Pair("Wheel", "scroll view"),
+    HelpRow::Blank,
+    HelpRow::Section("Session"),
+    HelpRow::Pair("Ctrl+S", "save and exit"),
+    HelpRow::Pair("Esc", "cancel / skip (confirms when dirty)"),
+    HelpRow::Pair("Ctrl+G / F1", "show this help"),
+    HelpRow::Blank,
+    HelpRow::Section("Due date — first token of the first line"),
+    HelpRow::Pair("DD-MM-YYYY", "absolute (also `/` or `.`; short year ok)"),
+    HelpRow::Pair("2d 2w 3m 1q 1y", "relative from today (combine: 10d5w)"),
+    HelpRow::Pair("+2w, +10d5w", "relative to current due date (today if none)"),
+    HelpRow::Pair("_", "clear the due date"),
+    HelpRow::Note("Recognized tokens are colored: green = today/future, red = past."),
+];
+
+fn pad_right_chars(s: &str, width: usize) -> String {
+    let count = s.chars().count();
+    if count >= width {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len() + (width - count));
+    out.push_str(s);
+    for _ in 0..(width - count) {
+        out.push(' ');
+    }
+    out
+}
+
 /// Render the in-editor help overlay, wait for a key or click to dismiss it,
 /// and then clear the screen so the caller can re-render the editor.
 pub(super) fn show_help(stdout: &mut io::Stdout) -> Result<()> {
-    let lines: &[&str] = &[
-        "Rusk Interactive Editor Keys",
-        "",
-        "  Enter              new line",
-        "  Ctrl+S             save",
-        "  Esc                cancel / skip (confirms when dirty)",
-        "  Ctrl+R             restore original text",
-        "  Tab                insert four spaces",
-        "  Up / Down          move between lines",
-        "  Ctrl+Up/Down       move by 5 lines",
-        "  Left / Right       move by char",
-        "  Ctrl+Left/Right    jump by word",
-        "  Home / End         line start (smart) / end",
-        "  Ctrl+Home/End      buffer start / end",
-        "  PageUp / PageDown  scroll one page",
-        "  Shift+Arrows       extend selection",
-        "  Ctrl+A             select all",
-        "  Ctrl+C / X / V     copy / cut / paste",
-        "  Ctrl+Z / Ctrl+Y    undo / redo",
-        "  Ctrl+W, Ctrl+Bksp  delete word left",
-        "  Ctrl+Delete        delete word right",
-        "  Ctrl+K             kill to end of line",
-        "  Ctrl+Shift+K       delete whole line",
-        "  Ctrl+U             kill to beginning of line",
-        "  Double-click       select word",
-        "  Triple-click       select line",
-        "  Middle-click       paste from clipboard",
-        "",
-        "  Due date: only the first line, at the very start, as the first",
-        "    token. Absolute: DD-MM-YYYY, DD/MM/YYYY, or DD.MM.YYYY (short year",
-        "    ok). Relative from today: 2d, 2w, 10d5w, … Relative from this task's",
-        "    current due date: +2w, +10d5w, … (+ uses today if there was no date).",
-        "    A recognized token is shown in color on that line (green = today or",
-        "    later, red = before today; invalid or non-date text is not colored).",
-        "    Use `_` alone as the first token to clear. No date token = no due date;",
-        "    keep the preloaded first line, or Ctrl+R to restore the original.",
-        "  Ctrl+G / F1        show this help",
-    ];
-    let hint = "(press any key to return)";
-    /// title + blank + blank before hint + hint
-    const CHROME: usize = 4;
+    /// title + rule + blank + blank before hint + hint
+    const CHROME: usize = 5;
+    /// Indent applied to every body row so sections visually group the pairs.
+    const BODY_INDENT: usize = 2;
 
-    let body: &[&str] = &lines[2..];
-    let body_width = || body.iter().map(|s| s.chars().count()).max().unwrap_or(0);
+    let body = HELP_ROWS;
+
+    let key_col = body
+        .iter()
+        .filter_map(|r| match r {
+            HelpRow::Pair(k, _) => Some(k.chars().count()),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0);
+
+    let row_visible_width = |r: &HelpRow| -> usize {
+        match r {
+            HelpRow::Section(s) => s.chars().count(),
+            HelpRow::Pair(_, d) => BODY_INDENT + key_col + 2 + d.chars().count(),
+            HelpRow::Note(n) => BODY_INDENT + n.chars().count(),
+            HelpRow::Blank => 0,
+        }
+    };
+    let body_width = body.iter().map(row_visible_width).max().unwrap_or(0);
 
     let mut body_scroll: usize = 0;
     let _show_cursor = ShowCursorOnDrop;
@@ -120,14 +176,20 @@ pub(super) fn show_help(stdout: &mut io::Stdout) -> Result<()> {
             let block_height = CHROME + body.len();
             term_rows.saturating_sub(block_height) / 2
         };
-        let body_start_col = term_cols.saturating_sub(body_width()) / 2;
+        let body_start_col = term_cols.saturating_sub(body_width) / 2;
 
         stdout.queue(Clear(ClearType::All))?;
 
-        let title = lines[0];
-        let title_col = term_cols.saturating_sub(title.chars().count()) / 2;
+        let title_col = term_cols.saturating_sub(HELP_TITLE.chars().count()) / 2;
         stdout.queue(MoveTo(title_col as u16, start_row as u16))?;
-        stdout.queue(Print(title.bold()))?;
+        stdout.queue(Print(HELP_TITLE.truecolor(235, 235, 240).bold()))?;
+
+        // Thin underline beneath the title, as wide as the body block.
+        let rule_width = body_width.max(HELP_TITLE.chars().count());
+        let rule: String = "─".repeat(rule_width);
+        let rule_col = term_cols.saturating_sub(rule_width) / 2;
+        stdout.queue(MoveTo(rule_col as u16, (start_row + 1) as u16))?;
+        stdout.queue(Print(rule.truecolor(90, 90, 95)))?;
 
         let first = if overflow { *body_scroll } else { 0 };
         let n = if overflow {
@@ -136,22 +198,40 @@ pub(super) fn show_help(stdout: &mut io::Stdout) -> Result<()> {
             body.len()
         };
 
-        for (i, line) in body.iter().skip(first).take(n).enumerate() {
-            let row = start_row + 2 + i;
-            stdout.queue(MoveTo(body_start_col as u16, row as u16))?;
-            stdout.queue(Print(line.truecolor(200, 200, 200)))?;
+        for (i, row) in body.iter().skip(first).take(n).enumerate() {
+            let y = (start_row + 3 + i) as u16;
+            match row {
+                HelpRow::Section(s) => {
+                    stdout.queue(MoveTo(body_start_col as u16, y))?;
+                    stdout.queue(Print(s.truecolor(120, 200, 230).bold()))?;
+                }
+                HelpRow::Pair(k, d) => {
+                    stdout.queue(MoveTo(body_start_col as u16, y))?;
+                    stdout.queue(Print(" ".repeat(BODY_INDENT)))?;
+                    let padded = pad_right_chars(k, key_col);
+                    stdout.queue(Print(padded.truecolor(230, 230, 235).bold()))?;
+                    stdout.queue(Print("  "))?;
+                    stdout.queue(Print(d.truecolor(175, 175, 180)))?;
+                }
+                HelpRow::Note(text) => {
+                    stdout.queue(MoveTo(body_start_col as u16, y))?;
+                    stdout.queue(Print(" ".repeat(BODY_INDENT)))?;
+                    stdout.queue(Print(text.truecolor(150, 150, 155).italic()))?;
+                }
+                HelpRow::Blank => {}
+            }
         }
 
         let last_body_row = if n == 0 {
-            start_row + 1
+            start_row + 2
         } else {
-            start_row + 2 + (n - 1)
+            start_row + 3 + (n - 1)
         };
         // At least one blank line between the last help line and the hint.
         let hint_row = last_body_row + 2;
-        let hint_col = term_cols.saturating_sub(hint.chars().count()) / 2;
+        let hint_col = term_cols.saturating_sub(HELP_HINT.chars().count()) / 2;
         stdout.queue(MoveTo(hint_col as u16, hint_row as u16))?;
-        stdout.queue(Print(hint.truecolor(128, 128, 128)))?;
+        stdout.queue(Print(HELP_HINT.truecolor(128, 128, 128).italic()))?;
         stdout.flush().ok();
         Ok(())
     };

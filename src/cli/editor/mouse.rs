@@ -43,6 +43,8 @@ pub(super) struct ScreenToBuffer<'a> {
     pub editor_row: u16,
     pub view_top: usize,
     pub prompt_width: usize,
+    /// Left padding of the text block (centering); mouse X is relative to the full screen.
+    pub content_left: usize,
 }
 
 impl ScreenToBuffer<'_> {
@@ -56,6 +58,7 @@ impl ScreenToBuffer<'_> {
             editor_row,
             view_top,
             prompt_width,
+            content_left,
         } = self;
         if visuals.is_empty() || lines.is_empty() {
             return (0, 0);
@@ -63,7 +66,8 @@ impl ScreenToBuffer<'_> {
         let rel = (screen_y as i32 - editor_row as i32).max(0) as usize;
         let vis_idx = (view_top + rel).min(visuals.len() - 1);
         let (buf_idx, _, start_char) = visuals[vis_idx];
-        let col_in_row = (screen_x as usize).saturating_sub(prompt_width);
+        let rel_x = (screen_x as usize).saturating_sub(content_left);
+        let col_in_row = rel_x.saturating_sub(prompt_width);
         let target_char = start_char + col_in_row;
         let line_chars = lines[buf_idx].chars().count();
         let clamped = target_char.min(line_chars).min(start_char + vw);

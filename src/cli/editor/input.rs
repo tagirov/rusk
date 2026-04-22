@@ -322,6 +322,7 @@ pub(super) fn handle_mouse(
     let MouseEvent { kind, column, row: mrow, modifiers } = ev;
     let shift = modifiers.contains(KeyModifiers::SHIFT);
     let vw = view::visible_width(ctx.prompt_width);
+    let content_left = view::content_left(ctx.prompt_width);
 
     match kind {
         MouseEventKind::Down(MouseButton::Left) => {
@@ -336,6 +337,7 @@ pub(super) fn handle_mouse(
                 editor_row: ctx.editor_row,
                 view_top: state.view_top,
                 prompt_width: ctx.prompt_width,
+                content_left,
             }
             .resolve();
             match clicks {
@@ -379,6 +381,7 @@ pub(super) fn handle_mouse(
                     editor_row: ctx.editor_row,
                     view_top: state.view_top,
                     prompt_width: ctx.prompt_width,
+                    content_left,
                 }
                 .resolve();
                 state.row = r;
@@ -398,6 +401,7 @@ pub(super) fn handle_mouse(
                 editor_row: ctx.editor_row,
                 view_top: state.view_top,
                 prompt_width: ctx.prompt_width,
+                content_left,
             }
             .resolve();
             state.goto(r, c, vw);
@@ -409,19 +413,20 @@ pub(super) fn handle_mouse(
             }
         }
         MouseEventKind::ScrollUp => {
-            state.soft_up_n(3, vw);
-            if state.view_top > 0 {
-                state.view_top = state.view_top.saturating_sub(3);
+            let (vwm, av, vlen) = view::layout_metrics_for_buffer(&state.lines, ctx.prompt_width);
+            if vlen <= av {
+                return Ok(Action::Continue);
             }
+            state.soft_up_n(3, vwm);
             state.anchor = None;
             history.break_run();
         }
         MouseEventKind::ScrollDown => {
-            let visuals = view::compute_visuals(&state.lines, vw);
-            state.soft_down_n(3, vw);
-            if state.view_top + 1 < visuals.len() {
-                state.view_top = (state.view_top + 3).min(visuals.len() - 1);
+            let (vwm, av, vlen) = view::layout_metrics_for_buffer(&state.lines, ctx.prompt_width);
+            if vlen <= av {
+                return Ok(Action::Continue);
             }
+            state.soft_down_n(3, vwm);
             state.anchor = None;
             history.break_run();
         }

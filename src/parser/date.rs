@@ -21,6 +21,53 @@ pub fn parse_cli_date_optional_empty(s: &str) -> Result<Option<NaiveDate>> {
     parse_cli_date(trimmed).map(Some)
 }
 
+/// Absolute dates like `11-jan-25`, `1-Feb-2026` (day, English month, 2- or 4-digit year).
+fn parse_english_abbrev_dash_date(s: &str) -> Option<NaiveDate> {
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let day: u32 = parts[0].parse().ok()?;
+    let mtoken = parts[1].trim();
+    if mtoken.is_empty() || !mtoken.as_bytes().iter().all(|b| b.is_ascii_alphabetic()) {
+        return None;
+    }
+    let month = english_month_abbrev_to_u32(mtoken)?;
+    let y_str = parts[2].trim();
+    let year: i32 = if y_str.len() <= 2 {
+        let y: i32 = y_str.parse().ok()?;
+        if y < 0 {
+            return None;
+        }
+        if (0..=99).contains(&y) {
+            2000 + y
+        } else {
+            y
+        }
+    } else {
+        y_str.parse().ok()?
+    };
+    NaiveDate::from_ymd_opt(year, month, day)
+}
+
+fn english_month_abbrev_to_u32(s: &str) -> Option<u32> {
+    match s.to_ascii_lowercase().as_str() {
+        "jan" | "january" => Some(1),
+        "feb" | "february" => Some(2),
+        "mar" | "march" => Some(3),
+        "apr" | "april" => Some(4),
+        "may" => Some(5),
+        "jun" | "june" => Some(6),
+        "jul" | "july" => Some(7),
+        "aug" | "august" => Some(8),
+        "sep" | "sept" | "september" => Some(9),
+        "oct" | "october" => Some(10),
+        "nov" | "november" => Some(11),
+        "dec" | "december" => Some(12),
+        _ => None,
+    }
+}
+
 pub fn parse_cli_date_with_base(date_str: &str, base: NaiveDate) -> Result<NaiveDate> {
     let trimmed = date_str.trim();
     if trimmed.is_empty() {
@@ -35,10 +82,16 @@ pub fn parse_cli_date_with_base(date_str: &str, base: NaiveDate) -> Result<Naive
         }
     }
 
+    let dash_form = trimmed.replace(['/', '.'], "-");
+    if let Some(d) = parse_english_abbrev_dash_date(&dash_form) {
+        return Ok(d);
+    }
+
     let normalized = normalize_date_string(trimmed);
     NaiveDate::parse_from_str(&normalized, "%d-%m-%Y").with_context(|| {
         format!(
-            "Invalid date '{}': use DD-MM-YYYY, DD/MM/YYYY, or DD.MM.YYYY (D-M-YY is OK),\n\
+            "Invalid date '{}': use DD-MM-YYYY, DD/MM/YYYY, or DD.MM.YYYY (D-M-YY is OK), \
+or DD-Mon-YY / DD-Mon-YYYY (e.g. 11-jan-25), \n\
 or a relative offset such as 2d, 2w, 5m, 3q, 2y (combinable, e.g. 10d5w)",
             trimmed
         )

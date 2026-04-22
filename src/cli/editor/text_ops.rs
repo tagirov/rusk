@@ -6,6 +6,7 @@
 //! type) so they can be used both by the editor internals and by the
 //! public `HandlerCLI` shims re-exported in `editor/mod.rs`.
 
+use chrono::Local;
 use std::cmp::Ordering;
 
 // ── Byte / char helpers ─────────────────────────────────────────────────────
@@ -178,6 +179,18 @@ pub fn leading_date_char_len(line: &str) -> usize {
         token.chars().count()
     } else {
         0
+    }
+}
+
+/// `true` if the first line starts with a valid CLI date strictly before today.
+pub fn leading_date_is_past(line: &str) -> bool {
+    let token: String = line.chars().take_while(|c| !c.is_whitespace()).collect();
+    if token.is_empty() {
+        return false;
+    }
+    match crate::parse_cli_date(&token) {
+        Ok(d) => d < Local::now().date_naive(),
+        Err(_) => false,
     }
 }
 

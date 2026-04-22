@@ -45,7 +45,7 @@ use crossterm::event::{self, Event};
 #[cfg(feature = "interactive")]
 use crossterm::{
     QueueableCommand,
-    terminal::{Clear, ClearType},
+    terminal::{Clear, ClearType, size},
 };
 #[cfg(feature = "interactive")]
 use std::io::{self, Write};
@@ -73,7 +73,6 @@ pub(crate) fn run_editor(
 
     let prompt_width = prompt.chars().count();
     let prefill_lines = text_ops::split_multi_line_prefill(prefill);
-    let editor_row: u16 = 0;
 
     let initial_vw = view::visible_width(prompt_width);
     let mut state = state::EditorState::from_prefill(&prefill_lines, cursor_at_start, initial_vw);
@@ -84,12 +83,6 @@ pub(crate) fn run_editor(
     let mut last_autosave = Instant::now();
     let mut last_saved_content = prefill.to_string();
 
-    let ctx = input::EditorContext {
-        prompt_width,
-        editor_row,
-        prefill_lines: &prefill_lines,
-    };
-
     let first_line_colored = extras.first_line_colored.clone();
 
     let render = |stdout: &mut io::Stdout, state: &mut state::EditorState| -> Result<()> {
@@ -98,7 +91,6 @@ pub(crate) fn run_editor(
         view::render(
             stdout,
             view::RenderInput {
-                editor_row,
                 prompt,
                 prompt_width,
                 first_line_colored: first_line_colored.as_deref(),
@@ -126,6 +118,11 @@ pub(crate) fn run_editor(
 
         let Some(ev) = poll_event(Duration::from_millis(500))? else {
             continue;
+        };
+        let ctx = input::EditorContext {
+            prompt_width,
+            editor_row: view::current_editor_top(),
+            prefill_lines: &prefill_lines,
         };
 
         let action = match ev {
@@ -166,7 +163,10 @@ pub(crate) fn run_editor(
                 return Ok(joined);
             }
             Action::Cancel => {
-                if state.dirty_vs(prefill) && !terminal::confirm_discard(&mut stdout)? {
+                let (_tc, tr) = size().unwrap_or((80, 24));
+                let fr = view::footer_row_for_state(&state.lines, state.view_top, prompt_width);
+                let dr = view::discard_dialog_row(fr, tr);
+                if state.dirty_vs(prefill) && !terminal::confirm_discard(&mut stdout, dr)? {
                     render(&mut stdout, &mut state)?;
                     continue;
                 }

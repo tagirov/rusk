@@ -14,8 +14,148 @@ use std::io::{self, Write};
 use super::text_ops;
 
 pub(super) const ML_FOOTER: &str = "^S save  ·  ^G help  ·  Esc cancel";
-const ML_FOOTER_GAP: usize = 2;
-const ML_RIGHT_MARGIN: usize = 4;
+/// Blank full rows between the footer line and the bottom row of the terminal (wide layout only).
+const ML_FOOTER_FROM_BOTTOM: usize = 5;
+/// Blank lines above the editor text (content starts at this row) when layout allows.
+pub(super) const ML_TOP_MARGIN: u16 = 5;
+/// Below this width, skip the tall decorated vertical block (footer docked, top margin).
+const MIN_TERM_COLS_FOR_MARGINS: u16 = 50;
+/// Minimum text rows that must fit for top/bottom decorative spacing; otherwise use compact.
+const MIN_TEXT_ROWS_FOR_VERTICAL_DECOR: usize = 7;
+/// Max character columns for the editable text (soft-wrap width) on wide terminals.
+const ML_MAX_TEXT_COLS: usize = 80;
+/// Minimum blank columns reserved on each side of the full line block (prompt + text).
+const ML_MIN_HPAD: usize = 2;
+/// Minimum one blank row from the top of the terminal to the first text line (compact layout).
+const ML_MIN_VPAD_TOP: u16 = 1;
+/// Minimum one full blank text row between the last text line and the footer line.
+const ML_MIN_VPAD_TEXT_TO_FOOTER: usize = 1;
+
+/// Soft-wrap width and left padding to center the text block in the terminal.
+/// `(editor_row, footer_gap, available_text)`: on wide terminals tall enough to show
+/// at least [`MIN_TEXT_ROWS_FOR_VERTICAL_DECOR`] text rows with margins, text starts
+/// at `ML_TOP_MARGIN`, the footer is docked in [`render`], and `footer_gap` is 0. Otherwise
+/// a compact layout with at least one empty row at the top and one above the footer when the
+/// height allows; very short terminals use best-effort.
+fn vertical_layout(term_cols: u16, term_rows: u16) -> (u16, usize, usize) {
+    let t = term_rows as usize;
+    if term_cols < MIN_TERM_COLS_FOR_MARGINS {
+        return compact_vertical_layout(t);
+    }
+    let v = ML_TOP_MARGIN as usize;
+    // Rows: v (top) + available_text (text) + 1 (footer) + ML_FOOTER_FROM_BOTTOM (blank to bottom)
+    let a = t.saturating_sub(v + 1 + ML_FOOTER_FROM_BOTTOM);
+    if a < MIN_TEXT_ROWS_FOR_VERTICAL_DECOR {
+        return compact_vertical_layout(t);
+    }
+    (ML_TOP_MARGIN, 0, a.max(1))
+}
+
+/// One row from the top to the first line, one between the last line and the footer, one for the
+/// footer when `t >= 4`. For `t == 3` one text row fits with top margin but no line above the
+/// footer. Row budget: `1 + av + 1 + 1` = `t` for `t >= 4`.
+fn compact_vertical_layout(t: usize) -> (u16, usize, usize) {
+    if t < 2 {
+        return (0, 0, 1);
+    }
+    if t < 3 {
+        return (0, 0, 1);
+    }
+    if t < 4 {
+        return (ML_MIN_VPAD_TOP, 0, 1);
+    }
+    let av = t.saturating_sub(ML_MIN_VPAD_TOP as usize + ML_MIN_VPAD_TEXT_TO_FOOTER + 1);
+    (
+        ML_MIN_VPAD_TOP,
+        ML_MIN_VPAD_TEXT_TO_FOOTER,
+        av.max(1),
+    )
+}
+
+/// Top row of the text area, matching the next [`render`].
+pub(super) fn current_editor_top() -> u16 {
+    let (c, r) = size().unwrap_or((80, 24));
+    vertical_layout(c, r).0
+}
+
+fn compute_footer_row(
+    term_rows: usize,
+    term_cols: usize,
+    editor_row: u16,
+    footer_gap: usize,
+    available_text: usize,
+    view_top: usize,
+    visuals_len: usize,
+) -> u16 {
+    let visible_count = available_text.min(visuals_len.saturating_sub(view_top));
+    let t = term_rows;
+    let dock_footer =
+        term_cols >= MIN_TERM_COLS_FOR_MARGINS as usize && editor_row == ML_TOP_MARGIN;
+    if dock_footer {
+        t.saturating_sub(1)
+            .saturating_sub(ML_FOOTER_FROM_BOTTOM)
+            .max(editor_row as usize) as u16
+    } else {
+        let content_end_row = editor_row as usize + visible_count;
+        let default_footer_row = t.saturating_sub(1);
+        let floating_footer_row = content_end_row + footer_gap;
+        floating_footer_row
+            .min(default_footer_row)
+            .max(editor_row as usize) as u16
+    }
+}
+
+/// Row of the help footer, matching the current [`render`] layout.
+pub(super) fn footer_row_for_state(
+    lines: &[String],
+    view_top: usize,
+    prompt_width: usize,
+) -> u16 {
+    let (term_cols_u16, term_rows_u16) = size().unwrap_or((0, 0));
+    let term_rows = term_rows_u16 as usize;
+    let term_cols = term_cols_u16 as usize;
+    let (editor_row, footer_gap, available_text) = vertical_layout(term_cols_u16, term_rows_u16);
+    let (visible_width, _) = editor_text_layout(term_cols, prompt_width);
+    let visuals = compute_visuals(lines, visible_width);
+    compute_footer_row(
+        term_rows,
+        term_cols,
+        editor_row,
+        footer_gap,
+        available_text,
+        view_top,
+        visuals.len(),
+    )
+}
+
+/// Row for the "discard changes?" prompt when the band below the footer is non-empty: centered
+/// between the footer line and the bottom of the window. `None` when the footer sits on the last
+/// row (no gap); the caller should draw the dialog on the last line, replacing the footer.
+pub(super) fn discard_dialog_row(footer_row: u16, term_rows: u16) -> Option<u16> {
+    let last = term_rows.saturating_sub(1);
+    if footer_row < last {
+        let span = (last - footer_row) as usize;
+        let off = 1 + span.saturating_sub(1) / 2;
+        Some(((footer_row as usize) + off).min(last as usize) as u16)
+    } else {
+        None
+    }
+}
+
+/// Soft-wrap width and horizontal offset to center the full line block (prompt + text) in the terminal.
+fn editor_text_layout(term_cols: usize, prompt_width: usize) -> (usize, usize) {
+    // Center the text column (not the prompt+text block) so the blank gap on the left of
+    // the text equals the gap on the right. The prompt sits inside the left margin, so the
+    // reservation on each side must be at least `prompt_width` (plus `ML_MIN_HPAD`).
+    let side = prompt_width.max(ML_MIN_HPAD);
+    let visible_width = term_cols
+        .saturating_sub(2 * side)
+        .max(1)
+        .min(ML_MAX_TEXT_COLS);
+    let text_left = term_cols.saturating_sub(visible_width) / 2;
+    let content_left = text_left.saturating_sub(prompt_width);
+    (visible_width, content_left)
+}
 
 /// Split buffer lines into soft-wrapped visual rows. Each tuple is
 /// `(buffer_idx, chunk_content, start_char_offset_in_buffer_line)`.
@@ -39,7 +179,7 @@ pub(super) fn compute_visuals(lines: &[String], vw: usize) -> Vec<(usize, String
 }
 
 /// Print one visual chunk with selection + optional validation colors and
-/// a bold-green highlight for a leading date token on the first logical line.
+/// a bold date highlight (green, or red if the leading date is before today) on the first line.
 fn print_visual_chunk(
     stdout: &mut io::Stdout,
     lines: &[String],
@@ -86,6 +226,7 @@ fn print_visual_chunk(
     } else {
         0
     };
+    let date_past = buf_idx == 0 && text_ops::leading_date_is_past(&lines[0]);
 
     let emit = |stdout: &mut io::Stdout,
                 text: &str,
@@ -98,7 +239,11 @@ fn print_visual_chunk(
         if selected {
             stdout.queue(Print(text.reversed()))?;
         } else if is_date {
-            stdout.queue(Print(text.green().bold()))?;
+            if date_past {
+                stdout.queue(Print(text.red().bold()))?;
+            } else {
+                stdout.queue(Print(text.green().bold()))?;
+            }
         } else {
             match full_text_valid {
                 Some(true) => stdout.queue(Print(text.green()))?,
@@ -143,7 +288,6 @@ fn print_visual_chunk(
 }
 
 pub(super) struct RenderInput<'a> {
-    pub editor_row: u16,
     pub prompt: &'a str,
     pub prompt_width: usize,
     pub first_line_colored: Option<&'a str>,
@@ -159,14 +303,9 @@ pub(super) struct RenderInput<'a> {
 pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> {
     let (term_cols_u16, term_rows_u16) = size().unwrap_or((0, 0));
     let term_cols = term_cols_u16 as usize;
-    let term_rows = term_rows_u16.max(3) as usize;
-
-    let available_text = term_rows
-        .saturating_sub(r.editor_row as usize + 1 + ML_FOOTER_GAP)
-        .max(1);
-    let visible_width = term_cols
-        .saturating_sub(r.prompt_width.saturating_add(ML_RIGHT_MARGIN))
-        .max(1);
+    let (editor_row, footer_gap, available_text) = vertical_layout(term_cols_u16, term_rows_u16);
+    let (visible_width, content_left) = editor_text_layout(term_cols, r.prompt_width);
+    let content_left_u16 = content_left.min(u16::MAX as usize) as u16;
 
     let visuals = compute_visuals(r.lines, visible_width);
 
@@ -195,7 +334,8 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
         full.trim().is_empty() || v(full.as_str())
     });
 
-    stdout.queue(MoveTo(0, r.editor_row))?;
+    // Clear from the top; text starts at `editor_row` (vertically centered when width allows).
+    stdout.queue(MoveTo(0, 0))?;
     stdout.queue(Clear(ClearType::FromCursorDown))?;
 
     let sel_range = r.selection.map(|(a, b)| {
@@ -209,7 +349,7 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
     let visible_count = available_text.min(visuals.len().saturating_sub(*r.view_top));
     for v_i in 0..visible_count {
         let (buf_idx, content, start_char) = &visuals[*r.view_top + v_i];
-        stdout.queue(MoveTo(0, r.editor_row + v_i as u16))?;
+        stdout.queue(MoveTo(content_left_u16, editor_row + v_i as u16))?;
         if *buf_idx == 0 && *start_char == 0 {
             if let Some(colored) = r.first_line_colored {
                 stdout.queue(Print(colored))?;
@@ -232,13 +372,16 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
         )?;
     }
 
-    // Footer floats a couple of rows below the text when the buffer is
-    // short and docks to the last screen row otherwise.
-    let content_end_row = r.editor_row as usize + visible_count;
-    let default_footer_row = term_rows_u16.saturating_sub(1) as usize;
-    let floating_footer_row = content_end_row + ML_FOOTER_GAP;
-    let footer_row =
-        floating_footer_row.min(default_footer_row).max(r.editor_row as usize) as u16;
+    // Wide: footer is fixed 5 full rows above the last terminal line; narrow: under last text.
+    let footer_row = compute_footer_row(
+        term_rows_u16 as usize,
+        term_cols,
+        editor_row,
+        footer_gap,
+        available_text,
+        *r.view_top,
+        visuals.len(),
+    );
     stdout.queue(MoveTo(0, footer_row))?;
     stdout.queue(Clear(ClearType::CurrentLine))?;
     let mut footer_text = ML_FOOTER.to_string();
@@ -248,38 +391,67 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
     }
     let footer_width = footer_text.chars().count();
     let footer_x = term_cols.saturating_sub(footer_width) / 2;
+    let footer_end = footer_x + footer_width;
+    let text_left = content_left;
+    let text_right_excl = content_left + r.prompt_width + visible_width;
     stdout.queue(MoveTo(footer_x as u16, footer_row))?;
     stdout.queue(Print(footer_text.truecolor(128, 128, 128)))?;
 
     let has_up = *r.view_top > 0;
     let has_down = *r.view_top + available_text < visuals.len();
-    let arrow_x = (footer_x / 2) as u16;
-    if has_up {
-        stdout.queue(MoveTo(arrow_x, footer_row))?;
-        stdout.queue(Print("↑".truecolor(128, 128, 128)))?;
-    }
-    if has_down {
-        stdout.queue(MoveTo(arrow_x + 1, footer_row))?;
-        stdout.queue(Print("↓".truecolor(128, 128, 128)))?;
-    }
-
-    let status_x = term_cols.saturating_sub(1).saturating_sub(arrow_x as usize);
-    let footer_end = footer_x + footer_width;
-    if status_x > footer_end {
-        stdout.queue(MoveTo(status_x as u16, footer_row))?;
-        if r.dirty {
-            stdout.queue(Print("●".truecolor(220, 170, 60)))?;
-        } else {
-            stdout.queue(Print("○".truecolor(100, 100, 100)))?;
+    if has_up || has_down {
+        let pair_w = usize::from(has_up && has_down) + 1;
+        if footer_x > text_left + pair_w.saturating_sub(1) {
+            let arrow_start = text_left + (footer_x - text_left - pair_w) / 2;
+            if has_up {
+                stdout.queue(MoveTo(arrow_start.min(u16::MAX as usize) as u16, footer_row))?;
+                stdout.queue(Print("↑".truecolor(128, 128, 128)))?;
+            }
+            if has_down {
+                let x = if has_up {
+                    arrow_start + 1
+                } else {
+                    arrow_start
+                };
+                stdout.queue(MoveTo(x.min(u16::MAX as usize) as u16, footer_row))?;
+                stdout.queue(Print("↓".truecolor(128, 128, 128)))?;
+            }
         }
     }
 
+    let status_x = if text_right_excl < footer_x {
+        let lo = text_right_excl;
+        let hi = footer_x.saturating_sub(1);
+        if lo <= hi {
+            (lo + hi) / 2
+        } else {
+            text_right_excl.saturating_sub(1)
+        }
+    } else if footer_end < text_right_excl {
+        let lo = footer_end;
+        let hi = text_right_excl.saturating_sub(1);
+        if lo <= hi {
+            (lo + hi) / 2
+        } else {
+            hi
+        }
+    } else {
+        text_right_excl.saturating_sub(1)
+    }
+    .min(term_cols.saturating_sub(1));
+    stdout.queue(MoveTo(status_x as u16, footer_row))?;
+    if r.dirty {
+        stdout.queue(Print("●".truecolor(185, 185, 190)))?;
+    } else {
+        stdout.queue(Print("○".truecolor(100, 100, 100)))?;
+    }
+
     let cur_visual_row_on_screen = cursor_vis_row.saturating_sub(*r.view_top);
-    let mut x = (r.prompt_width + cursor_vis_col) as u16;
+    let mut x = (content_left + r.prompt_width + cursor_vis_col) as u16;
     if term_cols_u16 > 0 && x >= term_cols_u16 {
         x = term_cols_u16.saturating_sub(1);
     }
-    let y = r.editor_row.saturating_add(cur_visual_row_on_screen as u16);
+    let y = editor_row.saturating_add(cur_visual_row_on_screen as u16);
     stdout.queue(MoveTo(x, y))?;
     stdout.flush().ok();
     Ok(())
@@ -288,13 +460,30 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
 /// Visible-width available for text, matching the formula used by `render`.
 pub(super) fn visible_width(prompt_width: usize) -> usize {
     let (cols, _) = size().unwrap_or((80, 24));
-    (cols as usize)
-        .saturating_sub(prompt_width.saturating_add(ML_RIGHT_MARGIN))
-        .max(1)
+    editor_text_layout(cols as usize, prompt_width).0
+}
+
+/// Horizontal offset of the text block from the left edge (centering), matching `render`.
+pub(super) fn content_left(prompt_width: usize) -> usize {
+    let (cols, _) = size().unwrap_or((80, 24));
+    editor_text_layout(cols as usize, prompt_width).1
 }
 
 /// How many visual rows fit on screen (used by PageUp/PageDown).
 pub(super) fn page_rows() -> usize {
-    let (_, rows) = size().unwrap_or((80, 24));
-    (rows.saturating_sub(3) as usize).max(1)
+    let (cols, rows) = size().unwrap_or((80, 24));
+    vertical_layout(cols, rows).2
+}
+
+/// One `size()` + same `editor_text_layout` + `vertical_layout` + `compute_visuals` as [`render`].
+/// Use for wheel and other logic that must match on-screen line counts.
+pub(super) fn layout_metrics_for_buffer(
+    lines: &[String],
+    prompt_width: usize,
+) -> (usize, usize, usize) {
+    let (c, r) = size().unwrap_or((80, 24));
+    let (_, _, av) = vertical_layout(c, r);
+    let (vw, _) = editor_text_layout(c as usize, prompt_width);
+    let vlen = compute_visuals(lines, vw).len();
+    (vw, av, vlen)
 }

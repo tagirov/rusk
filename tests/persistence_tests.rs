@@ -2,6 +2,20 @@ use rusk::TaskManager;
 use tempfile::tempdir;
 
 #[test]
+fn test_load_tasks_without_priority_defaults_to_false() {
+    let temp_dir = tempdir().unwrap();
+    let db_path = temp_dir.path().join("legacy_no_priority.json");
+    std::fs::write(
+        &db_path,
+        r#"[{"id":1,"text":"Legacy","date":null,"done":false}]"#,
+    )
+    .unwrap();
+    let tasks = TaskManager::load_tasks_from_path(&db_path).unwrap();
+    assert_eq!(tasks.len(), 1);
+    assert!(!tasks[0].priority);
+}
+
+#[test]
 fn test_mark_tasks_persistence() {
     let temp_dir = tempdir().unwrap();
     let db_path = temp_dir.path().join("test_mark.json");

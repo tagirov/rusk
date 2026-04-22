@@ -7,5 +7,6 @@ pub struct Task {
     pub text: String,
     pub date: Option<NaiveDate>,
     pub done: bool,
+    #[serde(default)]
     pub priority: bool,
 }

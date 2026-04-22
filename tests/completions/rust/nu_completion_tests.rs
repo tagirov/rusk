@@ -22,6 +22,8 @@ fn test_nu_completion_script_structure() {
         "Script should have complete-mark-del function");
     assert!(script.contains("def complete-list-restore"), 
         "Script should have complete-list-restore function");
+    assert!(script.contains("def get-list-flags"), 
+        "Script should have get-list-flags for list -f/--first-line");
     assert!(script.contains("def complete-completions"), 
         "Script should have complete-completions function");
     

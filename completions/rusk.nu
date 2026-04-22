@@ -74,6 +74,14 @@ def get-date-flags [] {
   ]
 }
 
+# list subcommand: compact first-line view
+def get-list-flags [] {
+  [
+    {value: "--first-line", description: "Compact view: first line of each task only"}
+    {value: "-f", description: "Compact view: first line of each task only"}
+  ]
+}
+
 # Shell options for completions command
 def get-shells [] {
   [
@@ -554,9 +562,12 @@ def complete-mark-del [cur: string, command: string] {
   []
 }
 
-# Complete list/restore commands
-def complete-list-restore [cur: string] {
+# Complete list/restore commands (list adds -f/--first-line)
+def complete-list-restore [cur: string, subcommand: string] {
   if ($cur == "") or ($cur | str starts-with "-") {
+    if $subcommand == "list" or $subcommand == "l" {
+      return (complete-flags ((get-list-flags) | append (get-common-flags)) $cur)
+    }
     return (complete-flags (get-common-flags) $cur)
   }
   []
@@ -869,7 +880,7 @@ export def rusk-completions-main [spans: list<string>] {
     }
     
     "list" | "l" | "restore" | "r" => {
-      complete-list-restore $cur_n
+      complete-list-restore $cur_n $ctx.command
     }
     
     "completions" | "c" => {

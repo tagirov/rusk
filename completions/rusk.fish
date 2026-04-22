@@ -585,7 +585,14 @@ function __rusk_should_complete_list_restore_flags
 end
 
 function __rusk_complete_list_restore_flags
-    __rusk_complete_flags -h --help
+    set -l cmdline (__rusk_get_cmdline)
+    test (count $cmdline) -ge 2; or return
+    set -l sub "$cmdline[2]"
+    if contains -- $sub list l
+        __rusk_complete_flags -f --first-line -h --help
+    else
+        __rusk_complete_flags -h --help
+    end
 end
 
 # ============================================================================

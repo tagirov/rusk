@@ -332,11 +332,19 @@ _rusk_complete_del_flags() {
 _rusk_complete_mark_flags() {
     local gcur="$cur"
     [[ "${1:-0}" == 1 ]] && gcur=""
-    COMPREPLY=($(compgen -W "-h --help" -- "$gcur"))
+    COMPREPLY=($(compgen -W "-p --priority -h --help" -- "$gcur"))
     return 0
 }
 
-# Help-only flags for list/restore
+# Flags for list (compact first-line + help)
+_rusk_complete_list_flags() {
+    local gcur="$cur"
+    [[ "${1:-0}" == 1 ]] && gcur=""
+    COMPREPLY=($(compgen -W "-f --first-line -h --help" -- "$gcur"))
+    return 0
+}
+
+# Help-only flags for restore
 _rusk_complete_help_flags() {
     local gcur="$cur"
     [[ "${1:-0}" == 1 ]] && gcur=""
@@ -479,7 +487,16 @@ _rusk_completion() {
             fi
             ;;
             
-        list|l|restore|r)
+        list|l)
+            if [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; }; then
+                if [[ -n "$cur" ]] && [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; then
+                    _rusk_complete_list_flags 1
+                else
+                    _rusk_complete_list_flags
+                fi
+            fi
+            ;;
+        restore|r)
             if [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; }; then
                 if [[ -n "$cur" ]] && [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; then
                     _rusk_complete_help_flags 1

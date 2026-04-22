@@ -487,14 +487,21 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
                 $df = if ($command -in @('del', 'd')) {
                     @('--done', '--help', '-h')
                 } else {
-                    @('--help', '-h')
+                    @('--priority', '-p', '--help', '-h')
                 }
                 return _rusk_emit_flag_completions $df $wordToComplete $tokens $command $cur
             }
             return @()
         }
 
-        { $_ -in 'list', 'l', 'restore', 'r' } {
+        { $_ -in 'list', 'l' } {
+            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur) -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
+                return _rusk_emit_flag_completions @('--first-line', '-f', '--help', '-h') $wordToComplete $tokens $command $cur
+            }
+            return @()
+        }
+
+        { $_ -in 'restore', 'r' } {
             if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur) -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
                 return _rusk_emit_flag_completions @('--help', '-h') $wordToComplete $tokens $command $cur
             }

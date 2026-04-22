@@ -95,6 +95,10 @@ rusk list
 # or simply
 rusk
 
+# Compact view: one line per task (no wraps, trailing punctuation trimmed)
+rusk list -f
+rusk list --first-line
+
 # Mark a task as done
 rusk mark 1
 
@@ -134,7 +138,11 @@ rusk --help
 
 # Help for a specific command
 rusk add --help
-rusk del --done --help
+rusk edit --help
+
+# Help via the date flag (handy inside add/edit)
+rusk add -d -h
+rusk edit -d --help
 ```
 
 ## Working with Multiple Tasks
@@ -197,6 +205,7 @@ rusk restore
 
 ## Aliases
 ```bash
+# Subcommand aliases
 rusk a (add)
 rusk l (list)
 rusk m (mark)
@@ -205,9 +214,15 @@ rusk d (del)
 rusk r (restore)
 rusk c (completions)
 
--d (--date)
+# Global flags
 -h (--help)
 -V (--version)
+
+# Command flags
+-d (--date)          # add, edit
+-f (--first-line)    # list
+-p (--priority)      # mark
+   --done            # del (no short form)
 ```
 
 # Configuration

@@ -464,7 +464,12 @@ _rusk_main() {
             fi
             ;;
             
-        list|l|restore|r)
+        list|l)
+            if [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; }; then
+                _rusk_zsh_compadd_flags -- -f --first-line -h --help
+            fi
+            ;;
+        restore|r)
             if [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; }; then
                 _rusk_zsh_compadd_flags -- -h --help
             fi

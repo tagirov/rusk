@@ -110,7 +110,7 @@ rusk mark 1 --priority
 # Edit task text in one shot
 rusk edit 1 Complete the project documentation
 
-# Optional -d for date without opening the TUI
+# Optional flag for date without opening the TUI
 rusk edit 1 --date 1-1-25
 rusk edit 1 --date 2w
 

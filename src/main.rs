@@ -6,8 +6,9 @@ use rusk::{
     args::{Cli, Command},
     cli::HandlerCLI,
     error::AppError,
-    is_cli_date_help_value, parse_edit_args, parse_flexible_ids, strip_edit_date_flag,
-    windows_console,
+    is_cli_date_help_value, parse_edit_args, parse_flexible_ids,
+    parser::date::is_cli_date_clear_value,
+    strip_edit_date_flag, windows_console,
 };
 #[cfg(feature = "completions")]
 use rusk::{args::CompletionAction, completions::Shell};
@@ -81,6 +82,17 @@ fn run() -> Result<()> {
     // fixed tasks.json path; parallel integration tests would otherwise race on TaskManager::new()
     // before we detect trailing `-h` / `--help` on `edit`.
     match &cli.command {
+        Some(Command::Add {
+            text,
+            date: Some(d),
+        }) if text.is_empty() && is_cli_date_clear_value(d) => {
+            eprint_cli_error(
+                "Error: `-d _` cannot be used when adding a task with no text: there is no date to clear. \
+                 Omit `--date` or use `rusk add` with a non-empty first line in the editor; see `rusk add --help`."
+                    .red(),
+            );
+            std::process::exit(1);
+        }
         Some(Command::Add { date: Some(d), .. }) if is_cli_date_help_value(d) => {
             print_subcommand_help("add")?;
             return Ok(());
@@ -106,7 +118,31 @@ fn run() -> Result<()> {
 
     match cli.command {
         Some(Command::Add { text, date }) => {
-            if let Err(e) = HandlerCLI::handle_add_task(&mut tm, text, date) {
+            if text.is_empty() {
+                #[cfg(feature = "interactive")]
+                {
+                    use std::io::IsTerminal;
+                    if !std::io::stdout().is_terminal() {
+                        eprint_cli_error(
+                            "Error: interactive `rusk add` requires a terminal. \
+                             Pass the task on the command line, e.g. `rusk add buy milk`."
+                                .red(),
+                        );
+                        std::process::exit(1);
+                    }
+                    if let Err(e) = HandlerCLI::handle_add_task_interactive(&mut tm, date) {
+                        eprint_cli_error(format!("Error: {e}").red());
+                        std::process::exit(1);
+                    }
+                }
+                #[cfg(not(feature = "interactive"))]
+                {
+                    if let Err(e) = HandlerCLI::handle_add_task(&mut tm, text, date) {
+                        eprint_cli_error(format!("Error: {e}").red());
+                        std::process::exit(1);
+                    }
+                }
+            } else if let Err(e) = HandlerCLI::handle_add_task(&mut tm, text, date) {
                 eprint_cli_error(format!("Error: {e}").red());
                 std::process::exit(1);
             }

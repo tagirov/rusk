@@ -86,7 +86,9 @@ delete skips confirmation. Terminal width falls back to 80 columns.
 
 With `interactive`, `rusk edit <id>` opens the full-screen editor for task text and an
 optional due date on the first line: `Enter` inserts a newline, `Ctrl+S` saves, `Esc` skips,
-`Ctrl+G` / `F1` shows in-editor help (including date syntax).
+`Ctrl+G` / `F1` shows in-editor help (including date syntax). The same editor is used for
+`rusk add` with no inline task text (a TTY is required; optional `rusk add -d …` pre-fills
+the first line; drafts use the `new-task` key).
 
 Without `completions`: `rusk completions` subcommand is unavailable.
 

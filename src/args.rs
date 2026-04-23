@@ -27,7 +27,7 @@ supported. For new tasks, use `rusk add -d`.\n";
     version,
     about,
     after_help = "Without COMMAND, lists all tasks (same as `rusk list`). Use `rusk list -c` for a compact single-line view.\n\nFor details on flags, dates, and environment variables run `rusk --help` or `rusk <COMMAND> --help`.",
-    after_long_help = "Running `rusk` without a COMMAND is equivalent to `rusk list`. Use `rusk list -c` / `--compact` for a compact single-line view.\n\nDue dates: use `rusk add -d ...` for new tasks, or the interactive editor (`rusk edit <id>`) — first line at the start, see `rusk edit --help`. Pass `_` to clear where `-d` is supported. See `rusk add --help` for date syntax.\n\nEnvironment:\n  RUSK_DB        Optional path to the tasks database file or directory.\n  RUSK_NO_COLOR  Disable ANSI colors when set to any non-empty value (NO_COLOR is also respected).\n\nShell tab completion:\n  rusk completions install <shell> [<shell> ...]\n  rusk completions show <shell>\n"
+    after_long_help = "Running `rusk` without a COMMAND is equivalent to `rusk list`. Use `rusk list -c` / `--compact` for a compact single-line view.\n\nDue dates: `rusk add -d ...` for new tasks, `rusk add` with no text for the TUI, or the interactive editor (`rusk edit <id>`) — first line at the start, see `rusk edit --help` and EDITOR.md. Pass `_` to clear where `-d` is supported. See `rusk add --help` for date syntax.\n\nEnvironment:\n  RUSK_DB        Optional path to the tasks database file or directory.\n  RUSK_NO_COLOR  Disable ANSI colors when set to any non-empty value (NO_COLOR is also respected).\n\nShell tab completion:\n  rusk completions install <shell> [<shell> ...]\n  rusk completions show <shell>\n"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -38,12 +38,15 @@ pub struct Cli {
 pub enum Command {
     #[command(
         visible_alias = "a",
-        about = "Add a new task. Examples: rusk add buy groceries; rusk add report -d 31-12-2025; rusk add follow up -d 2w",
+        about = "Add a new task. With TEXT: one-shot. Without TEXT: opens the interactive editor (set or clear a due date on the first line). Optional `-d` pre-seeds the first line when there is no TEXT. Examples: rusk add buy groceries; rusk add; rusk add -d 2w; rusk add report -d 31-12-2025",
         help_template = "{about-section}\n\nUsage: rusk add [OPTIONS] [TEXT]...\n\n{all-args}\n\n{after-help}",
         after_long_help = DATE_FORMAT_LONG_HELP
     )]
     Add {
-        #[arg(value_name = "TEXT", help = "Task text (one or more words)")]
+        #[arg(
+            value_name = "TEXT",
+            help = "Task text (one or more words). Omit to open the full-screen multi-line editor (requires a TTY; see EDITOR.md)"
+        )]
         text: Vec<String>,
         #[arg(
             short,

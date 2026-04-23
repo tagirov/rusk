@@ -103,7 +103,10 @@ const HELP_ROWS: &[HelpRow] = &[
     HelpRow::Section("Due date — first token of the first line"),
     HelpRow::Pair("DD-MM-YYYY", "absolute (also `/` or `.`; short year ok)"),
     HelpRow::Pair("2d 2w 3m 1q 1y", "relative from today (combine: 10d5w)"),
-    HelpRow::Pair("+2w, +10d5w", "relative to current due date (today if none)"),
+    HelpRow::Pair(
+        "+2w, +10d5w",
+        "relative to current due date (today if none)",
+    ),
     HelpRow::Pair("_", "clear the due date"),
     HelpRow::Note("Recognized tokens are colored: green = today/future, red = past."),
 ];

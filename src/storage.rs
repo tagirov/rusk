@@ -233,16 +233,23 @@ impl TaskManager {
 
     pub fn add_task(&mut self, text: Vec<String>, date: Option<String>) -> Result<()> {
         let text = text.join(" ");
-        if text.trim().is_empty() {
-            anyhow::bail!("Task text cannot be empty");
-        }
-
         let date = match date {
             None => None,
             Some(d) => Some(parse_cli_date_for_edit(&d, None)?),
         };
-        let id = self.generate_next_id()?;
+        self.add_task_with_parsed_date(text, date)
+    }
 
+    /// Like [`add_task`](Self::add_task) but with an already-parsed due date (avoids re-parsing after the editor).
+    pub fn add_task_with_parsed_date(
+        &mut self,
+        text: String,
+        date: Option<chrono::NaiveDate>,
+    ) -> Result<()> {
+        if text.trim().is_empty() {
+            anyhow::bail!("Task text cannot be empty");
+        }
+        let id = self.generate_next_id()?;
         let task = Task {
             id,
             text: text.clone(),
@@ -250,7 +257,6 @@ impl TaskManager {
             done: false,
             priority: false,
         };
-
         self.tasks.push(task);
         self.save()?;
         Ok(())
@@ -602,5 +608,21 @@ impl TaskManager {
         println!("Backup file: {}", backup_path.display());
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TaskManager;
+    use chrono::NaiveDate;
+
+    #[test]
+    fn add_task_with_parsed_date_roundtrip() {
+        let mut tm = TaskManager::new_empty().unwrap();
+        let d = NaiveDate::from_ymd_opt(2025, 6, 15).unwrap();
+        tm.add_task_with_parsed_date("Hello".to_string(), Some(d))
+            .unwrap();
+        assert_eq!(tm.tasks[0].text, "Hello");
+        assert_eq!(tm.tasks[0].date, Some(d));
     }
 }

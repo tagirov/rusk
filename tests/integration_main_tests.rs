@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::Mutex;
 
 mod common;
@@ -163,6 +163,45 @@ fn test_binary_add_rejects_invalid_relative_date() {
     assert!(
         stderr.contains("Relative") || stderr.contains("positive"),
         "stderr={stderr}"
+    );
+}
+
+#[test]
+fn test_binary_add_interactive_requires_tty() {
+    let _guard = BIN_TEST_MUTEX.lock().unwrap();
+    setup_test_db("[]");
+
+    let out = rusk_command()
+        .arg("add")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "rusk add with no pipe TTY should fail when stdout is not a terminal"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    // With `interactive` (default), non-TTY should ask for a terminal. With `--no-default-features`
+    // the binary has no TUI, so `rusk add` with no text is rejected with an empty-text error.
+    assert!(
+        stderr.contains("terminal")
+            || stderr.contains("TTY")
+            || stderr.contains("tty")
+            || stderr.contains("Task text cannot be empty"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn test_binary_add_rejects_d_clear_with_no_text() {
+    let out = rusk_command().args(["add", "-d", "_"]).output().unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.to_lowercase().contains("clear") || stderr.contains("`_`"),
+        "stderr should explain -d _ with no text: {stderr}"
     );
 }
 

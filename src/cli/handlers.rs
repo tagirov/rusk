@@ -1,3 +1,5 @@
+#[cfg(feature = "interactive")]
+use crate::parse_cli_date_for_edit;
 use crate::parser::date::is_cli_date_clear_value;
 use crate::{Task, TaskManager, validate_cli_date_edit_arg};
 use anyhow::Result;
@@ -9,13 +11,7 @@ use super::HandlerCLI;
 use super::editor::EditorExtras;
 
 impl HandlerCLI {
-    pub fn handle_add_task(
-        tm: &mut TaskManager,
-        text: Vec<String>,
-        date: Option<String>,
-    ) -> Result<()> {
-        tm.add_task(text, date)?;
-        let task = tm.tasks().last().unwrap();
+    fn print_added_task(task: &Task) {
         let prefix = if let Some(date) = task.date {
             let today = chrono::Local::now().date_naive();
             let day = date.day();
@@ -32,6 +28,79 @@ impl HandlerCLI {
             format!("{} {}:", "Added task:".green(), task.id)
         };
         Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
+    }
+
+    pub fn handle_add_task(
+        tm: &mut TaskManager,
+        text: Vec<String>,
+        date: Option<String>,
+    ) -> Result<()> {
+        tm.add_task(text, date)?;
+        let task = tm.tasks().last().unwrap();
+        Self::print_added_task(task);
+        Ok(())
+    }
+
+    /// Interactive TUI: no inline task text; optional `-d` pre-seeds the first line with that due date.
+    #[cfg(feature = "interactive")]
+    pub fn handle_add_task_interactive(tm: &mut TaskManager, date: Option<String>) -> Result<()> {
+        let draft_dir = TaskManager::get_db_dir();
+        let draft_path = Self::draft_path_for(&draft_dir);
+        let draft_key = "new-task".to_string();
+
+        let base_prefill = if let Some(ref d) = date {
+            let seed = parse_cli_date_for_edit(d, None)?;
+            format!("{} ", seed.format("%d-%m-%Y"))
+        } else {
+            String::new()
+        };
+
+        let mut prefill_owned = base_prefill.clone();
+        if draft_path.exists() {
+            if let Some(text) = Self::read_draft_for(&draft_path, &draft_key) {
+                if text != base_prefill {
+                    let prompt = format!(
+                        "{}{}",
+                        "Restore unsaved draft for new task ".truecolor(255, 165, 0),
+                        "? [y/N]: ".truecolor(255, 165, 0)
+                    );
+                    if Self::read_confirmation(&prompt)? {
+                        prefill_owned = text;
+                    } else {
+                        let _ = std::fs::remove_file(&draft_path);
+                    }
+                }
+            }
+        }
+
+        let extras = EditorExtras {
+            draft_path: Some(draft_path),
+            draft_key: Some(draft_key),
+            relative_date_base: None,
+            ..Default::default()
+        };
+
+        let edited = Self::run_multi_line_editor(
+            "    ",
+            &prefill_owned,
+            false,
+            Some(|s| !s.trim().is_empty()),
+            false,
+            extras,
+        )?;
+
+        if edited.trim().is_empty() {
+            return Ok(());
+        }
+
+        let (parsed_date, stripped) = Self::extract_leading_date(&edited, None);
+        if stripped.trim().is_empty() {
+            anyhow::bail!("Task text cannot be empty");
+        }
+
+        tm.add_task_with_parsed_date(stripped, parsed_date)?;
+        let task = tm.tasks().last().unwrap();
+        Self::print_added_task(task);
         Ok(())
     }
 

@@ -27,6 +27,12 @@ selection, clipboard, undo/redo, word navigation, and crash-safe autosave.
 ## Launching
 
 ```bash
+# Add a new task: full-screen editor, empty buffer (or restore a `new-task` draft).
+rusk add
+
+# Add with a due date on the first line pre-filled (same token rules as in `rusk add -d …`).
+rusk add -d 2w
+
 # Edit task text and due date (first line) interactively.
 rusk edit 1
 
@@ -148,6 +154,8 @@ key returns to the editor.
 
 - On a clean save (`Ctrl+S`) or confirmed discard (`Esc` → `y`) the draft file
   is deleted.
+- For **new** tasks from `rusk add` (no text on the command line), the draft
+  key is `new-task` and recovery is offered the same way.
 - When the editor starts and finds a draft whose key matches the task being
   edited, it prompts:
 
@@ -176,7 +184,9 @@ date is not colored. The following text are the body.
 token, including leading `+`) sets the date without opening the TUI. **Bare** `-d` / `--date` (no value) is not supported;
 use the TUI to edit the first line. The interactive buffer is still the
 authoritative place for a due date: whatever appears as the first token on the
-first line (or absent). Full syntax, including relative forms, is in the
+first line (or absent). For **`rusk add` with no text**, leading `+` on a
+relative form still uses **today** (there is no existing task due date yet),
+same as `rusk add -d`. Full syntax, including relative forms, is in the
 in-editor help (`Ctrl+G` / `F1`).
 
 ## Output after editing

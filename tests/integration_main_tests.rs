@@ -124,6 +124,32 @@ fn test_binary_root_long_help_mentions_dates() {
 }
 
 #[test]
+fn test_binary_list_first_line_omits_body_lines() {
+    let _guard = BIN_TEST_MUTEX.lock().unwrap();
+
+    let db = r#"[
+        {"id":1,"text":"Title line\nBody paragraph","date":null,"done":false,"priority":false}
+    ]"#;
+    setup_test_db(db);
+
+    let out = rusk_command()
+        .env("RUSK_NO_COLOR", "1")
+        .args(["list", "-f"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "list -f should succeed: {out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("Title line"),
+        "compact list should include first line:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("Body paragraph"),
+        "compact list must not print continuation lines:\n{stdout}"
+    );
+}
+
+#[test]
 fn test_binary_add_rejects_invalid_relative_date() {
     let _guard = BIN_TEST_MUTEX.lock().unwrap();
     setup_test_db(r#"[{"id":1,"text":"T","date":null,"done":false,"priority":false}]"#);

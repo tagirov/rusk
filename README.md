@@ -97,7 +97,6 @@ rusk
 
 # Compact view: one line per task (no wraps, trailing punctuation trimmed)
 rusk list -f
-rusk list --first-line
 
 # Mark a task as done
 rusk mark 1

@@ -60,6 +60,7 @@ cli/formatter
 
 cli/editor
   ├── crossterm (raw mode, cursor) [feature = "interactive"]
+  ├── arboard   (system clipboard) [feature = "interactive"]
   └── error     (AppError::SkipTask)
 
 cli/dialogs
@@ -78,7 +79,7 @@ completions
 | Feature       | Default | Gates                                                        |
 |---------------|---------|--------------------------------------------------------------|
 | `completions` | yes     | `completions` module, `dirs` dep, `Completions` CLI command  |
-| `interactive` | yes     | `crossterm` dep, interactive editor, confirmation dialogs     |
+| `interactive` | yes     | `crossterm` + `arboard` deps, editor (clipboard), dialogs      |
 
 Without `interactive`: edit commands only work with inline text (`rusk edit 1 new text`),
 delete skips confirmation. Terminal width falls back to 80 columns.
@@ -102,6 +103,7 @@ Build minimal binary: `cargo build --release --no-default-features`
 | `chrono`     | Date types and arithmetic              |
 | `anyhow`     | Error handling                         |
 | `crossterm`  | Terminal raw mode, cursor, key events  |
+| `arboard`    | System clipboard (editor copy/paste)   |
 | `dirs`       | Home directory detection               |
 | `windows-sys`| Windows console API (cfg(windows))     |
 

@@ -164,7 +164,7 @@ key returns to the editor.
 
 The due date (if any) is **only** the first whitespace-delimited token at the
 **very start of the first line**. It may be an absolute date (`DD-MM-YYYY`,
-slashes or short year ok), a relative offset from today (`2d`, `2w`, `10d5w`,
+slashes or dots or short year ok), a relative offset from today (`2d`, `2w`, `10d5w`,
 `1m3q`, …), or a relative offset from **this task's current due date** using a
 leading `+` (`+2w`, `+10d5w`, …; if the task had no due date yet, `+` uses
 today, same as `rusk add -d`). Use `_` as the only date token to clear

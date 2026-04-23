@@ -96,7 +96,7 @@ rusk list
 rusk
 
 # Compact view: one line per task (no wraps, trailing punctuation trimmed)
-rusk list -f
+rusk list --first-line
 
 # Mark a task as done
 rusk mark 1
@@ -104,23 +104,18 @@ rusk mark 1
 # Mark a task as undone (toggle)
 rusk mark 1
 
-# Mark a task as priority (shows orange `p` instead of `•`). Toggle again to remove.
-rusk mark 1 -p
-
-# Priority is preserved across done toggles: marking a priority task done, then
-# marking it again, returns it to the priority state rather than to normal.
-rusk mark 1 -p     # `•` → `p`
-rusk mark 1        # `p` → `✔`
-rusk mark 1        # `✔` → `p` (not `•`)
+# Mark a task as priority. Toggle again to remove.
+rusk mark 1 --priority
 
 # Edit task text in one shot
 rusk edit 1 Complete the project documentation
 
-# Optional -d for date without opening the TUI)
-rusk edit 1 -d 1-1-25
-rusk edit 1 -d 2w
+# Optional -d for date without opening the TUI
+rusk edit 1 --date 1-1-25
+rusk edit 1 --date 2w
+
 # Relative with leading +: add that offset to the task's current due date (today if it had none)
-rusk edit 1 -d +2w
+rusk edit 1 --date +2w
 
 # Delete a task
 rusk del 1
@@ -133,10 +128,9 @@ rusk --help
 
 # Help for a specific command
 rusk add --help
-rusk edit --help
 
-# Date flag help (rusk add -d; rusk edit -d with a value, see rusk edit --help)
-rusk add -d -h
+# Or flag 
+rusk add --date --help
 ```
 
 ## Working with Multiple Tasks
@@ -162,7 +156,7 @@ header on the first line. Its full reference lives in
 [EDITOR.md](EDITOR.md).
 
 ```bash
-# Edit task text and optional due date on the first line (see Ctrl+G in the editor).
+# Edit task text and optional due date on the first line.
 rusk edit 1
 
 # Edit several tasks in one session.
@@ -203,10 +197,11 @@ rusk c (completions)
 -V (--version)
 
 # Command flags
--d (--date)          # add; optional on `edit` (e.g. -d 2w, -d +2w, -d _); bare -d is invalid; TUI: first line
--f (--first-line)    # list
--p (--priority)      # mark
-   --done            # del (no short form)
+-d (--date)
+-f (--first-line)
+-p (--priority)
+
+--done
 ```
 
 # Configuration

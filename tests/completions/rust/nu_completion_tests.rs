@@ -34,7 +34,7 @@ fn test_nu_completion_script_structure() {
     );
     assert!(
         script.contains("def get-list-flags"),
-        "Script should have get-list-flags for list -f/--first-line"
+        "Script should have get-list-flags for list -c/--compact"
     );
     assert!(
         script.contains("def complete-completions"),

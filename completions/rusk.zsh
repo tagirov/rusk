@@ -495,7 +495,7 @@ _rusk_main() {
             
         list|l)
             if [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; }; then
-                _rusk_zsh_compadd_flags -- -f --first-line -h --help
+                _rusk_zsh_compadd_flags -- -c --compact -h --help
             fi
             ;;
         restore|r)

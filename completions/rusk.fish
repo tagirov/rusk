@@ -643,7 +643,7 @@ function __rusk_complete_list_restore_flags
     test (count $cmdline) -ge 2; or return
     set -l sub "$cmdline[2]"
     if contains -- $sub list l
-        __rusk_complete_flags -f --first-line -h --help
+        __rusk_complete_flags -c --compact -h --help
     else
         __rusk_complete_flags -h --help
     end

@@ -97,7 +97,7 @@ Tests for CLI utility functions:
 #### `integration_main_tests.rs`
 Integration tests for the rusk binary (`RUSK_DB` set to a temp JSON file):
 - Main argument parsing and flag filtering
-- `list -f` / `--first-line` omits body lines after the first line of task text
+- `list -c` / `--compact` omits body lines after the first line of task text
 - `RUSK_NO_COLOR` / empty value behavior on stderr
 - `--help` text mentions date syntax (absolute, relative, and edit `+` from current due date)
 

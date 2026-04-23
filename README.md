@@ -96,7 +96,7 @@ rusk list
 rusk
 
 # Compact view: one line per task (no wraps, trailing punctuation trimmed)
-rusk list --first-line
+rusk list --compact
 
 # Mark a task as done
 rusk mark 1
@@ -198,10 +198,9 @@ rusk c (completions)
 
 # Command flags
 -d (--date)
--f (--first-line)
+-c (--compact)
 -p (--priority)
 
---done
 ```
 
 # Configuration

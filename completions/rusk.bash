@@ -364,11 +364,11 @@ _rusk_complete_mark_flags() {
     return 0
 }
 
-# Flags for list (compact first-line + help)
+# Flags for list (compact + help)
 _rusk_complete_list_flags() {
     local gcur="$cur"
     [[ "${1:-0}" == 1 ]] && gcur=""
-    COMPREPLY=($(compgen -W "-f --first-line -h --help" -- "$gcur"))
+    COMPREPLY=($(compgen -W "-c --compact -h --help" -- "$gcur"))
     return 0
 }
 

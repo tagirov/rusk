@@ -134,10 +134,10 @@ fn test_binary_list_first_line_omits_body_lines() {
 
     let out = rusk_command()
         .env("RUSK_NO_COLOR", "1")
-        .args(["list", "-f"])
+        .args(["list", "-c"])
         .output()
         .unwrap();
-    assert!(out.status.success(), "list -f should succeed: {out:?}");
+    assert!(out.status.success(), "list -c should succeed: {out:?}");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains("Title line"),

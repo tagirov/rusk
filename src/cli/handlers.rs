@@ -456,7 +456,7 @@ impl HandlerCLI {
         Ok(())
     }
 
-    pub fn handle_list_tasks(tasks: &[Task], first_line_only: bool) {
+    pub fn handle_list_tasks(tasks: &[Task], compact: bool) {
         if tasks.is_empty() {
             println!("{}", "No tasks".yellow());
             return;
@@ -506,14 +506,14 @@ impl HandlerCLI {
                 "".normal()
             };
 
-            let text_for_list = if first_line_only {
+            let text_for_list = if compact {
                 Self::trim_first_line_for_compact_list(task.text.lines().next().unwrap_or(""))
             } else {
                 task.text.as_str()
             };
             let wrapped_lines = Self::wrap_text_by_words(text_for_list, available_width);
 
-            let first_line: &str = if first_line_only {
+            let first_line: &str = if compact {
                 wrapped_lines
                     .first()
                     .map(|s| Self::trim_first_line_for_compact_list(s))
@@ -532,7 +532,7 @@ impl HandlerCLI {
                 );
             }
 
-            if !first_line_only {
+            if !compact {
                 for line in wrapped_lines.iter().skip(1) {
                     println!("  {} {:>3} {:>10} {}", " ", " ", " ", line);
                 }

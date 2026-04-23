@@ -532,7 +532,7 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
 
         { $_ -in 'list', 'l' } {
             if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur) -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
-                return _rusk_emit_flag_completions @('--first-line', '-f', '--help', '-h') $wordToComplete $tokens $command $cur
+                return _rusk_emit_flag_completions @('--compact', '-c', '--help', '-h') $wordToComplete $tokens $command $cur
             }
             return @()
         }

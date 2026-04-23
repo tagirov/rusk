@@ -157,7 +157,7 @@ impl HandlerCLI {
         &s[..end]
     }
 
-    /// Strips trailing sentence punctuation (and matching quotes/dashes). Used for `list --first-line`.
+    /// Strips trailing sentence punctuation (and matching quotes/dashes). Used for `list --compact`.
     #[doc(hidden)]
     pub fn trim_trailing_punctuation(s: &str) -> &str {
         let mut end = s.len();

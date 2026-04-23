@@ -74,11 +74,11 @@ def get-date-flags [] {
   ]
 }
 
-# list subcommand: compact first-line view
+# list subcommand: compact view
 def get-list-flags [] {
   [
-    {value: "--first-line", description: "Compact view: first line of each task only"}
-    {value: "-f", description: "Compact view: first line of each task only"}
+    {value: "--compact", description: "Compact view: first line of each task only"}
+    {value: "-c", description: "Compact view: first line of each task only"}
   ]
 }
 
@@ -558,7 +558,7 @@ def complete-mark-del [cur: string, command: string] {
   []
 }
 
-# Complete list/restore commands (list adds -f/--first-line)
+# Complete list/restore commands (list adds -c/--compact)
 def complete-list-restore [cur: string, subcommand: string] {
   if ($cur == "") or ($cur | str starts-with "-") {
     if $subcommand == "list" or $subcommand == "l" {

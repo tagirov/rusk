@@ -26,8 +26,8 @@ supported. For new tasks, use `rusk add -d`.\n";
 #[command(
     version,
     about,
-    after_help = "Without COMMAND, lists all tasks (same as `rusk list`). Use `rusk list -f` for a compact single-line view.\n\nFor details on flags, dates, and environment variables run `rusk --help` or `rusk <COMMAND> --help`.",
-    after_long_help = "Running `rusk` without a COMMAND is equivalent to `rusk list`. Use `rusk list -f` / `--first-line` for a compact single-line view.\n\nDue dates: use `rusk add -d ...` for new tasks, or the interactive editor (`rusk edit <id>`) — first line at the start, see `rusk edit --help`. Pass `_` to clear where `-d` is supported. See `rusk add --help` for date syntax.\n\nEnvironment:\n  RUSK_DB        Optional path to the tasks database file or directory.\n  RUSK_NO_COLOR  Disable ANSI colors when set to any non-empty value (NO_COLOR is also respected).\n\nShell tab completion:\n  rusk completions install <shell> [<shell> ...]\n  rusk completions show <shell>\n"
+    after_help = "Without COMMAND, lists all tasks (same as `rusk list`). Use `rusk list -c` for a compact single-line view.\n\nFor details on flags, dates, and environment variables run `rusk --help` or `rusk <COMMAND> --help`.",
+    after_long_help = "Running `rusk` without a COMMAND is equivalent to `rusk list`. Use `rusk list -c` / `--compact` for a compact single-line view.\n\nDue dates: use `rusk add -d ...` for new tasks, or the interactive editor (`rusk edit <id>`) — first line at the start, see `rusk edit --help`. Pass `_` to clear where `-d` is supported. See `rusk add --help` for date syntax.\n\nEnvironment:\n  RUSK_DB        Optional path to the tasks database file or directory.\n  RUSK_NO_COLOR  Disable ANSI colors when set to any non-empty value (NO_COLOR is also respected).\n\nShell tab completion:\n  rusk completions install <shell> [<shell> ...]\n  rusk completions show <shell>\n"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -103,17 +103,17 @@ pub enum Command {
     },
     #[command(
         visible_alias = "l",
-        about = "List all tasks with status, ID, date, and text. Running `rusk` without a subcommand does the same. Use -f for a compact single-line view"
+        about = "List all tasks with status, ID, date, and text. Running `rusk` without a subcommand does the same. Use -c for a compact single-line view"
     )]
     List {
         #[arg(long, hide = true, default_value_t = false)]
         for_completion: bool,
         #[arg(
-            short = 'f',
+            short = 'c',
             long,
             help = "Compact view: show only the first line of each task (no wrap/paragraph continuations); strip trailing punctuation on that line"
         )]
-        first_line: bool,
+        compact: bool,
     },
     #[command(
         visible_alias = "r",

@@ -182,12 +182,12 @@ fn run() -> Result<()> {
         }
         Some(Command::List {
             for_completion,
-            first_line,
+            compact,
         }) => {
             if for_completion {
                 HandlerCLI::handle_list_tasks_for_completion(tm.tasks());
             } else {
-                HandlerCLI::handle_list_tasks(tm.tasks(), first_line);
+                HandlerCLI::handle_list_tasks(tm.tasks(), compact);
             }
         }
         None => {

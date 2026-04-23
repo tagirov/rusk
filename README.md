@@ -74,10 +74,6 @@ copy .\target\release\rusk.exe "%USERPROFILE%\AppData\Local\Microsoft\WindowsApp
 # Add a new task
 rusk add Buy groceries
 
-# Add a task in the full-screen multi-line editor (no TEXT; requires a terminal)
-rusk add
-rusk add --date 2w
-
 # Add a task with a deadline
 rusk add Finish project report --date 31-12-2025
 
@@ -160,8 +156,10 @@ header on the first line. Its full reference lives in
 [EDITOR.md](EDITOR.md).
 
 ```bash
-# Create a new task (TUI) — omit TEXT; optional -d / --date pre-fills the first line
+# Create a task using the TUI
 rusk add
+
+# Optional -d / --date pre-fills the first line
 rusk add -d 2w
 
 # Edit task text and optional due date on the first line.

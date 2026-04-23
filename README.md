@@ -88,8 +88,6 @@ rusk add Finish project report --date 1-3-25
 # d=days, w=weeks, m=months, q=quarters (3 months), y=years
 rusk add Follow up --date 2w
 rusk add Review --date 10d5w
-# Leading + is optional on add (same as without +).
-rusk add Same as 2w --date +2w
 
 # View all tasks
 rusk list
@@ -116,8 +114,11 @@ rusk mark 1 -p     # `•` → `p`
 rusk mark 1        # `p` → `✔`
 rusk mark 1        # `✔` → `p` (not `•`)
 
-# Edit task text in one shot (optional -d for date without opening the TUI)
+# Edit task text in one shot
 rusk edit 1 Complete the project documentation
+
+# Optional -d for date without opening the TUI)
+rusk edit 1 -d 1-1-25
 rusk edit 1 -d 2w
 # Relative with leading +: add that offset to the task's current due date (today if it had none)
 rusk edit 1 -d +2w
@@ -168,20 +169,6 @@ rusk edit 1
 # Edit several tasks in one session.
 rusk edit 1,2,3
 ```
-
-Set or change the due date **only on the first line, at the very start** (first
-token): absolute `DD-MM-YYYY` / `DD/MM/YYYY` (short year ok), relative from today
-(`2w`, `10d5w`, …), or **relative from the task's current due date** with a leading
-`+` (`+2w`, `+10d5w`, …; if the task had no date, `+` counts from today). A **valid**
-token is **highlighted in color** on that line; invalid text is not. Use `_` alone
-as the first token to clear. For non-interactive date changes use
-`rusk edit <id> -d <date>` (same rules as the first line in the TUI); **bare** `-d` /
-`--date` (no value) is not allowed — use the TUI to edit the first line. Quick keys: `Ctrl+S` save, `Esc`
-cancel (confirms if dirty), `Ctrl+G` or `F1` in-editor help (full date syntax),
-`Ctrl+R` restore original text, `Ctrl+Z` / `Ctrl+Y` undo / redo, `Ctrl+C` / `Ctrl+X` /
-`Ctrl+V` copy / cut / paste, `Ctrl+A` select all. See [EDITOR.md](EDITOR.md) for the
-complete list, mouse gestures, dirty-state confirmation, and draft recovery behaviour.
-
 
 ## Data Safety & Backup
 #### Automatic Backups

@@ -37,11 +37,11 @@ rusk edit 1,2,3
 ## Visual layout
 
 ```
-31-12-2025  first line of the task text ●
-            second line of the task text
-            third line …
+31-12-2025 first line of the task text 
+second line of the task text
+third line …
 
-                              ^S save · ^G help · Esc cancel
+                              ^S save · ^G help · Esc cancel    ●
 ```
 
 - Top rows: the editable text, soft-wrapped to fit the terminal width.
@@ -170,8 +170,7 @@ leading `+` (`+2w`, `+10d5w`, …; if the task had no due date yet, `+` uses
 today, same as `rusk add -d`). Use `_` as the only date token to clear
 the deadline. A **recognized** token is **highlighted in color** on that line
 (green for today or later, red if before today); text that does not parse as a
-date is not colored. The rest of the first line is the task title; following
-lines are the body.
+date is not colored. The following text are the body.
 
 `rusk edit <id> -d <date>` (with a value; same relative rules as this first-line
 token, including leading `+`) sets the date without opening the TUI. **Bare** `-d` / `--date` (no value) is not supported;
@@ -179,11 +178,6 @@ use the TUI to edit the first line. The interactive buffer is still the
 authoritative place for a due date: whatever appears as the first token on the
 first line (or absent). Full syntax, including relative forms, is in the
 in-editor help (`Ctrl+G` / `F1`).
-
-```
-31-12-2025 Buy groceries: milk, bread, eggs
-           Pick up the cake at 17:00
-```
 
 ## Output after editing
 
@@ -195,8 +189,3 @@ Edited task: 3
 Task unchanged: 4
 Skipped task: 5
 ```
-
-## Resize handling
-
-The editor listens for `Event::Resize` and re-renders immediately. The view
-top is re-clamped so the cursor stays visible in the new geometry.

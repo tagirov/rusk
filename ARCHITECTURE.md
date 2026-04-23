@@ -19,9 +19,19 @@ src/
 ├── cli/
 │   ├── mod.rs           # HandlerCLI struct, submodule declarations
 │   ├── handlers.rs      # Command handlers: add, del, mark, edit, list, restore
-│   ├── formatter.rs     # Text wrapping (preserves hard line breaks), ANSI stripping, terminal width
-│   ├── editor.rs        # Interactive full-screen editor (crossterm): task text + date input
-│   └── dialogs.rs       # Confirmation prompts (crossterm raw mode)
+│   ├── formatter.rs     # Text wrapping, ANSI stripping, terminal width, compact first-line trim
+│   ├── dialogs.rs       # Confirmation prompts (crossterm raw mode)
+│   └── editor/          # Interactive full-screen editor (crossterm): task text + first-line date
+│       ├── mod.rs       # Session loop, save/cancel, help overlay
+│       ├── state.rs     # Buffer, cursor, selection, undo steps
+│       ├── view.rs      # Layout, soft wrap, date highlighting
+│       ├── input.rs     # Key dispatch
+│       ├── terminal.rs  # Raw mode, draw, resize
+│       ├── history.rs   # Undo/redo stacks
+│       ├── text_ops.rs  # Word bounds, kill-line, paste
+│       ├── draft.rs     # Autosave / recovery JSON
+│       ├── clipboard.rs # System clipboard (arboard) + fallback
+│       └── mouse.rs     # Click, drag, wheel
 ├── completions.rs       # Shell completion scripts (include_str!), Shell enum
 └── windows_console.rs   # Windows ANSI support via windows-sys
 ```

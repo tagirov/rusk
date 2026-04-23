@@ -12,19 +12,17 @@ tests/
 │   └── mod.rs                      # Helper functions for creating test tasks
 ├── completions/                    # Shell completion tests (see completions/README.md)
 │   └── ...
-├── cli_tests.rs                    # CLI command tests
-├── cli_utils_tests.rs              # CLI utility function tests
+├── cli_tests.rs                    # CLI command tests (TaskManager API)
+├── cli_utils_tests.rs              # CLI utility function tests (wrap, trim, word nav)
 ├── lib_tests.rs                    # Core library function tests
 ├── database_corruption_tests.rs    # Database corruption handling tests
-├── directory_structure_tests.rs    # Directory creation and structure tests
+├── directory_structure_tests.rs    # Directory creation, default path, RUSK_DB in test mode
 ├── edge_case_tests.rs              # Edge cases and boundary condition tests
-├── edit_mode_tests.rs              # Edit command mode tests
+├── edit_mode_tests.rs              # Edit command mode tests (parse_edit_args, strip -d)
 ├── edit_parsing_tests.rs           # Edit command argument parsing tests
-├── environment_tests.rs            # Environment variable tests
-├── integration_main_tests.rs       # Integration tests for main flow
+├── integration_main_tests.rs       # Integration tests: real `rusk` binary, flags, RUSK_DB harness
 ├── mark_success_tests.rs           # Mark command success/failure tests
 ├── parse_flexible_ids_tests.rs     # ID parsing tests (comma lists; single ID without comma)
-├── path_migration_tests.rs         # Database path migration tests
 ├── persistence_tests.rs            # Data persistence and save/load tests
 ├── restore_tests.rs                # Backup restore functionality tests
 ├── unchanged_detection_tests.rs    # Unchanged task detection tests
@@ -82,12 +80,12 @@ Tests for core library functions:
 - Task validation
 
 #### `cli_tests.rs`
-Tests for CLI command behavior:
+Tests for CLI command behavior via `TaskManager` (no subprocess):
 - `add` command - Adding tasks with and without dates
 - `edit` command - Editing task text and dates
 - `mark` command - Marking tasks as done/undone
 - `del` command - Deleting tasks
-- `list` command - Listing and filtering tasks
+- `list` command - Task data used by listing (no TTY output assertions here)
 - `restore` command - Restoring from backups
 
 #### `cli_utils_tests.rs`
@@ -97,10 +95,10 @@ Tests for CLI utility functions:
 - Other CLI helper functions
 
 #### `integration_main_tests.rs`
-Integration tests for the rusk binary:
-- Main argument parsing
-- Flag filtering
-- End-to-end binary execution
+Integration tests for the rusk binary (`RUSK_DB` set to a temp JSON file):
+- Main argument parsing and flag filtering
+- `list -f` / `--first-line` omits body lines after the first line of task text
+- `RUSK_NO_COLOR` / empty value behavior on stderr
 - `--help` text mentions date syntax (absolute, relative, and edit `+` from current due date)
 
 ### Data Persistence Tests
@@ -135,20 +133,7 @@ Tests for directory structure:
 - Custom directory paths
 - Directory creation on save
 - Backup file location
-
-#### `path_migration_tests.rs`
-Tests for database path migration:
-- Default path structure
-- Backup file naming
-- Path resolution with environment variables
-- Migration scenarios
-
-#### `environment_tests.rs`
-Tests for environment variable handling:
-- `RUSK_DB` variable as directory
-- `RUSK_DB` variable as file path
-- Path resolution in test mode
-- Environment variable precedence
+- Debug/test build path (`rusk_debug`) and interaction with `RUSK_DB`
 
 ### Edit Command Tests
 
@@ -227,8 +212,7 @@ The test suite covers:
 - Core library functions
 - Data persistence and file I/O
 - Error handling and edge cases
-- Environment variable handling
-- Path resolution and migration
+- Path resolution (default `.rusk`, `RUSK_DB`, debug harness)
 - Backup and restore functionality
 - Date parsing and validation
 - ID parsing (flexible formats)

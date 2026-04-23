@@ -77,16 +77,35 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
+    // Help-only and validation paths that must not open the database. Debug/test builds use a
+    // fixed tasks.json path; parallel integration tests would otherwise race on TaskManager::new()
+    // before we detect trailing `-h` / `--help` on `edit`.
+    match &cli.command {
+        Some(Command::Add { date: Some(d), .. }) if is_cli_date_help_value(d) => {
+            print_subcommand_help("add")?;
+            return Ok(());
+        }
+        Some(Command::Edit { args }) => {
+            if args_have_date_then_help(args) {
+                print_subcommand_help("edit")?;
+                return Ok(());
+            }
+            if args.last().is_some_and(|a| is_cli_date_help_value(a)) {
+                print_subcommand_help("edit")?;
+                return Ok(());
+            }
+            if args.is_empty() {
+                eprint_cli_error("Error: No arguments provided for edit command".red());
+                std::process::exit(1);
+            }
+        }
+        _ => {}
+    }
+
     let mut tm = TaskManager::new()?;
 
     match cli.command {
         Some(Command::Add { text, date }) => {
-            if let Some(ref d) = date {
-                if is_cli_date_help_value(d) {
-                    print_subcommand_help("add")?;
-                    return Ok(());
-                }
-            }
             if let Err(e) = HandlerCLI::handle_add_task(&mut tm, text, date) {
                 eprint_cli_error(format!("Error: {e}").red());
                 std::process::exit(1);
@@ -125,18 +144,6 @@ fn run() -> Result<()> {
             HandlerCLI::handle_mark_tasks(&mut tm, parsed_ids, priority)?;
         }
         Some(Command::Edit { args }) => {
-            if args_have_date_then_help(&args) {
-                print_subcommand_help("edit")?;
-                return Ok(());
-            }
-            if args.last().is_some_and(|a| is_cli_date_help_value(a)) {
-                print_subcommand_help("edit")?;
-                return Ok(());
-            }
-            if args.is_empty() {
-                eprint_cli_error("Error: No arguments provided for edit command".red());
-                std::process::exit(1);
-            }
             let (args, opt_date) = match strip_edit_date_flag(args) {
                 Ok(p) => p,
                 Err(BareEditDateFlag) => {

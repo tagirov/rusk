@@ -22,12 +22,20 @@ One-shot date or text+date without opening the TUI: `rusk edit <id> -d <date>` (
 relative rules as in the TUI; `_` clears). Bare `-d` / `--date` (no value) is not \
 supported. For new tasks, use `rusk add -d`.\n";
 
+/// Root `--help` tail (after subcommands/options). Omits `completions` when that feature is off so
+/// distro builds (`--no-default-features`) match the available CLI and static files in `completions/`.
+#[cfg(feature = "completions")]
+const CLI_ROOT_AFTER_LONG_HELP: &str = "Running `rusk` without a COMMAND is equivalent to `rusk list`. Use `rusk list -c` / `--compact` for a compact single-line view.\n\nDue dates: `rusk add -d ...` for new tasks, `rusk add` with no text for the TUI, or the interactive editor (`rusk edit <id>`) — first line at the start, see `rusk edit --help` and EDITOR.md. Pass `_` to clear where `-d` is supported. See `rusk add --help` for date syntax.\n\nEnvironment:\n  RUSK_DB        Optional path to the tasks database file or directory.\n  RUSK_NO_COLOR  Disable ANSI colors when set to any non-empty value (NO_COLOR is also respected).\n\nShell tab completion:\n  rusk completions install <shell> [<shell> ...]\n  rusk completions show <shell>\n";
+
+#[cfg(not(feature = "completions"))]
+const CLI_ROOT_AFTER_LONG_HELP: &str = "Running `rusk` without a COMMAND is equivalent to `rusk list`. Use `rusk list -c` / `--compact` for a compact single-line view.\n\nDue dates: `rusk add -d ...` for new tasks, `rusk add` with no text for the TUI, or the interactive editor (`rusk edit <id>`) — first line at the start, see `rusk edit --help` and EDITOR.md. Pass `_` to clear where `-d` is supported. See `rusk add --help` for date syntax.\n\nEnvironment:\n  RUSK_DB        Optional path to the tasks database file or directory.\n  RUSK_NO_COLOR  Disable ANSI colors when set to any non-empty value (NO_COLOR is also respected).\n";
+
 #[derive(Parser)]
 #[command(
     version,
     about,
     after_help = "Without COMMAND, lists all tasks (same as `rusk list`). Use `rusk list -c` for a compact single-line view.\n\nFor details on flags, dates, and environment variables run `rusk --help` or `rusk <COMMAND> --help`.",
-    after_long_help = "Running `rusk` without a COMMAND is equivalent to `rusk list`. Use `rusk list -c` / `--compact` for a compact single-line view.\n\nDue dates: `rusk add -d ...` for new tasks, `rusk add` with no text for the TUI, or the interactive editor (`rusk edit <id>`) — first line at the start, see `rusk edit --help` and EDITOR.md. Pass `_` to clear where `-d` is supported. See `rusk add --help` for date syntax.\n\nEnvironment:\n  RUSK_DB        Optional path to the tasks database file or directory.\n  RUSK_NO_COLOR  Disable ANSI colors when set to any non-empty value (NO_COLOR is also respected).\n\nShell tab completion:\n  rusk completions install <shell> [<shell> ...]\n  rusk completions show <shell>\n"
+    after_long_help = CLI_ROOT_AFTER_LONG_HELP
 )]
 pub struct Cli {
     #[command(subcommand)]

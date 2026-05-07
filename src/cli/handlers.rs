@@ -84,7 +84,7 @@ impl HandlerCLI {
             "    ",
             &prefill_owned,
             false,
-            Some(|s| !s.trim().is_empty()),
+            None,
             false,
             extras,
         )?;

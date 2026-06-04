@@ -285,8 +285,10 @@ fn test_format_date_for_display_different_date() {
 #[test]
 fn test_get_max_line_width() {
     let result = HandlerCLI::get_max_line_width();
-    assert!(result > 0);
-    assert!(result <= 80);
+    assert!(
+        (1..=80).contains(&result),
+        "max line width must be normalized to 1..=80, got {result}"
+    );
 }
 
 #[test]

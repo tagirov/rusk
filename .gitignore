@@ -2,4 +2,6 @@ target/
 .rusk/
 .cursor/
 .aur/
+.nix/
+CLAUDE.md
 AGENTS.md

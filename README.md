@@ -153,7 +153,7 @@ rusk del 1,2,3
 The interactive multi-line editor supports selection, system clipboard,
 undo/redo, word navigation, mouse, crash-safe autosave, and a colored date
 header on the first line. Its full reference lives in
-[EDITOR.md](EDITOR.md).
+[EDITOR.md](EDITOR.md)
 
 ```bash
 # Create a task using the TUI

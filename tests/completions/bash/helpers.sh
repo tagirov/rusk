@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Helper functions for Bash completion tests
 
 # Colors for output

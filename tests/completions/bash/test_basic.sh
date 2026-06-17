@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Basic completion tests for Bash
 
 set -e

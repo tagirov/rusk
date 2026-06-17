@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Test: rusk e <id><tab> should append task text; rusk e <id> <tab> should offer -d/--date and -h/--help
 # This is the critical test for the reported issue
 

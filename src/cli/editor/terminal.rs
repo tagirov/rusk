@@ -7,8 +7,9 @@ use crossterm::{
     ExecutableCommand, QueueableCommand,
     cursor::{Hide, MoveTo, Show},
     event::{
-        DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-        KeyModifiers, MouseButton, MouseEvent, MouseEventKind, read,
+        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
+        MouseEventKind, read,
     },
     style::Print,
     terminal::{
@@ -29,6 +30,7 @@ impl Drop for ShowCursorOnDrop {
 pub(super) fn enter(stdout: &mut io::Stdout) -> Result<()> {
     enable_raw_mode().context("Failed to enable raw mode")?;
     stdout.queue(EnterAlternateScreen)?;
+    stdout.queue(EnableBracketedPaste)?;
     stdout.queue(EnableMouseCapture)?;
     stdout.queue(DisableLineWrap)?;
     stdout.queue(Clear(ClearType::All))?;
@@ -40,6 +42,7 @@ pub(super) fn enter(stdout: &mut io::Stdout) -> Result<()> {
 pub(super) fn finish(stdout: &mut io::Stdout) -> Result<()> {
     stdout.queue(EnableLineWrap).ok();
     stdout.queue(DisableMouseCapture).ok();
+    stdout.queue(DisableBracketedPaste).ok();
     stdout.queue(LeaveAlternateScreen)?;
     stdout.flush().ok();
     disable_raw_mode().ok();

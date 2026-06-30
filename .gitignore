@@ -1,6 +1,7 @@
 target/
 .rusk/
 .cursor/
+.claude/
 .aur/
 .nix/
 CLAUDE.md

@@ -22,16 +22,16 @@ src/
 │   ├── formatter.rs     # Text wrapping, ANSI stripping, terminal width, compact first-line trim
 │   ├── dialogs.rs       # Confirmation prompts (crossterm raw mode)
 │   └── editor/          # Interactive full-screen editor (crossterm): task text + first-line date
-│       ├── mod.rs       # Session loop, save/cancel, help overlay
-│       ├── state.rs     # Buffer, cursor, selection, undo steps
-│       ├── view.rs      # Layout, soft wrap, date highlighting
-│       ├── input.rs     # Key dispatch
-│       ├── terminal.rs  # Raw mode, draw, resize
-│       ├── history.rs   # Undo/redo stacks
-│       ├── text_ops.rs  # Word bounds, kill-line, paste
+│       ├── mod.rs       # Session loop: setup → poll → dispatch → render; save/cancel exits
+│       ├── state.rs     # EditorState: buffer, cursor, selection, snapshots
+│       ├── view.rs      # Layout, soft wrap, date highlighting, footer
+│       ├── input.rs     # Key / mouse / paste dispatch into Actions
+│       ├── terminal.rs  # Alt screen, raw mode, help overlay, discard confirm
+│       ├── history.rs   # Undo/redo stacks with single-char coalescing
+│       ├── text_ops.rs  # Pure text helpers: char boundaries, word jumps, multi-line edits
 │       ├── draft.rs     # Autosave / recovery JSON
-│       ├── clipboard.rs # System clipboard (arboard) + fallback
-│       └── mouse.rs     # Click, drag, wheel
+│       ├── clipboard.rs # System clipboard (arboard + OSC 52) + process-local fallback
+│       └── mouse.rs     # Click tracking, screen → buffer mapping
 ├── completions.rs       # Shell completion scripts (include_str!), Shell enum
 └── windows_console.rs   # Windows ANSI support via windows-sys
 ```
@@ -122,3 +122,6 @@ User input → clap (args.rs) → main.rs dispatch
 
 JSON file at `$RUSK_DB` or `.rusk/tasks.json`. Atomic write via temp+rename with
 copy fallback. Auto-backup to `.json.backup` on every save.
+
+Task ids are `u8`: the smallest free id is reused, and the database holds at
+most 255 tasks (adding beyond that returns an error).

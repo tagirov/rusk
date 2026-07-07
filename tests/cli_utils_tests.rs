@@ -37,6 +37,14 @@ fn test_wrap_text_by_words_exact_width() {
 }
 
 #[test]
+fn test_wrap_text_by_words_zero_width_does_not_hang() {
+    // Regression: a zero width used to loop forever on words longer than the
+    // width; now each chunk takes at least one character.
+    let result = HandlerCLI::wrap_text_by_words("abc", 0);
+    assert_eq!(result, vec!["a", "b", "c"]);
+}
+
+#[test]
 fn test_wrap_text_by_words_whitespace() {
     let result = HandlerCLI::wrap_text_by_words("  hello   world  ", 10);
     assert_eq!(result, vec!["hello", "world"]);
@@ -103,6 +111,19 @@ fn test_extract_ansi_codes_multiple_codes() {
 fn test_extract_ansi_codes_with_text() {
     let (prefix, suffix) = HandlerCLI::extract_ansi_codes("\x1b[32mhello\x1b[0m world");
     assert_eq!(prefix, "\x1b[32m");
+    assert_eq!(suffix, "\x1b[0m");
+}
+
+#[test]
+fn test_extract_ansi_codes_unterminated_sequence_dropped() {
+    // A sequence without the closing 'm' is not part of the prefix.
+    let (prefix, suffix) = HandlerCLI::extract_ansi_codes("\x1b[31");
+    assert_eq!(prefix, "");
+    assert_eq!(suffix, "");
+
+    // A complete sequence followed by an unterminated one keeps only the complete part.
+    let (prefix, suffix) = HandlerCLI::extract_ansi_codes("\x1b[1m\x1b[3");
+    assert_eq!(prefix, "\x1b[1m");
     assert_eq!(suffix, "\x1b[0m");
 }
 

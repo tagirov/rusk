@@ -183,3 +183,28 @@ fn test_edit_tasks_comprehensive_scenario() {
     assert_eq!(tm.tasks[1].date, expected_date);
     assert_eq!(tm.tasks[2].date, expected_date);
 }
+
+#[test]
+fn test_validate_cli_date_edit_arg_accepts_valid_values() {
+    use rusk::validate_cli_date_edit_arg;
+
+    assert!(validate_cli_date_edit_arg("31-12-2030").is_ok());
+    assert!(validate_cli_date_edit_arg("1.7.25").is_ok());
+    assert!(validate_cli_date_edit_arg("2d").is_ok());
+    assert!(validate_cli_date_edit_arg("10d5w").is_ok());
+    assert!(validate_cli_date_edit_arg("+2w").is_ok());
+    // `_` clears the date and is always valid.
+    assert!(validate_cli_date_edit_arg("_").is_ok());
+}
+
+#[test]
+fn test_validate_cli_date_edit_arg_rejects_invalid_values() {
+    use rusk::validate_cli_date_edit_arg;
+
+    assert!(validate_cli_date_edit_arg("").is_err());
+    assert!(validate_cli_date_edit_arg("   ").is_err());
+    assert!(validate_cli_date_edit_arg("+").is_err());
+    assert!(validate_cli_date_edit_arg("0d").is_err());
+    assert!(validate_cli_date_edit_arg("2x").is_err());
+    assert!(validate_cli_date_edit_arg("nonsense").is_err());
+}

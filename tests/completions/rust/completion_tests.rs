@@ -51,7 +51,7 @@ fn strip_ansi_codes(text: &str) -> String {
     let mut chars = text.chars().peekable();
 
     while let Some(ch) = chars.next() {
-        if ch == '\x1b' || ch == '\u{001b}' {
+        if ch == '\x1b' {
             // Found ESC, check if followed by [
             if chars.peek() == Some(&'[') {
                 chars.next(); // consume [

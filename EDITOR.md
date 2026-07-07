@@ -118,8 +118,11 @@ third line …
 | `Ctrl+Z` | Undo (consecutive single-char inserts collapse into one step). |
 | `Ctrl+Y` | Redo. |
 
-The editor uses [`arboard`](https://crates.io/crates/arboard) for the system
-clipboard with a process-local fallback when clipboard access is unavailable
+Copy targets the system clipboard through
+[`arboard`](https://crates.io/crates/arboard) (X11, Wayland, Windows, macOS)
+and additionally emits an OSC 52 escape so the terminal stores the text
+itself — this keeps the copy alive after rusk exits and works over SSH.
+A process-local fallback covers environments where neither is available
 (e.g. headless terminals).
 
 ### Mouse

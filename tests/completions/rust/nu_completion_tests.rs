@@ -355,7 +355,7 @@ fn test_nu_completion_root_flags() -> Result<()> {
                         || stdout.contains("-h")
                         || stdout.contains("-V")
                         || stdout.contains("[]")
-                        || stdout.len() > 0,
+                        || !stdout.is_empty(),
                     "Should return flag completions or valid response. Got: {}",
                     stdout
                 );
@@ -787,7 +787,7 @@ fn test_nu_completion_aliases() -> Result<()> {
                 let stdout = String::from_utf8_lossy(&result.stdout);
                 // Should return same completions as "add"
                 assert!(
-                    stdout.contains("help") || stdout.len() > 0,
+                    stdout.contains("help") || !stdout.is_empty(),
                     "Alias 'a' should work like 'add'"
                 );
             }

@@ -6,10 +6,7 @@ impl HandlerCLI {
     #[doc(hidden)]
     pub fn get_max_line_width() -> usize {
         #[cfg(feature = "interactive")]
-        let raw = match crossterm::terminal::size() {
-            Ok((width, _)) => width,
-            Err(_) => 0,
-        };
+        let raw = crossterm::terminal::size().map_or(0, |(width, _)| width);
         #[cfg(not(feature = "interactive"))]
         let raw = 0u16;
         Self::normalize_terminal_width(raw)
@@ -30,6 +27,23 @@ impl HandlerCLI {
     pub fn format_date_for_display(date: Option<chrono::NaiveDate>) -> String {
         date.map(|d| d.format("%d-%m-%Y").to_string())
             .unwrap_or_else(|| "empty".to_string())
+    }
+
+    /// Short list-style date: `D-mon-yy` (e.g. `7-jul-26`), red when overdue
+    /// on a not-done task, cyan otherwise.
+    pub(crate) fn colored_short_date(date: chrono::NaiveDate, done: bool) -> ColoredString {
+        use chrono::Datelike;
+        let date_str = format!(
+            "{}-{}-{}",
+            date.day(),
+            date.format("%b").to_string().to_lowercase(),
+            date.format("%y")
+        );
+        if date < chrono::Local::now().date_naive() && !done {
+            date_str.red()
+        } else {
+            date_str.cyan()
+        }
     }
 
     pub(crate) fn print_task_text_with_wrapping(prefix: &str, text: &str) {
@@ -55,36 +69,29 @@ impl HandlerCLI {
     #[doc(hidden)]
     pub fn extract_ansi_codes(s: &str) -> (String, String) {
         let mut prefix = String::new();
-        let mut suffix = String::new();
         let mut chars = s.chars().peekable();
-        let mut in_ansi = false;
-        let mut ansi_seq = String::new();
 
-        while let Some(&ch) = chars.peek() {
-            if ch == '\x1b' {
-                in_ansi = true;
+        // Collect leading complete ANSI sequences (ESC ... 'm'); an unterminated
+        // sequence is dropped, matching the previous behavior.
+        while chars.peek() == Some(&'\x1b') {
+            let mut ansi_seq = String::new();
+            for ch in chars.by_ref() {
                 ansi_seq.push(ch);
-                chars.next();
-                while let Some(&next) = chars.peek() {
-                    ansi_seq.push(next);
-                    chars.next();
-                    if next == 'm' {
-                        prefix.push_str(&ansi_seq);
-                        ansi_seq.clear();
-                        in_ansi = false;
-                        break;
-                    }
+                if ch == 'm' {
+                    prefix.push_str(&ansi_seq);
+                    break;
                 }
-            } else if in_ansi {
-                break;
-            } else {
+            }
+            if !ansi_seq.ends_with('m') {
                 break;
             }
         }
 
-        if !prefix.is_empty() {
-            suffix.push_str("\x1b[0m");
-        }
+        let suffix = if prefix.is_empty() {
+            String::new()
+        } else {
+            "\x1b[0m".to_string()
+        };
 
         (prefix, suffix)
     }
@@ -217,6 +224,16 @@ impl HandlerCLI {
         let mut lines = Vec::new();
         let mut current_line = String::new();
 
+        // Split an over-long word into width-sized chunks. Take at least one
+        // char per chunk so a zero width cannot loop forever.
+        let push_word_chunks = |lines: &mut Vec<String>, word: &str| {
+            let mut chars: Vec<char> = word.chars().collect();
+            while !chars.is_empty() {
+                let take = width.min(chars.len()).max(1);
+                lines.push(chars.drain(..take).collect());
+            }
+        };
+
         for word in text.split_whitespace() {
             let word_len = word.chars().count();
 
@@ -224,29 +241,17 @@ impl HandlerCLI {
                 if word_len <= width {
                     current_line.push_str(word);
                 } else {
-                    let mut chars: Vec<char> = word.chars().collect();
-                    while !chars.is_empty() {
-                        let chunk: Vec<char> = chars.drain(..width.min(chars.len())).collect();
-                        lines.push(chunk.iter().collect());
-                    }
+                    push_word_chunks(&mut lines, word);
                 }
+            } else if current_line.chars().count() + 1 + word_len <= width {
+                current_line.push(' ');
+                current_line.push_str(word);
             } else {
-                let space_needed = 1 + word_len;
-                if current_line.chars().count() + space_needed <= width {
-                    current_line.push(' ');
+                lines.push(std::mem::take(&mut current_line));
+                if word_len <= width {
                     current_line.push_str(word);
                 } else {
-                    lines.push(current_line);
-                    current_line = String::new();
-                    if word_len <= width {
-                        current_line.push_str(word);
-                    } else {
-                        let mut chars: Vec<char> = word.chars().collect();
-                        while !chars.is_empty() {
-                            let chunk: Vec<char> = chars.drain(..width.min(chars.len())).collect();
-                            lines.push(chunk.iter().collect());
-                        }
-                    }
+                    push_word_chunks(&mut lines, word);
                 }
             }
         }

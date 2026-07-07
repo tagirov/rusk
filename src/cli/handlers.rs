@@ -3,7 +3,6 @@ use crate::parse_cli_date_for_edit;
 use crate::parser::date::is_cli_date_clear_value;
 use crate::{Task, TaskManager, validate_cli_date_edit_arg};
 use anyhow::Result;
-use chrono::Datelike;
 use colored::*;
 
 use super::HandlerCLI;
@@ -13,21 +12,33 @@ use super::editor::EditorExtras;
 impl HandlerCLI {
     fn print_added_task(task: &Task) {
         let prefix = if let Some(date) = task.date {
-            let today = chrono::Local::now().date_naive();
-            let day = date.day();
-            let month = date.format("%b").to_string().to_lowercase();
-            let year = date.format("%y").to_string();
-            let date_str = format!("{}-{}-{}", day, month, year);
-            let colored_date = if date < today {
-                date_str.red()
-            } else {
-                date_str.cyan()
-            };
+            let colored_date = Self::colored_short_date(date, task.done);
             format!("{} {}: ({})", "Added task:".green(), task.id, colored_date)
         } else {
             format!("{} {}:", "Added task:".green(), task.id)
         };
         Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
+    }
+
+    /// Returns the draft text for `draft_key` when the user confirms restoring it;
+    /// otherwise deletes the draft file and returns `base_prefill` unchanged.
+    #[cfg(feature = "interactive")]
+    fn prefill_with_draft(
+        base_prefill: String,
+        draft_path: &std::path::Path,
+        draft_key: &str,
+        confirm_prompt: &str,
+    ) -> Result<String> {
+        if draft_path.exists()
+            && let Some(text) = Self::read_draft_for(draft_path, draft_key)
+            && text != base_prefill
+        {
+            if Self::read_confirmation(confirm_prompt)? {
+                return Ok(text);
+            }
+            let _ = std::fs::remove_file(draft_path);
+        }
+        Ok(base_prefill)
     }
 
     pub fn handle_add_task(
@@ -55,23 +66,12 @@ impl HandlerCLI {
             String::new()
         };
 
-        let mut prefill_owned = base_prefill.clone();
-        if draft_path.exists() {
-            if let Some(text) = Self::read_draft_for(&draft_path, &draft_key) {
-                if text != base_prefill {
-                    let prompt = format!(
-                        "{}{}",
-                        "Restore unsaved draft for new task ".truecolor(255, 165, 0),
-                        "? [y/N]: ".truecolor(255, 165, 0)
-                    );
-                    if Self::read_confirmation(&prompt)? {
-                        prefill_owned = text;
-                    } else {
-                        let _ = std::fs::remove_file(&draft_path);
-                    }
-                }
-            }
-        }
+        let prompt = format!(
+            "{}{}",
+            "Restore unsaved draft for new task ".truecolor(255, 165, 0),
+            "? [y/N]: ".truecolor(255, 165, 0)
+        );
+        let prefill_owned = Self::prefill_with_draft(base_prefill, &draft_path, &draft_key, &prompt)?;
 
         let extras = EditorExtras {
             draft_path: Some(draft_path),
@@ -132,24 +132,13 @@ impl HandlerCLI {
         } else {
             current.to_string()
         };
-        let mut prefill_owned = base_prefill.clone();
-        if draft_path.exists() {
-            if let Some(text) = Self::read_draft_for(&draft_path, &draft_key) {
-                if text != base_prefill {
-                    let prompt = format!(
-                        "{} {} {} ",
-                        "Restore unsaved draft for task".truecolor(255, 165, 0),
-                        task_id.to_string().white(),
-                        "? [y/N]:".truecolor(255, 165, 0)
-                    );
-                    if Self::read_confirmation(&prompt)? {
-                        prefill_owned = text;
-                    } else {
-                        let _ = std::fs::remove_file(&draft_path);
-                    }
-                }
-            }
-        }
+        let prompt = format!(
+            "{} {} {} ",
+            "Restore unsaved draft for task".truecolor(255, 165, 0),
+            task_id.to_string().white(),
+            "? [y/N]:".truecolor(255, 165, 0)
+        );
+        let prefill_owned = Self::prefill_with_draft(base_prefill, &draft_path, &draft_key, &prompt)?;
 
         let extras = EditorExtras {
             draft_path: Some(draft_path),
@@ -186,36 +175,27 @@ impl HandlerCLI {
         if token.is_empty() {
             return (None, edited.to_string());
         }
-        if is_cli_date_clear_value(&token) {
-            let token_chars = token.chars().count();
-            let mut tail = first.chars().skip(token_chars);
+
+        // Text with the leading token removed, dropping exactly one separating
+        // whitespace after it if present.
+        let text_without_token = || {
+            let mut tail = first.chars().skip(token.chars().count());
             let peek = tail.clone().next();
             if matches!(peek, Some(c) if c.is_whitespace()) {
                 tail.next();
             }
             let first_rest: String = tail.collect();
-            let new_text = match rest {
+            match rest {
                 Some(r) => format!("{}\n{}", first_rest, r),
                 None => first_rest,
-            };
-            return (None, new_text);
+            }
+        };
+
+        if is_cli_date_clear_value(&token) {
+            return (None, text_without_token());
         }
         match crate::parse_cli_date_for_edit(&token, task_date) {
-            Ok(date) => {
-                let token_chars = token.chars().count();
-                let mut tail = first.chars().skip(token_chars);
-                // Drop exactly one separating whitespace if present.
-                let peek = tail.clone().next();
-                if matches!(peek, Some(c) if c.is_whitespace()) {
-                    tail.next();
-                }
-                let first_rest: String = tail.collect();
-                let new_text = match rest {
-                    Some(r) => format!("{}\n{}", first_rest, r),
-                    None => first_rest,
-                };
-                (Some(date), new_text)
-            }
+            Ok(date) => (Some(date), text_without_token()),
             Err(_) => (None, edited.to_string()),
         }
     }
@@ -428,9 +408,8 @@ impl HandlerCLI {
         text: Option<Vec<String>>,
         date: Option<String>,
     ) -> Result<()> {
-        let ids_copy = ids.clone();
         let mut old_dates: Vec<(u8, Option<chrono::NaiveDate>)> = Vec::new();
-        for &id in &ids_copy {
+        for &id in &ids {
             if let Some(idx) = tm.find_task_by_id(id) {
                 old_dates.push((id, tm.tasks()[idx].date));
             }
@@ -469,34 +448,32 @@ impl HandlerCLI {
                             format!("was: {}", old_date_str).cyan(),
                             ")".normal()
                         );
-                    } else {
-                        if new_date != old_date {
-                            let old_date_str = Self::format_date_for_display(old_date);
-                            let new_date_str = Self::format_date_for_display(new_date);
-                            if old_date_str == "empty" {
-                                println!(
-                                    " {} {} {} {} {} {}",
-                                    "- date:".cyan(),
-                                    new_date_str.bold(),
-                                    "(".normal(),
-                                    "was:".cyan(),
-                                    old_date_str.white().bold(),
-                                    ")".normal()
-                                );
-                            } else {
-                                println!(
-                                    " {} {} {} {} {}",
-                                    "- date:".cyan(),
-                                    new_date_str.bold(),
-                                    "(".normal(),
-                                    format!("was: {}", old_date_str).cyan(),
-                                    ")".normal()
-                                );
-                            }
+                    } else if new_date != old_date {
+                        let old_date_str = Self::format_date_for_display(old_date);
+                        let new_date_str = Self::format_date_for_display(new_date);
+                        if old_date_str == "empty" {
+                            println!(
+                                " {} {} {} {} {} {}",
+                                "- date:".cyan(),
+                                new_date_str.bold(),
+                                "(".normal(),
+                                "was:".cyan(),
+                                old_date_str.white().bold(),
+                                ")".normal()
+                            );
                         } else {
-                            let date_str = Self::format_date_for_display(new_date);
-                            println!(" {} {}", "- date:".cyan(), date_str.bold());
+                            println!(
+                                " {} {} {} {} {}",
+                                "- date:".cyan(),
+                                new_date_str.bold(),
+                                "(".normal(),
+                                format!("was: {}", old_date_str).cyan(),
+                                ")".normal()
+                            );
                         }
+                    } else {
+                        let date_str = Self::format_date_for_display(new_date);
+                        println!(" {} {}", "- date:".cyan(), date_str.bold());
                     }
                 }
             }
@@ -505,10 +482,6 @@ impl HandlerCLI {
         for id in unchanged {
             if let Some(idx) = tm.find_task_by_id(id) {
                 let task = &tm.tasks()[idx];
-                let _old_date = old_dates
-                    .iter()
-                    .find(|(i, _)| *i == id)
-                    .and_then(|(_, d)| *d);
                 let current_date = task.date;
 
                 let prefix = format!("{} ", "Task already has this content:".magenta());
@@ -555,25 +528,10 @@ impl HandlerCLI {
                 "•".normal()
             };
 
-            let date_str = task
+            let date_colored = task
                 .date
-                .map(|d| {
-                    let day = d.day();
-                    let month = d.format("%b").to_string().to_lowercase();
-                    let year = d.format("%y").to_string();
-                    format!("{}-{}-{}", day, month, year)
-                })
-                .unwrap_or_default();
-
-            let date_colored = if let Some(d) = task.date {
-                if d < chrono::Local::now().date_naive() && !task.done {
-                    date_str.red()
-                } else {
-                    date_str.cyan()
-                }
-            } else {
-                "".normal()
-            };
+                .map(|d| Self::colored_short_date(d, task.done))
+                .unwrap_or_else(|| "".normal());
 
             let text_for_list = if compact {
                 Self::trim_first_line_for_compact_list(task.text.lines().next().unwrap_or(""))
@@ -603,7 +561,7 @@ impl HandlerCLI {
 
             if !compact {
                 for line in wrapped_lines.iter().skip(1) {
-                    println!("  {} {:>3} {:>10} {}", " ", " ", " ", line);
+                    println!("{}{}", " ".repeat(prefix_width), line);
                 }
             }
         }

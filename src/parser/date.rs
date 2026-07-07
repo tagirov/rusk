@@ -35,22 +35,11 @@ pub fn parse_cli_date_for_edit(date_str: &str, task_date: Option<NaiveDate>) -> 
 /// absolute dates parse the same for any base.
 pub fn validate_cli_date_edit_arg(s: &str) -> Result<()> {
     let t = s.trim();
-    if t.is_empty() {
-        anyhow::bail!("Date cannot be empty");
-    }
     if is_cli_date_clear_value(t) {
         return Ok(());
     }
-    if let Some(rest) = t.strip_prefix('+') {
-        let rest = rest.trim_start();
-        if rest.is_empty() {
-            anyhow::bail!("Date cannot be empty");
-        }
-        parse_cli_date_with_base(rest, Local::now().date_naive())?;
-    } else {
-        parse_cli_date(t)?;
-    }
-    Ok(())
+    // A `None` base means `+` offsets count from today, matching the check above.
+    parse_cli_date_for_edit(t, None).map(|_| ())
 }
 
 pub fn parse_cli_date_optional_empty(s: &str) -> Result<Option<NaiveDate>> {
@@ -136,20 +125,17 @@ with a leading + when editing, count from the task's current due date (today if 
 }
 
 pub fn normalize_date_string(date_str: &str) -> String {
-    let mut normalized = date_str.replace('/', "-").replace('.', "-");
+    let normalized = date_str.replace(['/', '.'], "-");
 
     let parts: Vec<&str> = normalized.split('-').collect();
-    if parts.len() == 3 {
-        if let Some(year_str) = parts.get(2) {
-            let year_str = year_str.trim();
-            if year_str.len() <= 2 && !year_str.is_empty() {
-                if let Ok(year) = year_str.parse::<u16>() {
-                    if year < 100 {
-                        let full_year = 2000 + year;
-                        normalized = format!("{}-{}-{}", parts[0], parts[1], full_year);
-                    }
-                }
-            }
+    if let [day, month, year_str] = parts.as_slice() {
+        let year_str = year_str.trim();
+        if !year_str.is_empty()
+            && year_str.len() <= 2
+            && let Ok(year) = year_str.parse::<u16>()
+            && year < 100
+        {
+            return format!("{}-{}-{}", day, month, 2000 + year);
         }
     }
 

@@ -63,7 +63,7 @@ fn error_byte_in_file(data: &str, line: usize, column: usize) -> Option<usize> {
 }
 
 fn json_error_line_context(data: &str, e: &serde_json::Error) -> Option<String> {
-    let n = e.line() as usize;
+    let n = e.line();
     if n == 0 {
         return None;
     }
@@ -108,16 +108,22 @@ fn json_error_line_context(data: &str, e: &serde_json::Error) -> Option<String> 
     }
 }
 
+/// Yellow non-fatal warning on stderr (backup / atomic-write fallbacks).
+fn warn_yellow(msg: &str) {
+    eprintln!("{}", msg.yellow());
+}
+
+fn eprint_db_path(path: &std::path::Path) {
+    eprintln!("{}", format!("Database path: {}", path.display()).blue());
+}
+
 struct DbReporter {
     path: PathBuf,
 }
 
 impl Drop for DbReporter {
     fn drop(&mut self) {
-        eprintln!(
-            "{}",
-            format!("Database path: {}", self.path.display()).blue()
-        );
+        eprint_db_path(&self.path);
     }
 }
 
@@ -144,7 +150,7 @@ impl TaskManager {
                 path: path.to_path_buf(),
             });
         } else if cfg!(debug_assertions) {
-            eprintln!("{}", format!("Database path: {}", path.display()).blue());
+            eprint_db_path(path);
         }
     }
 
@@ -203,7 +209,7 @@ impl TaskManager {
     pub fn new_empty() -> Result<Self> {
         let db_path = std::env::temp_dir()
             .join("rusk_test")
-            .join(format!("{}", std::process::id()))
+            .join(std::process::id().to_string())
             .join("tasks.json");
         Self::maybe_log_db_path(&db_path);
         Ok(Self {
@@ -267,7 +273,7 @@ impl TaskManager {
         let mut not_found = Vec::new();
 
         let mut sorted_ids = ids;
-        sorted_ids.sort_by(|a, b| b.cmp(a));
+        sorted_ids.sort_unstable_by(|a, b| b.cmp(a));
 
         for id in sorted_ids {
             if let Some(idx) = self.find_task_by_id(id) {
@@ -297,39 +303,35 @@ impl TaskManager {
     }
 
     pub fn mark_tasks(&mut self, ids: Vec<u8>) -> Result<MarkResult> {
-        let mut not_found = Vec::new();
-        let mut marked = Vec::new();
-        let ids_len = ids.len();
-
-        for id in ids {
-            if let Some(idx) = self.find_task_by_id(id) {
-                let task = &mut self.tasks[idx];
-                task.done = !task.done;
-                marked.push((id, task.done));
-            } else {
-                not_found.push(id);
-            }
-        }
-
-        if not_found.len() < ids_len {
-            self.save()?;
-        }
-
-        Ok((marked, not_found))
+        self.toggle_tasks(ids, |task| {
+            task.done = !task.done;
+            task.done
+        })
     }
 
     /// Toggles the `priority` flag for the given task ids. Returns `(Vec<(id, new_priority)>, not_found)`.
     /// Does not touch `done`: the priority is preserved across later done toggles.
     pub fn mark_priority_tasks(&mut self, ids: Vec<u8>) -> Result<MarkResult> {
+        self.toggle_tasks(ids, |task| {
+            task.priority = !task.priority;
+            task.priority
+        })
+    }
+
+    /// Shared toggle loop: `toggle` flips one flag on the task and returns its new state.
+    /// Saves only when at least one task was found.
+    fn toggle_tasks(
+        &mut self,
+        ids: Vec<u8>,
+        toggle: impl Fn(&mut Task) -> bool,
+    ) -> Result<MarkResult> {
         let mut not_found = Vec::new();
         let mut marked = Vec::new();
         let ids_len = ids.len();
 
         for id in ids {
             if let Some(idx) = self.find_task_by_id(id) {
-                let task = &mut self.tasks[idx];
-                task.priority = !task.priority;
-                marked.push((id, task.priority));
+                marked.push((id, toggle(&mut self.tasks[idx])));
             } else {
                 not_found.push(id);
             }
@@ -423,7 +425,9 @@ impl TaskManager {
         let mut id = 1u8;
         for &used_id in &used {
             if id == used_id {
-                id += 1;
+                // Wrap instead of overflow: 255 used ids wrap to 0, caught below
+                // (plain `+= 1` panics in debug builds when all 255 ids are taken).
+                id = id.wrapping_add(1);
             } else {
                 break;
             }
@@ -445,10 +449,7 @@ impl TaskManager {
         if self.db_path.exists() {
             let backup_path = self.db_path.with_extension("json.backup");
             if let Err(e) = fs::copy(&self.db_path, &backup_path) {
-                eprintln!(
-                    "{}",
-                    format!("Warning: Failed to create backup: {e}").yellow()
-                );
+                warn_yellow(&format!("Warning: Failed to create backup: {e}"));
             }
         }
 
@@ -481,13 +482,9 @@ impl TaskManager {
                     Ok(_) => {
                         let _ = fs::remove_file(&temp_path);
                         if !Self::is_test_mode() {
-                            eprintln!(
-                                "{}",
-                                format!(
-                                    "Warning: Atomic rename failed ({e}), used copy+remove instead"
-                                )
-                                .yellow()
-                            );
+                            warn_yellow(&format!(
+                                "Warning: Atomic rename failed ({e}), used copy+remove instead"
+                            ));
                         }
                     }
                     Err(copy_err) => {
@@ -495,13 +492,9 @@ impl TaskManager {
                         let _ = fs::remove_file(&temp_path);
                         fs::write(&self.db_path, data).context("Failed to write database file")?;
                         if !Self::is_test_mode() {
-                            eprintln!(
-                                "{}",
-                                format!(
-                                    "Warning: Atomic write failed ({e}), copy fallback also failed ({copy_err}), used direct write instead"
-                                )
-                                .yellow()
-                            );
+                            warn_yellow(&format!(
+                                "Warning: Atomic write failed ({e}), copy fallback also failed ({copy_err}), used direct write instead"
+                            ));
                         }
                     }
                 }
@@ -512,21 +505,17 @@ impl TaskManager {
     }
 
     pub fn resolve_db_path() -> PathBuf {
-        if Self::is_test_mode() {
+        if Self::is_test_mode() || cfg!(debug_assertions) {
             std::env::temp_dir().join("rusk_debug").join("tasks.json")
-        } else if cfg!(debug_assertions) {
-            std::env::temp_dir().join("rusk_debug").join("tasks.json")
-        } else {
-            if let Ok(db_path) = std::env::var("RUSK_DB") {
-                let path = PathBuf::from(db_path);
-                if path.is_dir() || path.to_string_lossy().ends_with('/') {
-                    path.join("tasks.json")
-                } else {
-                    path
-                }
+        } else if let Ok(db_path) = std::env::var("RUSK_DB") {
+            let path = PathBuf::from(db_path);
+            if path.is_dir() || path.to_string_lossy().ends_with('/') {
+                path.join("tasks.json")
             } else {
-                PathBuf::from(".rusk").join("tasks.json")
+                path
             }
+        } else {
+            PathBuf::from(".rusk").join("tasks.json")
         }
     }
 
@@ -580,10 +569,7 @@ impl TaskManager {
             match Self::load_tasks_from_path(&self.db_path) {
                 Ok(_) => {
                     if let Err(e) = fs::copy(&self.db_path, &current_backup_path) {
-                        eprintln!(
-                            "{}",
-                            format!("Warning: Failed to backup current database: {e}").yellow()
-                        );
+                        warn_yellow(&format!("Warning: Failed to backup current database: {e}"));
                     } else {
                         println!(
                             "Current database backed up to: {}",

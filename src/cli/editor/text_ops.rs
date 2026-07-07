@@ -12,22 +12,12 @@ use std::cmp::Ordering;
 // ── Byte / char helpers ─────────────────────────────────────────────────────
 
 pub fn prev_char_boundary(s: &str, byte_idx: usize) -> usize {
-    if byte_idx == 0 {
-        return 0;
-    }
-    let mut idx = byte_idx;
+    let mut idx = byte_idx.min(s.len());
     while idx > 0 && !s.is_char_boundary(idx) {
         idx -= 1;
     }
-    if idx > 0 {
-        if let Some((prev_idx, _)) = s.char_indices().take_while(|(i, _)| *i < idx).last() {
-            prev_idx
-        } else {
-            0
-        }
-    } else {
-        0
-    }
+    // Start byte of the last char strictly before `idx`.
+    s[..idx].char_indices().next_back().map_or(0, |(i, _)| i)
 }
 
 pub fn next_char_boundary(s: &str, byte_idx: usize) -> usize {
@@ -47,12 +37,9 @@ pub fn byte_idx_to_char_count(s: &str, byte_idx: usize) -> usize {
 }
 
 pub fn ml_char_to_byte(line: &str, target_char: usize) -> usize {
-    for (count, (i, _)) in line.char_indices().enumerate() {
-        if count == target_char {
-            return i;
-        }
-    }
-    line.len()
+    line.char_indices()
+        .nth(target_char)
+        .map_or(line.len(), |(i, _)| i)
 }
 
 pub fn is_word_char(c: char) -> bool {
@@ -393,16 +380,28 @@ pub fn ml_soft_down(
 
 // ── Editing primitives ──────────────────────────────────────────────────────
 
+/// Merge the current line into the previous one (Backspace / Ctrl+Backspace at
+/// column 0); the cursor lands at the join point.
+fn merge_line_into_prev(lines: &mut Vec<String>, row: &mut usize, col: &mut usize) {
+    let current = lines.remove(*row);
+    *row -= 1;
+    *col = lines[*row].len();
+    lines[*row].push_str(&current);
+}
+
+/// Append the next line onto `row` (Delete / Ctrl+K at end of line).
+fn join_next_line(lines: &mut Vec<String>, row: usize) {
+    let next_line = lines.remove(row + 1);
+    lines[row].push_str(&next_line);
+}
+
 pub fn ml_backspace(lines: &mut Vec<String>, row: &mut usize, col: &mut usize) {
     if *col > 0 {
         let prev = prev_char_boundary(&lines[*row], *col);
         lines[*row].drain(prev..*col);
         *col = prev;
     } else if *row > 0 {
-        let current = lines.remove(*row);
-        *row -= 1;
-        *col = lines[*row].len();
-        lines[*row].push_str(&current);
+        merge_line_into_prev(lines, row, col);
     }
 }
 
@@ -412,8 +411,7 @@ pub fn ml_delete(lines: &mut Vec<String>, row: usize, col: &mut usize) {
         let next = next_char_boundary(&lines[row], *col);
         lines[row].drain(*col..next);
     } else if row + 1 < lines.len() {
-        let next_line = lines.remove(row + 1);
-        lines[row].push_str(&next_line);
+        join_next_line(lines, row);
     }
 }
 
@@ -423,10 +421,7 @@ pub fn ml_delete_word_left(lines: &mut Vec<String>, row: &mut usize, col: &mut u
         lines[*row].drain(new_col..*col);
         *col = new_col;
     } else if *row > 0 {
-        let current = lines.remove(*row);
-        *row -= 1;
-        *col = lines[*row].len();
-        lines[*row].push_str(&current);
+        merge_line_into_prev(lines, row, col);
     }
 }
 
@@ -436,8 +431,7 @@ pub fn ml_delete_word_right(lines: &mut Vec<String>, row: usize, col: &mut usize
         let new_col = jump_next_word(&lines[row], *col);
         lines[row].drain(*col..new_col);
     } else if row + 1 < lines.len() {
-        let next_line = lines.remove(row + 1);
-        lines[row].push_str(&next_line);
+        join_next_line(lines, row);
     }
 }
 
@@ -446,8 +440,7 @@ pub fn ml_kill_to_eol(lines: &mut Vec<String>, row: usize, col: &mut usize) {
     if *col < line_len {
         lines[row].truncate(*col);
     } else if row + 1 < lines.len() {
-        let next_line = lines.remove(row + 1);
-        lines[row].push_str(&next_line);
+        join_next_line(lines, row);
     }
 }
 

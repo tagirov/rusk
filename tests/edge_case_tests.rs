@@ -305,10 +305,8 @@ fn test_edge_case_date_dot_separator() {
     );
 }
 
-// Note: test_edge_case_id_boundaries removed because generate_next_id
-// has a bug where it panics on overflow when id reaches 255.
-// The existing test_generate_next_id_max_reached in lib_tests.rs covers
-// the normal case up to 200 tasks, which is sufficient for testing.
+// The 255-ids-taken boundary is covered by
+// test_generate_next_id_all_255_taken_errors in lib_tests.rs.
 
 #[test]
 fn test_edge_case_delete_all_tasks() {

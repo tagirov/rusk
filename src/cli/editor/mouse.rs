@@ -71,7 +71,6 @@ impl ScreenToBuffer<'_> {
         let target_char = start_char + col_in_row;
         let line_chars = lines[buf_idx].chars().count();
         let clamped = target_char.min(line_chars).min(start_char + vw);
-        let clamped = clamped.min(line_chars);
         (buf_idx, text_ops::ml_char_to_byte(&lines[buf_idx], clamped))
     }
 }

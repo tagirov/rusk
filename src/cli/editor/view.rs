@@ -61,9 +61,6 @@ fn vertical_layout(term_cols: u16, term_rows: u16) -> (u16, usize, usize) {
 /// footer when `t >= 4`. For `t == 3` one text row fits with top margin but no line above the
 /// footer. Row budget: `1 + av + 1 + 1` = `t` for `t >= 4`.
 fn compact_vertical_layout(t: usize) -> (u16, usize, usize) {
-    if t < 2 {
-        return (0, 0, 1);
-    }
     if t < 3 {
         return (0, 0, 1);
     }
@@ -149,8 +146,7 @@ fn editor_text_layout(term_cols: usize, prompt_width: usize) -> (usize, usize) {
     let side = prompt_width.max(ML_MIN_HPAD);
     let visible_width = term_cols
         .saturating_sub(2 * side)
-        .max(1)
-        .min(ML_MAX_TEXT_COLS);
+        .clamp(1, ML_MAX_TEXT_COLS);
     let text_left = term_cols.saturating_sub(visible_width) / 2;
     let content_left = text_left.saturating_sub(prompt_width);
     (visible_width, content_left)
@@ -348,6 +344,7 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
     });
 
     let visible_count = available_text.min(visuals.len().saturating_sub(*r.view_top));
+    let pad: String = " ".repeat(r.prompt_width);
     for v_i in 0..visible_count {
         let (buf_idx, content, start_char) = &visuals[*r.view_top + v_i];
         stdout.queue(MoveTo(content_left_u16, editor_row + v_i as u16))?;
@@ -358,7 +355,6 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
                 stdout.queue(Print(r.prompt))?;
             }
         } else {
-            let pad: String = " ".repeat(r.prompt_width);
             stdout.queue(Print(&pad))?;
         }
 
@@ -388,8 +384,7 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
     stdout.queue(Clear(ClearType::CurrentLine))?;
     let mut footer_text = ML_FOOTER.to_string();
     if footer_text.chars().count() > term_cols.max(1) {
-        let trimmed: String = footer_text.chars().take(term_cols.max(1)).collect();
-        footer_text = trimmed;
+        footer_text = footer_text.chars().take(term_cols.max(1)).collect();
     }
     let footer_width = footer_text.chars().count();
     let footer_x = term_cols.saturating_sub(footer_width) / 2;

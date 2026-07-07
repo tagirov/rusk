@@ -5,8 +5,7 @@ use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
 
-#[path = "../../common/mod.rs"]
-mod common;
+use crate::common;
 
 fn with_isolated_home(cmd: &mut Command, home: &Path) {
     cmd.env("HOME", home);
@@ -377,7 +376,7 @@ fn test_cli_completions_show() -> Result<()> {
 
     for shell_name in ["bash", "zsh", "fish", "nu", "powershell"] {
         let output = Command::new(&rusk_bin)
-            .args(&["completions", "show", shell_name])
+            .args(["completions", "show", shell_name])
             .output()?;
 
         assert!(
@@ -559,7 +558,7 @@ fn test_cli_completions_invalid_shell() -> Result<()> {
 
     // Test with invalid shell name
     let output = Command::new(&rusk_bin)
-        .args(&["completions", "show", "invalid_shell"])
+        .args(["completions", "show", "invalid_shell"])
         .output()?;
 
     // Should fail with error
@@ -579,7 +578,7 @@ fn test_cli_completions_help() -> Result<()> {
 
     // Test help command
     let output = Command::new(&rusk_bin)
-        .args(&["completions", "--help"])
+        .args(["completions", "--help"])
         .output()?;
 
     assert!(output.status.success(), "Help command should succeed");
@@ -1088,14 +1087,14 @@ fn test_all_completion_scripts_syntax() -> Result<()> {
     // since they might fail due to system issues, not code issues
 
     // Try Nu - ignore failures (not installed or other issues)
-    let nu_result = std::panic::catch_unwind(|| test_nu_completion_syntax());
-    if let Err(_) = nu_result {
+    let nu_result = std::panic::catch_unwind(test_nu_completion_syntax);
+    if nu_result.is_err() {
         eprintln!("Warning: Nu syntax test panicked (likely not installed), skipping");
     }
 
     // Try PowerShell - ignore failures (not installed or runtime issues like FileLoadException)
-    let ps_result = std::panic::catch_unwind(|| test_powershell_completion_syntax());
-    if let Err(_) = ps_result {
+    let ps_result = std::panic::catch_unwind(test_powershell_completion_syntax);
+    if ps_result.is_err() {
         eprintln!(
             "Warning: PowerShell syntax test panicked (likely not installed or runtime error), skipping"
         );

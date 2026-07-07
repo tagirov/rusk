@@ -228,14 +228,14 @@ impl EditorState {
         self.recompute_desired(vw);
     }
 
-    pub fn insert_newline(&mut self, vw: usize) {
+    // `_vw` keeps the signature uniform with the other editing methods.
+    pub fn insert_newline(&mut self, _vw: usize) {
         self.delete_selection();
         let tail = self.lines[self.row].split_off(self.col);
         self.lines.insert(self.row + 1, tail);
         self.row += 1;
         self.col = 0;
         self.desired_col_char = 0;
-        let _ = vw;
     }
 
     pub fn insert_tab(&mut self, vw: usize) {

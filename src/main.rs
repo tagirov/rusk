@@ -23,21 +23,27 @@ fn print_subcommand_help(name: &str) -> anyhow::Result<()> {
 }
 
 fn args_have_date_then_help(args: &[String]) -> bool {
-    let mut i = 0usize;
-    while i < args.len() {
-        if args[i] == "-d" || args[i] == "--date" {
-            if i + 1 < args.len() && is_cli_date_help_value(&args[i + 1]) {
-                return true;
-            }
-        }
-        i += 1;
-    }
-    false
+    args.windows(2)
+        .any(|w| (w[0] == "-d" || w[0] == "--date") && is_cli_date_help_value(&w[1]))
 }
 
 /// Prints a CLI error with one blank line before and after (stderr).
 fn eprint_cli_error(msg: impl std::fmt::Display) {
     eprintln!("\n{}\n", msg);
+}
+
+/// Prints `Error: <msg>` in red and exits with code 1.
+fn exit_with_error(msg: impl std::fmt::Display) -> ! {
+    eprint_cli_error(format!("Error: {msg}").red());
+    std::process::exit(1);
+}
+
+/// Drops argv words that look like flags (leading `-`) before flexible ID parsing.
+fn non_flag_args(args: &[String]) -> Vec<String> {
+    args.iter()
+        .filter(|arg| !arg.trim_start().starts_with('-'))
+        .cloned()
+        .collect()
 }
 
 fn main() {
@@ -86,12 +92,10 @@ fn run() -> Result<()> {
             text,
             date: Some(d),
         }) if text.is_empty() && is_cli_date_clear_value(d) => {
-            eprint_cli_error(
-                "Error: `-d _` cannot be used when adding a task with no text: there is no date to clear. \
-                 Omit `--date` or use `rusk add` with a non-empty first line in the editor; see `rusk add --help`."
-                    .red(),
+            exit_with_error(
+                "`-d _` cannot be used when adding a task with no text: there is no date to clear. \
+                 Omit `--date` or use `rusk add` with a non-empty first line in the editor; see `rusk add --help`.",
             );
-            std::process::exit(1);
         }
         Some(Command::Add { date: Some(d), .. }) if is_cli_date_help_value(d) => {
             print_subcommand_help("add")?;
@@ -107,8 +111,7 @@ fn run() -> Result<()> {
                 return Ok(());
             }
             if args.is_empty() {
-                eprint_cli_error("Error: No arguments provided for edit command".red());
-                std::process::exit(1);
+                exit_with_error("No arguments provided for edit command");
             }
         }
         _ => {}
@@ -123,59 +126,33 @@ fn run() -> Result<()> {
                 {
                     use std::io::IsTerminal;
                     if !std::io::stdout().is_terminal() {
-                        eprint_cli_error(
-                            "Error: interactive `rusk add` requires a terminal. \
-                             Pass the task on the command line, e.g. `rusk add buy milk`."
-                                .red(),
+                        exit_with_error(
+                            "interactive `rusk add` requires a terminal. \
+                             Pass the task on the command line, e.g. `rusk add buy milk`.",
                         );
-                        std::process::exit(1);
                     }
                     if let Err(e) = HandlerCLI::handle_add_task_interactive(&mut tm, date) {
-                        eprint_cli_error(format!("Error: {e}").red());
-                        std::process::exit(1);
+                        exit_with_error(e);
                     }
                 }
                 #[cfg(not(feature = "interactive"))]
                 {
                     if let Err(e) = HandlerCLI::handle_add_task(&mut tm, text, date) {
-                        eprint_cli_error(format!("Error: {e}").red());
-                        std::process::exit(1);
+                        exit_with_error(e);
                     }
                 }
             } else if let Err(e) = HandlerCLI::handle_add_task(&mut tm, text, date) {
-                eprint_cli_error(format!("Error: {e}").red());
-                std::process::exit(1);
+                exit_with_error(e);
             }
         }
         Some(Command::Del { ids, done }) => {
-            let filtered_ids: Vec<String> = ids
-                .iter()
-                .filter(|arg| !arg.trim_start().starts_with('-'))
-                .cloned()
-                .collect();
-
-            let parsed_ids = parse_flexible_ids(&filtered_ids);
+            let parsed_ids = parse_flexible_ids(&non_flag_args(&ids));
             HandlerCLI::handle_delete_tasks(&mut tm, parsed_ids, done)?;
         }
         Some(Command::Mark { ids, priority }) => {
-            let filtered_ids: Vec<String> = ids
-                .iter()
-                .filter(|arg| {
-                    let trimmed = arg.trim();
-                    !trimmed.starts_with('-')
-                })
-                .cloned()
-                .collect();
-
-            if filtered_ids.is_empty() {
-                eprint_cli_error("Error: No valid task IDs provided".red());
-                std::process::exit(1);
-            }
-
-            let parsed_ids = parse_flexible_ids(&filtered_ids);
+            let parsed_ids = parse_flexible_ids(&non_flag_args(&ids));
             if parsed_ids.is_empty() {
-                eprint_cli_error("Error: No valid task IDs provided".red());
-                std::process::exit(1);
+                exit_with_error("No valid task IDs provided");
             }
             HandlerCLI::handle_mark_tasks(&mut tm, parsed_ids, priority)?;
         }
@@ -183,21 +160,18 @@ fn run() -> Result<()> {
             let (args, opt_date) = match strip_edit_date_flag(args) {
                 Ok(p) => p,
                 Err(BareEditDateFlag) => {
-                    eprint_cli_error(
-                        "Error: `rusk edit` does not support `-d` / `--date` without a value. \
+                    exit_with_error(
+                        "`rusk edit` does not support `-d` / `--date` without a value. \
                          Use `rusk edit <id>` to set the due date on the first line of the task text in the editor, \
-                         or pass a date: `rusk edit <id> -d 31-12-2025` or `rusk edit <id> -d 2w` (see `rusk add --help` for syntax)."
-                            .red(),
+                         or pass a date: `rusk edit <id> -d 31-12-2025` or `rusk edit <id> -d 2w` (see `rusk add --help` for syntax).",
                     );
-                    std::process::exit(1);
                 }
             };
 
             let (ids, text_option) = parse_edit_args(args);
 
             if ids.is_empty() {
-                eprint_cli_error("Error: No valid task IDs provided".red());
-                std::process::exit(1);
+                exit_with_error("No valid task IDs provided");
             }
 
             match (text_option, opt_date) {
@@ -239,15 +213,11 @@ fn run() -> Result<()> {
         Some(Command::Restore) => {
             let mut restore_tm = match TaskManager::new_for_restore() {
                 Ok(tm) => tm,
-                Err(e) => {
-                    eprint_cli_error(format!("Error: {e}").red());
-                    std::process::exit(1);
-                }
+                Err(e) => exit_with_error(e),
             };
 
             if let Err(e) = HandlerCLI::handle_restore(&mut restore_tm) {
-                eprint_cli_error(format!("Error: {e}").red());
-                std::process::exit(1);
+                exit_with_error(e);
             }
         }
         #[cfg(feature = "completions")]
@@ -262,8 +232,7 @@ fn run() -> Result<()> {
 #[cfg(feature = "completions")]
 fn handle_completions_install(shells: Vec<Shell>) -> Result<()> {
     if shells.is_empty() {
-        eprint_cli_error("Error: At least one shell must be specified".red());
-        std::process::exit(1);
+        exit_with_error("At least one shell must be specified");
     }
 
     let shells_count = shells.len();

@@ -29,6 +29,16 @@ pub(super) struct EditorContext<'a> {
     pub prefill_lines: &'a [String],
 }
 
+/// Shared prologue of every movement arm: when shift is held, anchor the
+/// selection (if not yet anchored) and mark it as consumed so the epilogue
+/// keeps it alive.
+fn begin_selectable_move(state: &mut EditorState, shift: bool, selection_consumed: &mut bool) {
+    if shift {
+        state.start_selection_if_needed();
+        *selection_consumed = true;
+    }
+}
+
 pub(super) fn handle_key(
     ev: KeyEvent,
     state: &mut EditorState,
@@ -120,136 +130,88 @@ pub(super) fn handle_key(
 
         // ── Word movement ───────────────────────────────────────────────────
         (KeyCode::Left, true, _) => {
-            if shift {
-                state.start_selection_if_needed();
-                selection_consumed = true;
-            }
+            begin_selectable_move(state, shift, &mut selection_consumed);
             state.word_left(vw);
             history.break_run();
         }
         (KeyCode::Right, true, _) => {
-            if shift {
-                state.start_selection_if_needed();
-                selection_consumed = true;
-            }
+            begin_selectable_move(state, shift, &mut selection_consumed);
             state.word_right(vw);
             history.break_run();
         }
 
         // ── Character movement ──────────────────────────────────────────────
         (KeyCode::Left, _, _) => {
-            if shift {
-                state.start_selection_if_needed();
-                selection_consumed = true;
-            }
+            begin_selectable_move(state, shift, &mut selection_consumed);
             state.move_left(vw);
             history.break_run();
         }
         (KeyCode::Right, _, _) => {
-            if shift {
-                state.start_selection_if_needed();
-                selection_consumed = true;
-            }
+            begin_selectable_move(state, shift, &mut selection_consumed);
             state.move_right(vw);
             history.break_run();
         }
 
         // ── Vertical movement ───────────────────────────────────────────────
         (KeyCode::Up, true, _) => {
-            if shift {
-                state.start_selection_if_needed();
-                selection_consumed = true;
-            }
+            begin_selectable_move(state, shift, &mut selection_consumed);
             state.soft_up_n(5, vw);
             history.break_run();
         }
         (KeyCode::Down, true, _) => {
-            if shift {
-                state.start_selection_if_needed();
-                selection_consumed = true;
-            }
+            begin_selectable_move(state, shift, &mut selection_consumed);
             state.soft_down_n(5, vw);
             history.break_run();
         }
         (KeyCode::Up, _, _) => {
-            if shift {
-                state.start_selection_if_needed();
-                selection_consumed = true;
-            }
+            begin_selectable_move(state, shift, &mut selection_consumed);
             state.soft_up(vw);
             history.break_run();
         }
         (KeyCode::Down, _, _) => {
-            if shift {
-                state.start_selection_if_needed();
-                selection_consumed = true;
-            }
+            begin_selectable_move(state, shift, &mut selection_consumed);
             state.soft_down(vw);
             history.break_run();
         }
 
         // ── Page / buffer jumps ─────────────────────────────────────────────
         (KeyCode::PageUp, true, _) => {
-            if shift {
-                state.start_selection_if_needed();
-                selection_consumed = true;
-            }
+            begin_selectable_move(state, shift, &mut selection_consumed);
             state.goto_buffer_start();
             history.break_run();
         }
         (KeyCode::PageDown, true, _) => {
-            if shift {
-                state.start_selection_if_needed();
-                selection_consumed = true;
-            }
+            begin_selectable_move(state, shift, &mut selection_consumed);
             state.goto_buffer_end(vw);
             history.break_run();
         }
         (KeyCode::PageUp, _, _) => {
-            if shift {
-                state.start_selection_if_needed();
-                selection_consumed = true;
-            }
+            begin_selectable_move(state, shift, &mut selection_consumed);
             state.soft_up_n(view::page_rows(), vw);
             history.break_run();
         }
         (KeyCode::PageDown, _, _) => {
-            if shift {
-                state.start_selection_if_needed();
-                selection_consumed = true;
-            }
+            begin_selectable_move(state, shift, &mut selection_consumed);
             state.soft_down_n(view::page_rows(), vw);
             history.break_run();
         }
         (KeyCode::Home, true, _) => {
-            if shift {
-                state.start_selection_if_needed();
-                selection_consumed = true;
-            }
+            begin_selectable_move(state, shift, &mut selection_consumed);
             state.goto_buffer_start();
             history.break_run();
         }
         (KeyCode::End, true, _) => {
-            if shift {
-                state.start_selection_if_needed();
-                selection_consumed = true;
-            }
+            begin_selectable_move(state, shift, &mut selection_consumed);
             state.goto_buffer_end(vw);
             history.break_run();
         }
         (KeyCode::Home, _, _) => {
-            if shift {
-                state.start_selection_if_needed();
-                selection_consumed = true;
-            }
+            begin_selectable_move(state, shift, &mut selection_consumed);
             state.smart_home(vw);
             history.break_run();
         }
         (KeyCode::End, _, _) => {
-            if shift {
-                state.start_selection_if_needed();
-                selection_consumed = true;
-            }
+            begin_selectable_move(state, shift, &mut selection_consumed);
             state.goto_line_end(vw);
             history.break_run();
         }
@@ -313,6 +275,31 @@ pub(super) fn handle_key(
     Ok(Action::Continue)
 }
 
+/// Map a mouse click at screen `(column, mrow)` to buffer `(row, byte_col)`
+/// using the same layout as the current render.
+fn screen_to_buffer_pos(
+    state: &EditorState,
+    ctx: &EditorContext<'_>,
+    vw: usize,
+    content_left: usize,
+    column: u16,
+    mrow: u16,
+) -> (usize, usize) {
+    let visuals = view::compute_visuals(&state.lines, vw);
+    mouse::ScreenToBuffer {
+        lines: &state.lines,
+        visuals: &visuals,
+        vw,
+        screen_x: column,
+        screen_y: mrow,
+        editor_row: ctx.editor_row,
+        view_top: state.view_top,
+        prompt_width: ctx.prompt_width,
+        content_left,
+    }
+    .resolve()
+}
+
 pub(super) fn handle_mouse(
     ev: MouseEvent,
     state: &mut EditorState,
@@ -334,19 +321,7 @@ pub(super) fn handle_mouse(
     match kind {
         MouseEventKind::Down(MouseButton::Left) => {
             let clicks = click_tracker.click(column, mrow);
-            let visuals = view::compute_visuals(&state.lines, vw);
-            let (r, c) = mouse::ScreenToBuffer {
-                lines: &state.lines,
-                visuals: &visuals,
-                vw,
-                screen_x: column,
-                screen_y: mrow,
-                editor_row: ctx.editor_row,
-                view_top: state.view_top,
-                prompt_width: ctx.prompt_width,
-                content_left,
-            }
-            .resolve();
+            let (r, c) = screen_to_buffer_pos(state, ctx, vw, content_left, column, mrow);
             match clicks {
                 2 => {
                     let (ws, we) = text_ops::word_bounds(&state.lines[r], c);
@@ -378,19 +353,7 @@ pub(super) fn handle_mouse(
             let pasted = clipboard.paste();
             if !pasted.is_empty() {
                 history.record(state.snapshot(), OpKind::Other);
-                let visuals = view::compute_visuals(&state.lines, vw);
-                let (r, c) = mouse::ScreenToBuffer {
-                    lines: &state.lines,
-                    visuals: &visuals,
-                    vw,
-                    screen_x: column,
-                    screen_y: mrow,
-                    editor_row: ctx.editor_row,
-                    view_top: state.view_top,
-                    prompt_width: ctx.prompt_width,
-                    content_left,
-                }
-                .resolve();
+                let (r, c) = screen_to_buffer_pos(state, ctx, vw, content_left, column, mrow);
                 state.row = r;
                 state.col = c;
                 state.anchor = None;
@@ -398,26 +361,14 @@ pub(super) fn handle_mouse(
             }
         }
         MouseEventKind::Drag(MouseButton::Left) => {
-            let visuals = view::compute_visuals(&state.lines, vw);
-            let (r, c) = mouse::ScreenToBuffer {
-                lines: &state.lines,
-                visuals: &visuals,
-                vw,
-                screen_x: column,
-                screen_y: mrow,
-                editor_row: ctx.editor_row,
-                view_top: state.view_top,
-                prompt_width: ctx.prompt_width,
-                content_left,
-            }
-            .resolve();
+            let (r, c) = screen_to_buffer_pos(state, ctx, vw, content_left, column, mrow);
             state.goto(r, c, vw);
             history.break_run();
         }
-        MouseEventKind::Up(MouseButton::Left) => {
-            if state.anchor == Some((state.row, state.col)) {
-                state.anchor = None;
-            }
+        MouseEventKind::Up(MouseButton::Left)
+            if state.anchor == Some((state.row, state.col)) =>
+        {
+            state.anchor = None;
         }
         MouseEventKind::ScrollUp => {
             let (vwm, av, vlen) = view::layout_metrics_for_buffer(&state.lines, ctx.prompt_width);

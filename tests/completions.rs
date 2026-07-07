@@ -1,5 +1,8 @@
 #![cfg(feature = "completions")]
 
+// Shared test helpers, declared once so submodules can `use crate::common`.
+mod common;
+
 #[path = "completions/rust/completion_tests.rs"]
 mod completion_tests;
 

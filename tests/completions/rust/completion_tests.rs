@@ -1,9 +1,7 @@
 use chrono::Datelike;
 use rusk::{Task, TaskManager};
 
-#[path = "../../common/mod.rs"]
-mod common;
-use common::create_test_task;
+use crate::common::{self, create_test_task};
 
 /// Helper to capture stdout from handle_list_tasks
 /// This simulates the output format that completion scripts parse
@@ -56,7 +54,7 @@ fn strip_ansi_codes(text: &str) -> String {
             if chars.peek() == Some(&'[') {
                 chars.next(); // consume [
                 // Skip until we find 'm'
-                while let Some(c) = chars.next() {
+                for c in chars.by_ref() {
                     if c == 'm' {
                         break;
                     }
@@ -99,7 +97,7 @@ fn extract_task_ids_from_output(output: &str) -> Vec<u8> {
                 || trimmed
                     .chars()
                     .next()
-                    .map_or(false, |c| c.is_ascii_whitespace())
+                    .is_some_and(|c| c.is_ascii_whitespace())
             {
                 // Extract number - status symbol, then whitespace, then ID
                 let parts: Vec<&str> = trimmed.split_whitespace().collect();
@@ -107,18 +105,18 @@ fn extract_task_ids_from_output(output: &str) -> Vec<u8> {
                     // If first part is status symbol, ID is second
                     // If first part is already a number, use it
                     for part in parts.iter().skip(1) {
-                        if let Ok(id) = part.parse::<u8>() {
-                            if id > 0 {
-                                return Some(id);
-                            }
+                        if let Ok(id) = part.parse::<u8>()
+                            && id > 0
+                        {
+                            return Some(id);
                         }
                     }
                 } else if parts.len() == 1 {
                     // Try to parse first part as ID if it's a number
-                    if let Ok(id) = parts[0].parse::<u8>() {
-                        if id > 0 {
-                            return Some(id);
-                        }
+                    if let Ok(id) = parts[0].parse::<u8>()
+                        && id > 0
+                    {
+                        return Some(id);
                     }
                 }
             }
@@ -152,7 +150,7 @@ fn extract_task_text_from_output(output: &str, task_id: u8) -> Option<String> {
             let parts: Vec<&str> = clean_line.split_whitespace().collect();
 
             // Find position of task ID
-            if let Some(id_pos) = parts.iter().position(|&p| p == &task_id.to_string()) {
+            if let Some(id_pos) = parts.iter().position(|&p| p == task_id.to_string()) {
                 // Text starts after: status (0), ID (1), date (2, if present)
                 // AWK script uses: for(i=4; i<=NF; i++) - field 4 = after status, ID, date
                 // But we need to handle missing dates
@@ -474,50 +472,50 @@ fn test_completion_real_rusk_list_output() {
     }
     let output = cmd.output();
 
-    // If command succeeds, verify output format is parseable
-    if let Ok(result) = output {
-        if result.status.success() {
-            let stdout = String::from_utf8_lossy(&result.stdout);
-            let stderr = String::from_utf8_lossy(&result.stderr);
+    // If command succeeds, verify output format is parseable.
+    // If the binary doesn't exist or fails, skip the test (not a failure).
+    if let Ok(result) = output
+        && result.status.success()
+    {
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        let stderr = String::from_utf8_lossy(&result.stderr);
 
-            // Combine stdout and stderr as completion scripts see both
-            let full_output = format!("{}\n{}", stderr, stdout);
+        // Combine stdout and stderr as completion scripts see both
+        let full_output = format!("{}\n{}", stderr, stdout);
 
-            // Verify that our parser can extract IDs from the output
-            // Even if there are ANSI codes or extra output, we should find at least some IDs
-            let ids = extract_task_ids_from_output(&full_output);
+        // Verify that our parser can extract IDs from the output
+        // Even if there are ANSI codes or extra output, we should find at least some IDs
+        let ids = extract_task_ids_from_output(&full_output);
 
-            // The key test: verify that the parsing functions work with real output
-            // We created 3 tasks, but might find fewer if parsing has issues
-            // The important thing is that parsing doesn't panic and finds some IDs
-            assert!(
-                !ids.is_empty(),
-                "Should find at least one task ID in output. Output length: {}",
-                full_output.len()
-            );
+        // The key test: verify that the parsing functions work with real output
+        // We created 3 tasks, but might find fewer if parsing has issues
+        // The important thing is that parsing doesn't panic and finds some IDs
+        assert!(
+            !ids.is_empty(),
+            "Should find at least one task ID in output. Output length: {}",
+            full_output.len()
+        );
 
-            // Verify we can extract text for at least one task
-            // Text extraction should work even with ANSI codes
-            let mut found_text = false;
-            for task_id in 1..=10 {
-                let text = extract_task_text_from_output(&full_output, task_id);
-                if let Some(extracted_text) = text {
-                    // Verify extracted text contains expected content
-                    assert!(
-                        extracted_text.len() > 0,
-                        "Extracted text for task {} should not be empty",
-                        task_id
-                    );
-                    found_text = true;
-                }
+        // Verify we can extract text for at least one task
+        // Text extraction should work even with ANSI codes
+        let mut found_text = false;
+        for task_id in 1..=10 {
+            let text = extract_task_text_from_output(&full_output, task_id);
+            if let Some(extracted_text) = text {
+                // Verify extracted text contains expected content
+                assert!(
+                    !extracted_text.is_empty(),
+                    "Extracted text for task {} should not be empty",
+                    task_id
+                );
+                found_text = true;
             }
-            // At least one text extraction should work
-            assert!(
-                found_text,
-                "Should be able to extract text for at least one task"
-            );
         }
-        // If binary doesn't exist or fails, skip test (not a failure)
+        // At least one text extraction should work
+        assert!(
+            found_text,
+            "Should be able to extract text for at least one task"
+        );
     }
 }
 

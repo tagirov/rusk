@@ -56,19 +56,17 @@ pub fn parse_flexible_ids(args: &[String]) -> Vec<u8> {
         return ids;
     }
 
-    let has_comma_args = args.iter().any(|a| {
-        let t = a.trim();
-        t.contains(',') || t.starts_with(',')
-    });
+    let has_comma_args = args.iter().any(|a| a.trim().contains(','));
 
     for arg in args {
         let trimmed_arg = arg.trim();
-        if trimmed_arg.contains(',') || trimmed_arg.starts_with(',') {
+        if trimmed_arg.contains(',') {
             ids.extend(parse_comma_ids(trimmed_arg));
-        } else if !has_comma_args && let Ok(id) = trimmed_arg.parse::<u8>() {
-            if ids.is_empty() {
-                ids.push(id);
-            }
+        } else if !has_comma_args
+            && ids.is_empty()
+            && let Ok(id) = trimmed_arg.parse::<u8>()
+        {
+            ids.push(id);
         }
     }
 
@@ -83,36 +81,31 @@ pub fn parse_edit_args(args: Vec<String>) -> EditArgs {
     let mut text_parts = Vec::new();
     let mut parsing_ids = true;
 
-    let mut i = 0;
-    while i < args.len() {
-        let arg = &args[i];
-
-        if parsing_ids {
-            let trimmed_arg = arg.trim();
-            if trimmed_arg.contains(',') || trimmed_arg.starts_with(',') {
-                let parsed = parse_comma_ids(trimmed_arg);
-                if parsed.is_empty() {
-                    parsing_ids = false;
-                    text_parts.push(arg.clone());
-                } else {
-                    ids.extend(parsed);
-                }
-            } else if let Ok(id) = trimmed_arg.parse::<u8>() {
-                if ids.is_empty() {
-                    ids.push(id);
-                } else {
-                    parsing_ids = false;
-                    text_parts.push(arg.clone());
-                }
+    for arg in args {
+        if !parsing_ids {
+            text_parts.push(arg);
+            continue;
+        }
+        let trimmed_arg = arg.trim();
+        if trimmed_arg.contains(',') {
+            let parsed = parse_comma_ids(trimmed_arg);
+            if parsed.is_empty() {
+                parsing_ids = false;
+                text_parts.push(arg);
+            } else {
+                ids.extend(parsed);
+            }
+        } else if let Ok(id) = trimmed_arg.parse::<u8>() {
+            if ids.is_empty() {
+                ids.push(id);
             } else {
                 parsing_ids = false;
-                text_parts.push(arg.clone());
+                text_parts.push(arg);
             }
         } else {
-            text_parts.push(arg.clone());
+            parsing_ids = false;
+            text_parts.push(arg);
         }
-
-        i += 1;
     }
 
     let text_option = if text_parts.is_empty() {

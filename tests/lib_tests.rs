@@ -55,6 +55,24 @@ fn test_generate_next_id_max_reached() {
 }
 
 #[test]
+fn test_generate_next_id_all_255_taken_errors() {
+    let mut tm = TaskManager::new_empty().unwrap();
+
+    for i in 1..=255u8 {
+        tm.tasks.push(Task {
+            id: i,
+            text: format!("Task {i}"),
+            date: None,
+            done: false,
+            priority: false,
+        });
+    }
+
+    let err = tm.generate_next_id().unwrap_err();
+    assert!(err.to_string().contains("Maximum number of tasks"));
+}
+
+#[test]
 fn test_find_task_by_id() {
     let mut tm = TaskManager::new_empty().unwrap();
     tm.tasks = vec![

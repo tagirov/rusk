@@ -88,6 +88,19 @@ fn run() -> Result<()> {
 
     let cli = Cli::parse();
 
+    // `sync` loads the database itself (and must not create sample tasks),
+    // so intercept it before the shared TaskManager is created.
+    #[cfg(feature = "sync")]
+    if let Some(Command::Sync { direction }) = &cli.command {
+        use rusk::args::SyncDirection;
+        let direction = match direction {
+            None => rusk::sync::Direction::Auto,
+            Some(SyncDirection::Push { force }) => rusk::sync::Direction::Push { force: *force },
+            Some(SyncDirection::Pull { force }) => rusk::sync::Direction::Pull { force: *force },
+        };
+        return rusk::sync::run(direction);
+    }
+
     // `serve` never uses a shared TaskManager: the server re-reads the
     // database on every request (see web::server), so intercept it early
     // like `completions`.
@@ -271,6 +284,10 @@ fn run() -> Result<()> {
         #[cfg(feature = "web")]
         Some(Command::Serve { .. }) => {
             unreachable!("serve is handled before TaskManager::new()");
+        }
+        #[cfg(feature = "sync")]
+        Some(Command::Sync { .. }) => {
+            unreachable!("sync is handled before TaskManager::new()");
         }
         #[cfg(feature = "completions")]
         Some(Command::Completions { .. }) => {

@@ -296,6 +296,82 @@ fn test_gen_static_page() {
     assert!(html.contains("\\u003c/script>"));
 }
 
+/// Full HTTP sync flow against a live `rusk serve`. The local side gets its
+/// own database by pointing TMPDIR at a private directory (debug builds
+/// resolve the db under the temp dir), while the server keeps the shared one.
+#[test]
+#[cfg(feature = "sync")]
+fn test_sync_http_roundtrip() {
+    if Command::new("curl").arg("--version").output().is_err() {
+        eprintln!("skipping test_sync_http_roundtrip: curl not found");
+        return;
+    }
+    let _guard = DB_MUTEX.lock().unwrap();
+    setup_test_db(ONE_TASK_DB);
+    let server = spawn_serve("", &[]);
+    let remote = format!("http://127.0.0.1:{}", server.port);
+
+    let local_root = tempfile::tempdir().unwrap();
+    let local_db = local_root.path().join("rusk_debug").join("tasks.json");
+    fs::create_dir_all(local_db.parent().unwrap()).unwrap();
+    fs::write(
+        &local_db,
+        r#"[{"id":1,"text":"Local only task","date":null,"done":false,"priority":false}]"#,
+    )
+    .unwrap();
+
+    let bin = common::require_rusk_bin().expect("rusk binary not found");
+    let sync = |args: &[&str]| {
+        Command::new(&bin)
+            // Debug binaries resolve the db under TMPDIR; release binaries
+            // honor RUSK_DB. Both point at the same private local file.
+            .env("TMPDIR", local_root.path())
+            .env("TMP", local_root.path())
+            .env("RUSK_DB", &local_db)
+            .env("RUSK_CONFIG", "")
+            .env("RUSK_SYNC_REMOTE", &remote)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+
+    // First contact, both sides differ and are non-empty: refuse to guess.
+    let out = sync(&["sync"]);
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--force"), "got: {stderr}");
+
+    // Take the remote state.
+    let out = sync(&["sync", "pull", "--force"]);
+    assert!(
+        out.status.success(),
+        "pull failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let local = fs::read_to_string(&local_db).unwrap();
+    assert!(local.contains("Web test task") && !local.contains("Local only task"));
+    assert!(local_db.with_extension("json.sync").exists());
+
+    // A local edit fast-forwards to the remote automatically.
+    let out = sync(&["add", "synced from CLI"]);
+    assert!(out.status.success());
+    let out = sync(&["sync"]);
+    assert!(
+        out.status.success(),
+        "auto push failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Pushed"));
+    let mut client = Client::connect(server.port);
+    let res = client.get("/api/tasks", "");
+    assert!(res.contains("synced from CLI"), "got: {res}");
+
+    // Nothing left to do.
+    let out = sync(&["sync"]);
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Already in sync"));
+}
+
 #[test]
 fn test_gen_to_stdout() {
     let _guard = DB_MUTEX.lock().unwrap();

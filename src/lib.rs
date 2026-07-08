@@ -8,6 +8,8 @@ pub mod error;
 pub mod model;
 pub mod parser;
 pub mod storage;
+#[cfg(feature = "sync")]
+pub mod sync;
 #[cfg(feature = "web")]
 pub mod web;
 pub mod windows_console;

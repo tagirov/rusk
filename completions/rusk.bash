@@ -46,14 +46,7 @@ _rusk_needs_quotes() {
         *[\|\;\&\>\<\(\)\[\]\{\}\$\"\'\`\\*\?\~\#\@\!\%\^\=\+\-\/\:\,]*)
             return 0
             ;;
-    esac
-    return 1
-}
-
-# Check if text contains single quote
-_rusk_contains_single_quote() {
-    case "$1" in
-        *"'"*)
+        *$'\n'*)
             return 0
             ;;
     esac
@@ -61,28 +54,18 @@ _rusk_contains_single_quote() {
 }
 
 # Quote text if it contains special characters
-# Use single quotes if no single quote in text, otherwise use double quotes with escaping
+# Always use single quotes: they are fully inert in bash (no $ ` \ ! expansion),
+# and embedded single quotes are emitted via the POSIX '\'' idiom
 _rusk_quote_text() {
     local text="$1"
     if ! _rusk_needs_quotes "$text"; then
         echo "$text"
         return
     fi
-    
-    # If no single quote in text, use single quotes (no escaping needed)
-    if ! _rusk_contains_single_quote "$text"; then
-        echo "'$text'"
-    else
-        # Use double quotes with escaping
-        local escaped="${text//\"/\\\"}"
-        # Escape backticks to prevent command substitution
-        escaped="${escaped//\`/\\\`}"
-        # Escape dollar signs to prevent variable expansion
-        escaped="${escaped//\$/\\$}"
-        # Escape backslashes
-        escaped="${escaped//\\/\\\\}"
-        echo "\"$escaped\""
-    fi
+
+    # Replace each ' with '\'' (close quote, escaped quote, reopen quote)
+    local escaped="${text//\'/\'\\\'\'}"
+    echo "'$escaped'"
 }
 
 # Get task text by ID (supports multi-line tasks via rusk list --for-completion)

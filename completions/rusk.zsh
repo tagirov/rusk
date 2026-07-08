@@ -50,14 +50,8 @@ _rusk_needs_quotes() {
         *[\|\;\&\>\<\(\)\[\]\{\}\$\"\'\`\\*\?\~\#\@\!\%\^\=\+\-\/\:\,]*)
             return 0
             ;;
-    esac
-    return 1
-}
-
-# Check if text contains single quote
-_rusk_contains_single_quote() {
-    case "$1" in
-        *"'"*)
+        *$'\n'*)
+            # Multi-line task text must be quoted to survive as one argument
             return 0
             ;;
     esac
@@ -65,28 +59,20 @@ _rusk_contains_single_quote() {
 }
 
 # Quote text if it contains special characters
-# Use single quotes if no single quote in text, otherwise use double quotes with escaping
+# Always single-quote: every character except ' is literal inside single quotes,
+# and each embedded ' is emitted as '\'' (close quote, escaped quote, reopen).
 _rusk_quote_text() {
     local text="$1"
     if ! _rusk_needs_quotes "$text"; then
-        echo "$text"
+        print -r -- "$text"
         return
     fi
-    
-    # If no single quote in text, use single quotes (no escaping needed)
-    if ! _rusk_contains_single_quote "$text"; then
-        echo "'$text'"
-    else
-        # Use double quotes with escaping
-        local escaped="${text//\"/\"}"
-        # Escape backticks to prevent command substitution
-        escaped="${escaped//\`/\\\`}"
-        # Escape dollar signs to prevent variable expansion
-        escaped="${escaped//\$/\$}"
-        # Escape backslashes
-        escaped="${escaped//\\/\\\\}"
-        echo "\"$escaped\""
-    fi
+
+    # The replacement must be an unquoted expansion: inside double quotes zsh
+    # keeps the replacement-text backslashes literally instead of stripping them.
+    local escaped=${text//\'/\'\\\'\'}
+    # print -r: zsh's echo would reprocess backslash escapes in the text
+    print -r -- "'$escaped'"
 }
 
 # Get task text by ID (supports multi-line tasks via rusk list --for-completion)
@@ -169,7 +155,8 @@ _rusk_get_task_text_raw() {
     done <<< "$output"
     
     if [ -n "$text" ]; then
-        echo "$text"
+        # print -r: zsh's echo would reprocess backslash escapes in the text
+        print -r -- "$text"
     fi
 }
 

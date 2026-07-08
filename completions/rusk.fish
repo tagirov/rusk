@@ -187,35 +187,25 @@ function __rusk_get_task_text
 end
 
 # True (status 0) if text contains shell metacharacters that require quoting.
-# Space alone does not count; see __rusk_quote_text.
+# Space alone does not count (newlines do); see __rusk_quote_text.
 function __rusk_has_shell_metachar -a text
-    string match -qr '[|;\&><\(\)\[\]\{\}\$"\'`\\\*\?\~\#\@\!\%\^\=\+\-\/\:\,]' -- "$text"
-end
-
-function __rusk_contains_single_quote
-    set -l text $argv[1]
-    if string match -q "*'*" -- "$text"
-        return 0
-    end
-    return 1
+    string match -qr '[\n|;\&><\(\)\[\]\{\}\$"\'`\\\*\?\~\#\@\!\%\^\=\+\-\/\:\,]' -- "$text"
 end
 
 # Quote text only for shell metacharacters (not spaces alone). Otherwise raw text.
+# Always uses fish-native single quotes: inside them only backslash and single
+# quote are special, so escaping exactly those two round-trips any input.
 function __rusk_quote_text
     set -l text $argv[1]
     if not __rusk_has_shell_metachar "$text"
         printf '%s\n' "$text"
         return
     end
-    if not __rusk_contains_single_quote "$text"
-        printf "'%s'\n" "$text"
-    else
-        set text (string replace -a '"' '\\"' -- "$text")
-        set text (string replace -a '`' '\\`' -- "$text")
-        set text (string replace -a '$' '\\$' -- "$text")
-        set text (string replace -a '\\' '\\\\' -- "$text")
-        printf '"%s"\n' "$text"
-    end
+    # Escape backslash first, then single quote; `string collect` keeps
+    # embedded newlines intact across the command substitutions.
+    set -l escaped (string replace -a '\\' '\\\\' -- "$text" | string collect)
+    set escaped (string replace -a "'" "\\'" -- "$escaped" | string collect)
+    printf "'%s'\n" "$escaped"
 end
 
 # ============================================================================
@@ -901,7 +891,7 @@ complete -c rusk -f -n '__rusk_should_complete_add_flags' -a '(__rusk_complete_a
 complete -c rusk -f -n '__rusk_should_complete_edit_flags' -a '(__rusk_complete_edit_flags)'
 
 # Task text completion (before ID completion for priority)
-# Task text after ID: wrapper normalizes escapes and wraps metacharacters in quotes (single if possible).
+# Task text after ID: wrapper normalizes escapes and wraps metacharacters in fish-native single quotes.
 complete -c rusk -f \
     -n '__rusk_should_complete_edit_text' \
     -a '(__rusk_complete_edit_text)' \

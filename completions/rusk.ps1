@@ -35,40 +35,21 @@ function _rusk_get_cmd {
 }
 
 # Check if text contains special characters that require quoting
-# Special chars: | ; & > < ( ) [ ] { } $ " ' ` \ * ? ~ # @ ! % ^ = + - / : ,
+# Special chars: | ; & > < ( ) [ ] { } $ " ' ` \ * ? ~ # @ ! % ^ = + - / : , and newlines
 function _rusk_needs_quotes {
     param([string]$text)
-    return $text -match '[|;\&><\(\)\[\]\{\}\$"\''`\\\*\?\~\#\@\!\%\^\=\+\-\/\:\,]'
-}
-
-# Check if text contains single quote
-function _rusk_contains_single_quote {
-    param([string]$text)
-    return $text.Contains("'")
+    return $text -match '[|;\&><\(\)\[\]\{\}\$"\''`\\\*\?\~\#\@\!\%\^\=\+\-\/\:\,\r\n]'
 }
 
 # Quote text if it contains special characters
-# Use single quotes if no single quote in text, otherwise use double quotes with escaping
+# Always use PowerShell single quoting: inside single quotes the only special
+# character is the single quote itself, escaped by doubling it
 function _rusk_quote_text {
     param([string]$text)
     if (-not (_rusk_needs_quotes $text)) {
         return $text
     }
-    
-    # If no single quote in text, use single quotes (no escaping needed)
-    if (-not (_rusk_contains_single_quote $text)) {
-        return "'" + $text + "'"
-    } else {
-        # Use double quotes with escaping
-        $escaped = $text -replace '"', '\"'
-        # Escape backticks to prevent command substitution
-        $escaped = $escaped -replace '`', '\`'
-        # Escape dollar signs to prevent variable expansion
-        $escaped = $escaped -replace '\$', '\$'
-        # Escape backslashes at the end
-        $escaped = $escaped -replace '\\', '\\\\'
-        return '"' + $escaped + '"'
-    }
+    return "'" + ($text -replace "'", "''") + "'"
 }
 
 # Shell names for `rusk completions install` / `show` (exclude already-typed full names)

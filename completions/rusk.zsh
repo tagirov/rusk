@@ -412,10 +412,10 @@ _rusk_main() {
         local cw="${words[CURRENT]}"
         # Only full subcommand names: short aliases still complete to long names, not -h/--help.
         case "$cw" in
-            add|edit|mark|del|list|restore|completions)
+            add|edit|mark|del|list|restore|gen|serve|sync|completions)
                 ;;
             *)
-                compadd add edit mark del list restore completions a e m d l r c
+                compadd add edit mark del list restore gen serve sync completions a e m d l r g s c
                 return
                 ;;
         esac
@@ -503,7 +503,45 @@ _rusk_main() {
                 _rusk_zsh_compadd_flags -- -h --help
             fi
             ;;
-            
+
+        gen|g)
+            if [[ "$prev" == "-o" || "$prev" == "--output" ]]; then
+                # Output value is a file path: use compsys file completion when available
+                if [[ "$cur" != -* ]] && (( $+functions[_files] )); then
+                    _files 2>/dev/null
+                fi
+            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; }; then
+                _rusk_zsh_compadd_flags -- -o --output -h --help
+            fi
+            ;;
+
+        serve|s)
+            if [[ "$prev" == "--host" || "$prev" == "--port" ]]; then
+                # Free-form value: no candidates
+                :
+            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; }; then
+                _rusk_zsh_compadd_flags -- --host --port -h --help
+            fi
+            ;;
+
+        sync)
+            local saw_dir=0
+            for ((i=rusk_idx+2; i<=${#words[@]}; i++)); do
+                if [[ "${words[i]}" == "push" || "${words[i]}" == "pull" ]]; then
+                    saw_dir=1
+                    break
+                fi
+            done
+            if (( saw_dir )); then
+                if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+                    compadd -- --force -h --help
+                fi
+            else
+                # Like `rusk completions`: plain compadd, no command-token prefix reset
+                compadd -- push pull -h --help
+            fi
+            ;;
+
         completions|c)
             local saw_inst=0
             # Do not redeclare `local i` here: a second `local i` in the same function can make

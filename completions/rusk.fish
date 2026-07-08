@@ -650,6 +650,141 @@ function __rusk_complete_list_restore_flags
 end
 
 # ============================================================================
+# Gen/Serve Command Functions
+# ============================================================================
+
+# Check if previous word is the gen output flag (-o/--output takes a file path)
+function __rusk_is_after_output_flag
+    set -l cmdline (__rusk_get_cmdline)
+    if test (count $cmdline) -ge 2
+        set -l prev_word $cmdline[-1]
+        test "$prev_word" = "-o"; or test "$prev_word" = "--output"
+    else
+        return 1
+    end
+end
+
+# Check if previous word is a serve value flag (--host/--port take free-form values)
+function __rusk_is_after_serve_value_flag
+    set -l cmdline (__rusk_get_cmdline)
+    if test (count $cmdline) -ge 2
+        set -l prev_word $cmdline[-1]
+        test "$prev_word" = "--host"; or test "$prev_word" = "--port"
+    else
+        return 1
+    end
+end
+
+# gen: option flags (-o/--output value gets file completion via a separate -F rule)
+function __rusk_should_complete_gen_flags
+    __rusk_is_command gen g; or return 1
+    if __rusk_is_after_output_flag
+        return 1
+    end
+    set -l cw (__rusk_get_current_word)
+    if __rusk_is_flag "$cw"
+        return 0
+    end
+    if test -z "$cw"
+        return 0
+    end
+    if contains -- "$cw" gen g
+        if test (count (__rusk_get_cmdline)) -eq 1
+            return 0
+        end
+    end
+    return 1
+end
+
+function __rusk_complete_gen_flags
+    __rusk_complete_flags -o --output -h --help
+end
+
+# serve: option flags (no completion for --host/--port values)
+function __rusk_should_complete_serve_flags
+    __rusk_is_command serve s; or return 1
+    if __rusk_is_after_serve_value_flag
+        return 1
+    end
+    set -l cw (__rusk_get_current_word)
+    if __rusk_is_flag "$cw"
+        return 0
+    end
+    if test -z "$cw"
+        return 0
+    end
+    if contains -- "$cw" serve s
+        if test (count (__rusk_get_cmdline)) -eq 1
+            return 0
+        end
+    end
+    return 1
+end
+
+function __rusk_complete_serve_flags
+    __rusk_complete_flags --host --port -h --help
+end
+
+# ============================================================================
+# Sync Command Functions
+# ============================================================================
+
+# Check if we're in sync command (no alias)
+function __rusk_is_sync_command
+    set -l cmdline (__rusk_get_cmdline)
+    if test (count $cmdline) -ge 2
+        test "$cmdline[2]" = "sync"
+    else
+        return 1
+    end
+end
+
+# Check if push/pull is already in command line
+function __rusk_has_push_or_pull
+    set -l cmdline (__rusk_get_cmdline)
+    for i in (seq 2 (count $cmdline))
+        set -l arg $cmdline[$i]
+        if test "$arg" = "push" -o "$arg" = "pull"
+            return 0
+        end
+    end
+    return 1
+end
+
+# push/pull not entered yet: offer subcommands (plus -h/--help via flag rule)
+function __rusk_should_complete_sync_subcommands
+    __rusk_is_sync_command; or return 1
+    __rusk_has_push_or_pull; and return 1
+    set -l cw (__rusk_get_current_word)
+    if __rusk_is_flag "$cw"
+        return 1
+    end
+    return 0
+end
+
+# Help flags at the `rusk sync` level (empty word or flag token)
+function __rusk_should_complete_sync_help
+    __rusk_is_sync_command; or return 1
+    __rusk_has_push_or_pull; and return 1
+    set -l cw (__rusk_get_current_word)
+    if __rusk_is_flag "$cw"
+        return 0
+    end
+    test -z "$cw"
+end
+
+# --force/-h/--help after push/pull
+function __rusk_should_complete_sync_direction_flags
+    __rusk_is_sync_command; or return 1
+    __rusk_has_push_or_pull; or return 1
+    set -l cw (__rusk_get_current_word)
+    if __rusk_is_flag "$cw"
+        return 0
+    end
+    test -z "$cw"
+end
+
+# ============================================================================
 # Completions Command Functions
 # ============================================================================
 
@@ -727,6 +862,9 @@ complete -c rusk -f -n '__fish_use_subcommand' -a 'mark' -d 'Mark tasks as done/
 complete -c rusk -f -n '__fish_use_subcommand' -a 'del' -d 'Delete tasks by id(s)'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'list' -d 'List all tasks'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'restore' -d 'Restore from backup'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'gen' -d 'Generate a read-only HTML page'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'serve' -d 'Serve the web UI'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'sync' -d 'Synchronize with a remote'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'completions' -d 'Install shell completions'
 
 # Aliases
@@ -736,6 +874,8 @@ complete -c rusk -f -n '__fish_use_subcommand' -a 'm' -d 'Alias for mark'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'd' -d 'Alias for del'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'l' -d 'Alias for list'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'r' -d 'Alias for restore'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'g' -d 'Alias for gen'
+complete -c rusk -f -n '__fish_use_subcommand' -a 's' -d 'Alias for serve'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'c' -d 'Alias for completions'
 
 # Global flags (-s/-l only appear after "-" on the token; -a lists them with subcommands on bare <tab>)
@@ -781,6 +921,26 @@ complete -c rusk -f -n '__rusk_should_complete_mark_del_flags' -a '(__rusk_compl
 # ============================================================================
 
 complete -c rusk -f -n '__rusk_should_complete_list_restore_flags' -a '(__rusk_complete_list_restore_flags)'
+
+# ============================================================================
+# Gen/Serve Command Completions
+# ============================================================================
+
+complete -c rusk -f -n '__rusk_should_complete_gen_flags' -a '(__rusk_complete_gen_flags)'
+# -o/--output value is a file path: enable file completion (-F)
+complete -c rusk -F -n '__rusk_is_command gen g; and __rusk_is_after_output_flag'
+complete -c rusk -f -n '__rusk_should_complete_serve_flags' -a '(__rusk_complete_serve_flags)'
+# --host/--port values are free-form: suppress the file fallback, offer nothing
+complete -c rusk -f -n '__rusk_is_command serve s; and __rusk_is_after_serve_value_flag'
+
+# ============================================================================
+# Sync Command Completions
+# ============================================================================
+
+complete -c rusk -f -n '__rusk_should_complete_sync_subcommands' -a 'push' -d 'Upload local tasks to the remote'
+complete -c rusk -f -n '__rusk_should_complete_sync_subcommands' -a 'pull' -d 'Replace the local database with the remote tasks'
+complete -c rusk -f -n '__rusk_should_complete_sync_help' -a '(__rusk_complete_flags -h --help)'
+complete -c rusk -f -n '__rusk_should_complete_sync_direction_flags' -a '(__rusk_complete_flags --force -h --help)'
 
 # ============================================================================
 # Completions Command Completions

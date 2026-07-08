@@ -380,6 +380,22 @@ _rusk_complete_help_flags() {
     return 0
 }
 
+# Flags for gen (-o/--output take a file path)
+_rusk_complete_gen_flags() {
+    local gcur="$cur"
+    [[ "${1:-0}" == 1 ]] && gcur=""
+    COMPREPLY=($(compgen -W "-o --output -h --help" -- "$gcur"))
+    return 0
+}
+
+# Flags for serve (--host/--port take free-form values)
+_rusk_complete_serve_flags() {
+    local gcur="$cur"
+    [[ "${1:-0}" == 1 ]] && gcur=""
+    COMPREPLY=($(compgen -W "--host --port -h --help" -- "$gcur"))
+    return 0
+}
+
 # Get available shells for completions install/show, excluding already selected ones
 _rusk_get_available_shells() {
     local all_shells=("bash" "zsh" "fish" "nu" "powershell")
@@ -446,10 +462,10 @@ _rusk_completion() {
     if [ $rusk_idx -ge 0 ] && [ $COMP_CWORD -eq $((rusk_idx + 1)) ]; then
         # Only full subcommand names: short aliases (a e m …) still get Tab → long name, not flags (-h/--help).
         case "$cur" in
-            add|edit|mark|del|list|restore|completions)
+            add|edit|mark|del|list|restore|gen|serve|sync|completions)
                 ;;
             *)
-                COMPREPLY=($(compgen -W "add edit mark del list restore completions a e m d l r c" -- "$cur"))
+                COMPREPLY=($(compgen -W "add edit mark del list restore gen serve sync completions a e m d l r g s c" -- "$cur"))
                 return 0
                 ;;
         esac
@@ -530,7 +546,54 @@ _rusk_completion() {
                 fi
             fi
             ;;
-            
+
+        gen|g)
+            if [[ "$prev" == "-o" || "$prev" == "--output" ]]; then
+                # Output value is a file path: offer filesystem completion
+                COMPREPLY=($(compgen -f -- "$cur"))
+            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; }; then
+                if [[ -n "$cur" ]] && [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; then
+                    _rusk_complete_gen_flags 1
+                else
+                    _rusk_complete_gen_flags
+                fi
+            fi
+            ;;
+
+        serve|s)
+            if [[ "$prev" == "--host" || "$prev" == "--port" ]]; then
+                # Free-form value: no candidates
+                :
+            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; }; then
+                if [[ -n "$cur" ]] && [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; then
+                    _rusk_complete_serve_flags 1
+                else
+                    _rusk_complete_serve_flags
+                fi
+            fi
+            ;;
+
+        sync)
+            local saw_dir=0
+            for ((i=rusk_idx+2; i<${#COMP_WORDS[@]}; i++)); do
+                if [[ "${COMP_WORDS[i]}" == "push" || "${COMP_WORDS[i]}" == "pull" ]]; then
+                    saw_dir=1
+                    break
+                fi
+            done
+            if [[ $saw_dir -eq 1 ]]; then
+                if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+                    COMPREPLY=($(compgen -W "--force -h --help" -- "$cur"))
+                fi
+            else
+                local gcur="$cur"
+                if [[ -n "$cur" ]] && [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; then
+                    gcur=""
+                fi
+                COMPREPLY=($(compgen -W "push pull -h --help" -- "$gcur"))
+            fi
+            ;;
+
         completions|c)
             local saw_inst=0
             for ((i=rusk_idx+2; i<${#COMP_WORDS[@]}; i++)); do

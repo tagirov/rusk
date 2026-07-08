@@ -46,6 +46,9 @@ def get-commands [] {
     {value: "del", aliases: ["d"], description: "Delete tasks by id(s)"}
     {value: "list", aliases: ["l"], description: "List all tasks"}
     {value: "restore", aliases: ["r"], description: "Restore from backup"}
+    {value: "gen", aliases: ["g"], description: "Generate a read-only HTML page"}
+    {value: "serve", aliases: ["s"], description: "Serve the web UI"}
+    {value: "sync", aliases: [], description: "Synchronize with a remote"}
     {value: "completions", aliases: ["c"], description: "Install shell completions"}
   ]
 }
@@ -79,6 +82,37 @@ def get-list-flags [] {
   [
     {value: "--compact", description: "Compact view: first line of each task only"}
     {value: "-c", description: "Compact view: first line of each task only"}
+  ]
+}
+
+# gen subcommand: output path (value is a free-form file path)
+def get-gen-flags [] {
+  [
+    {value: "--output", description: "Output file path; pass `-` for stdout"}
+    {value: "-o", description: "Output file path; pass `-` for stdout"}
+  ]
+}
+
+# serve subcommand: bind address and port (values are free-form)
+def get-serve-flags [] {
+  [
+    {value: "--host", description: "Bind address"}
+    {value: "--port", description: "Port"}
+  ]
+}
+
+# sync subcommands
+def get-sync-subcommands [] {
+  [
+    {value: "push", description: "Upload local tasks to the remote"}
+    {value: "pull", description: "Replace the local database with the remote tasks"}
+  ]
+}
+
+# --force flag for sync push/pull
+def get-force-flags [] {
+  [
+    {value: "--force", description: "Overwrite changes on the other side"}
   ]
 }
 
@@ -569,6 +603,50 @@ def complete-list-restore [cur: string, subcommand: string] {
   []
 }
 
+# Complete gen command (-o/--output value is a free-form file path: no candidates)
+def complete-gen [cur: string, prev: string] {
+  if $prev == "-o" or $prev == "--output" {
+    return []
+  }
+  if ($cur == "") or ($cur | str starts-with "-") {
+    return (complete-flags ((get-gen-flags) | append (get-common-flags)) $cur)
+  }
+  []
+}
+
+# Complete serve command (--host/--port values are free-form: no candidates)
+def complete-serve [cur: string, prev: string] {
+  if $prev == "--host" or $prev == "--port" {
+    return []
+  }
+  if ($cur == "") or ($cur | str starts-with "-") {
+    return (complete-flags ((get-serve-flags) | append (get-common-flags)) $cur)
+  }
+  []
+}
+
+# Complete sync command (optional push/pull subcommands; --force after them)
+def complete-sync [spans: list<string>, cur: string] {
+  let has_direction = ($spans | any {|s| $s == "push" or $s == "pull"})
+  if $has_direction {
+    if ($cur == "") or ($cur | str starts-with "-") {
+      return (complete-flags ((get-force-flags) | append (get-common-flags)) $cur)
+    }
+    return []
+  }
+  if ($cur == "") {
+    return ((get-sync-subcommands) | append (get-common-flags))
+  } else if ($cur | str starts-with "-") {
+    return (complete-flags (get-common-flags) $cur)
+  } else {
+    let matching = (filter-by-prefix (get-sync-subcommands) $cur)
+    if ($matching | length) > 0 {
+      return $matching
+    }
+    return []
+  }
+}
+
 # Get available shells, excluding already selected ones
 def get-available-shells [spans: list<string>] {
   let all_shells = (get-shells | get value)
@@ -795,7 +873,7 @@ def complete-root [ctx: record] {
   
   # Full subcommand name only (not short aliases): after `rusk c` + Tab offer `completions`/`c`;
   # after `rusk c ` + Tab delegate here (root returns []) so install/show come from complete-completions.
-  let exact_subcmds = [add edit mark del list restore completions]
+  let exact_subcmds = [add edit mark del list restore gen serve sync completions]
   if ($ctx.word_count == 1) and (not $ctx.has_trailing_space) and ($ctx.cur in $exact_subcmds) {
     return []
   }
@@ -878,7 +956,19 @@ export def rusk-completions-main [spans: list<string>] {
     "list" | "l" | "restore" | "r" => {
       complete-list-restore $cur_n $ctx.command
     }
-    
+
+    "gen" | "g" => {
+      complete-gen $cur_n $ctx.prev
+    }
+
+    "serve" | "s" => {
+      complete-serve $cur_n $ctx.prev
+    }
+
+    "sync" => {
+      complete-sync $spans $cur_n
+    }
+
     "completions" | "c" => {
       complete-completions $spans $cur_n $ctx.prev $ctx.word_count $ctx.command
     }

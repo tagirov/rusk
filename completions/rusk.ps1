@@ -158,6 +158,11 @@ function _rusk_emit_flag_completions {
             '--date' { 'Set task date' }
             '-d' { 'Set task date' }
             '--done' { 'Delete all completed tasks' }
+            '--output' { 'Output file path' }
+            '-o' { 'Output file path' }
+            '--host' { 'Bind address' }
+            '--port' { 'Port' }
+            '--force' { 'Overwrite changes on the other side' }
             '--help' { 'Show help' }
             '-h' { 'Show help' }
             default { $t }
@@ -410,7 +415,7 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
 
     # Complete commands (when only "rusk" is typed)
     if ($tokens.Count -eq 1) {
-        $commands = @('add', 'a', 'edit', 'e', 'mark', 'm', 'del', 'd', 'list', 'l', 'restore', 'r', 'completions', 'c')
+        $commands = @('add', 'a', 'edit', 'e', 'mark', 'm', 'del', 'd', 'list', 'l', 'restore', 'r', 'gen', 'g', 'serve', 's', 'sync', 'completions', 'c')
         if ([string]::IsNullOrEmpty($wordToComplete)) {
             $filtered = $commands
         } else {
@@ -425,8 +430,8 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
     }
 
     # First arg after rusk: complete unless it's already a full subcommand name (aliases expand via Tab, not to -h/--help).
-    $fullSubcommands = @('add', 'edit', 'mark', 'del', 'list', 'restore', 'completions')
-    $allSubcommands = @('add', 'a', 'edit', 'e', 'mark', 'm', 'del', 'd', 'list', 'l', 'restore', 'r', 'completions', 'c')
+    $fullSubcommands = @('add', 'edit', 'mark', 'del', 'list', 'restore', 'gen', 'serve', 'sync', 'completions')
+    $allSubcommands = @('add', 'a', 'edit', 'e', 'mark', 'm', 'del', 'd', 'list', 'l', 'restore', 'r', 'gen', 'g', 'serve', 's', 'sync', 'completions', 'c')
     if ($tokens.Count -eq 2) {
         $first = _rusk_token_text $tokens[1]
         if (-not [string]::IsNullOrEmpty($first) -and ($fullSubcommands -notcontains $first)) {
@@ -542,6 +547,65 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
                 return _rusk_emit_flag_completions @('--help', '-h') $wordToComplete $tokens $command $cur
             }
             return @()
+        }
+
+        { $_ -in 'gen', 'g' } {
+            if ($prev -eq '-o' -or $prev -eq '--output') {
+                # Output value is a file path: return nothing so PowerShell falls back to file completion
+                return @()
+            }
+            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur) -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
+                return _rusk_emit_flag_completions @('--output', '-o', '--help', '-h') $wordToComplete $tokens $command $cur
+            }
+            return @()
+        }
+
+        { $_ -in 'serve', 's' } {
+            if ($prev -eq '--host' -or $prev -eq '--port') {
+                # Free-form value: no candidates
+                return @()
+            }
+            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur) -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
+                return _rusk_emit_flag_completions @('--host', '--port', '--help', '-h') $wordToComplete $tokens $command $cur
+            }
+            return @()
+        }
+
+        { $_ -in 'sync' } {
+            $hasDirection = $false
+            for ($i = 2; $i -lt $tokens.Count; $i++) {
+                $v = _rusk_token_text $tokens[$i]
+                if ($v -eq 'push' -or $v -eq 'pull') {
+                    $hasDirection = $true
+                    break
+                }
+            }
+            if ($hasDirection) {
+                if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur)) {
+                    return _rusk_emit_flag_completions @('--force', '--help', '-h') $wordToComplete $tokens $command $cur
+                }
+                return @()
+            }
+            if ($wordToComplete -like '-*') {
+                return _rusk_emit_flag_completions @('--help', '-h') $wordToComplete $tokens $command $cur
+            }
+            $subPrefix = $wordToComplete
+            if ($tokens.Count -eq 2 -and (_rusk_token_text $tokens[1]) -eq $wordToComplete) {
+                $subPrefix = ''
+            }
+            $subcmds = if ([string]::IsNullOrEmpty($subPrefix)) {
+                @('push', 'pull')
+            } else {
+                @('push', 'pull') | Where-Object { $_ -like "$subPrefix*" }
+            }
+            $subcmdResults = $subcmds | ForEach-Object {
+                [System.Management.Automation.CompletionResult]::new($_, $_, [System.Management.Automation.CompletionResultType]::ParameterValue, $_)
+            }
+            if ([string]::IsNullOrEmpty($wordToComplete)) {
+                $flagResults = _rusk_emit_flag_completions @('--help', '-h') $wordToComplete $tokens $command $cur
+                return @($subcmdResults) + @($flagResults)
+            }
+            return $subcmdResults
         }
 
         { $_ -in 'completions', 'c' } {

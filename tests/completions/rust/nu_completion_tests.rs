@@ -79,6 +79,9 @@ fn test_nu_completion_has_all_commands() {
         "del",
         "list",
         "restore",
+        "gen",
+        "serve",
+        "sync",
         "completions",
     ];
     for cmd in commands {
@@ -90,8 +93,8 @@ fn test_nu_completion_has_all_commands() {
         );
     }
 
-    // Aliases
-    let aliases = vec!["a", "e", "m", "d", "l", "r", "c"];
+    // Aliases (sync has no alias)
+    let aliases = vec!["a", "e", "m", "d", "l", "r", "g", "s", "c"];
     for alias in aliases {
         assert!(
             script.contains(&format!("\"{}\"", alias))

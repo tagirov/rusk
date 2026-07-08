@@ -1,6 +1,7 @@
 use colored::*;
 
 use super::HandlerCLI;
+use crate::config::theme;
 
 impl HandlerCLI {
     #[doc(hidden)]
@@ -29,8 +30,10 @@ impl HandlerCLI {
             .unwrap_or_else(|| "empty".to_string())
     }
 
-    /// Short list-style date: `D-mon-yy` (e.g. `7-jul-26`), red when overdue
-    /// on a not-done task, cyan otherwise.
+    /// Short list-style date: `D-mon-yy` (e.g. `7-jul-26`). Overdue dates on
+    /// not-done tasks use `date_overdue`, today's use `date_today`, the rest
+    /// (and all done tasks) use `date_upcoming`. Defaults reproduce the old
+    /// red/cyan behavior (`date_today` == `date_upcoming`).
     pub(crate) fn colored_short_date(date: chrono::NaiveDate, done: bool) -> ColoredString {
         use chrono::Datelike;
         let date_str = format!(
@@ -39,11 +42,17 @@ impl HandlerCLI {
             date.format("%b").to_string().to_lowercase(),
             date.format("%y")
         );
-        if date < chrono::Local::now().date_naive() && !done {
-            date_str.red()
+        let today = chrono::Local::now().date_naive();
+        let color = if done {
+            theme().date_upcoming
+        } else if date < today {
+            theme().date_overdue
+        } else if date == today {
+            theme().date_today
         } else {
-            date_str.cyan()
-        }
+            theme().date_upcoming
+        };
+        color.paint(&date_str)
     }
 
     pub(crate) fn print_task_text_with_wrapping(prefix: &str, text: &str) {
@@ -274,7 +283,7 @@ impl HandlerCLI {
                 .map(|id| id.to_string())
                 .collect::<Vec<_>>()
                 .join(" ");
-            println!("{} {}", "Tasks not found IDs:".yellow(), list);
+            println!("{} {}", theme().warning.paint("Tasks not found IDs:"), list);
         }
     }
 }

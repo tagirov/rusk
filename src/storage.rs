@@ -108,9 +108,10 @@ fn json_error_line_context(data: &str, e: &serde_json::Error) -> Option<String> 
     }
 }
 
-/// Yellow non-fatal warning on stderr (backup / atomic-write fallbacks).
+/// Non-fatal warning on stderr (backup / atomic-write fallbacks), in the
+/// theme warning color (yellow by default).
 fn warn_yellow(msg: &str) {
-    eprintln!("{}", msg.yellow());
+    eprintln!("{}", crate::config::theme().warning.paint(msg));
 }
 
 fn eprint_db_path(path: &std::path::Path) {
@@ -129,18 +130,7 @@ impl Drop for DbReporter {
 
 impl TaskManager {
     fn is_test_mode() -> bool {
-        let env_check = std::env::var("RUST_TEST_THREADS").is_ok()
-            || std::env::var("CARGO_TEST").is_ok()
-            || std::env::var("__CARGO_TEST_CHANNEL").is_ok();
-        let exe_check = std::env::current_exe()
-            .ok()
-            .and_then(|p| {
-                p.file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .map(|s| s.contains("test"))
-            })
-            .unwrap_or(false);
-        env_check || exe_check || cfg!(test)
+        crate::is_test_mode()
     }
 
     fn maybe_log_db_path(path: &std::path::Path) {
@@ -446,7 +436,7 @@ impl TaskManager {
                 .context("Failed to create directory for the database file")?;
         }
 
-        if self.db_path.exists() {
+        if crate::config::config().backup && self.db_path.exists() {
             let backup_path = self.db_path.with_extension("json.backup");
             if let Err(e) = fs::copy(&self.db_path, &backup_path) {
                 warn_yellow(&format!("Warning: Failed to create backup: {e}"));
@@ -504,16 +494,23 @@ impl TaskManager {
         Ok(())
     }
 
+    /// Directory values (existing dir or trailing `/`) get `tasks.json` appended.
+    fn db_path_from_value(path: PathBuf) -> PathBuf {
+        if path.is_dir() || path.to_string_lossy().ends_with('/') {
+            path.join("tasks.json")
+        } else {
+            path
+        }
+    }
+
     pub fn resolve_db_path() -> PathBuf {
         if Self::is_test_mode() || cfg!(debug_assertions) {
             std::env::temp_dir().join("rusk_debug").join("tasks.json")
         } else if let Ok(db_path) = std::env::var("RUSK_DB") {
-            let path = PathBuf::from(db_path);
-            if path.is_dir() || path.to_string_lossy().ends_with('/') {
-                path.join("tasks.json")
-            } else {
-                path
-            }
+            Self::db_path_from_value(PathBuf::from(db_path))
+        } else if let Some(db_path) = &crate::config::config().rusk_db {
+            // `rusk_db` from the config file; the RUSK_DB env var wins above.
+            Self::db_path_from_value(db_path.clone())
         } else {
             PathBuf::from(".rusk").join("tasks.json")
         }

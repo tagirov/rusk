@@ -467,6 +467,9 @@ fn test_completion_real_rusk_list_output() {
     cmd.env_remove("RUST_TEST_THREADS");
     cmd.env_remove("CARGO_TEST");
     cmd.env_remove("__CARGO_TEST_CHANNEL");
+    // Without the test-mode env markers a release binary would read (and
+    // auto-create) the developer's real config file.
+    cmd.env("RUSK_CONFIG", "");
     if !cfg!(debug_assertions) {
         cmd.env("RUSK_DB", db_path.to_str().unwrap());
     }

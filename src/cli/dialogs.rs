@@ -9,6 +9,7 @@ use crossterm::{
 use std::io::{self, Write};
 
 use super::HandlerCLI;
+use crate::config::theme;
 
 impl HandlerCLI {
     pub(crate) fn read_confirmation(prompt: &str) -> Result<bool> {
@@ -71,10 +72,10 @@ impl HandlerCLI {
 
         println!(
             "{}{}{}{}",
-            "Delete ".truecolor(255, 165, 0),
-            "[ID ".truecolor(255, 165, 0),
-            task_id.to_string().white(),
-            "]:".truecolor(255, 165, 0)
+            theme().accent.paint("Delete "),
+            theme().accent.paint("[ID "),
+            theme().emphasis.paint(&task_id.to_string()),
+            theme().accent.paint("]:")
         );
 
         let left_indent = " ".repeat(LEFT_MARGIN);
@@ -88,7 +89,7 @@ impl HandlerCLI {
                     "{}{}{}",
                     left_indent,
                     line.bold(),
-                    prompt_with_space.truecolor(255, 165, 0)
+                    theme().accent.paint(&prompt_with_space)
                 );
                 io::stdout().flush().ok();
                 return String::new();
@@ -101,6 +102,6 @@ impl HandlerCLI {
             .saturating_sub(PROMPT_RIGHT_MARGIN);
         let indent = " ".repeat(spaces_before_prompt);
 
-        format!("{}{}", indent, prompt_with_space.truecolor(255, 165, 0))
+        format!("{}{}", indent, theme().accent.paint(&prompt_with_space))
     }
 }

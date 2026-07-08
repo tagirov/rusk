@@ -1,10 +1,12 @@
 use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser};
+#[cfg(feature = "completions")]
 use colored::*;
 use rusk::{
     BareEditDateFlag, TaskManager,
     args::{Cli, Command},
     cli::HandlerCLI,
+    config,
     error::AppError,
     is_cli_date_help_value, parse_edit_args, parse_flexible_ids,
     parser::date::is_cli_date_clear_value,
@@ -32,9 +34,9 @@ fn eprint_cli_error(msg: impl std::fmt::Display) {
     eprintln!("\n{}\n", msg);
 }
 
-/// Prints `Error: <msg>` in red and exits with code 1.
+/// Prints `Error: <msg>` in the theme error color and exits with code 1.
 fn exit_with_error(msg: impl std::fmt::Display) -> ! {
-    eprint_cli_error(format!("Error: {msg}").red());
+    eprint_cli_error(config::theme().error.paint(&format!("Error: {msg}")));
     std::process::exit(1);
 }
 
@@ -53,7 +55,7 @@ fn main() {
             Some(AppError::UserCancel) | Some(AppError::SkipTask) => std::process::exit(0),
             Some(AppError::UserAbort) => std::process::exit(130),
             None => {
-                eprint_cli_error(format!("Error: {err}").red());
+                eprint_cli_error(config::theme().error.paint(&format!("Error: {err}")));
                 std::process::exit(1);
             }
         },
@@ -63,10 +65,25 @@ fn main() {
 fn run() -> Result<()> {
     windows_console::enable_ansi_support();
 
+    let outcome = config::load();
+    config::init(outcome.config);
+
     // RUSK_NO_COLOR: disable ANSI colors when set to any non-empty value
     // (mirrors NO_COLOR semantics, which `colored` also respects on its own).
-    if std::env::var_os("RUSK_NO_COLOR").is_some_and(|v| !v.is_empty()) {
+    // The environment wins over `no_color` from the config file; the config
+    // value can only disable colors, never re-enable them.
+    if std::env::var_os("RUSK_NO_COLOR").is_some_and(|v| !v.is_empty())
+        || config::config().no_color
+    {
         colored::control::set_override(false);
+    }
+
+    // After the color override so warnings respect no_color.
+    for warning in &outcome.warnings {
+        eprintln!(
+            "{}",
+            config::theme().warning.paint(&format!("Warning: {warning}"))
+        );
     }
 
     let cli = Cli::parse();
@@ -187,7 +204,9 @@ fn run() -> Result<()> {
                     #[cfg(not(feature = "interactive"))]
                     {
                         eprint_cli_error(
-                            "Interactive editing requires the 'interactive' feature".red(),
+                            config::theme()
+                                .error
+                                .paint("Interactive editing requires the 'interactive' feature"),
                         );
                         std::process::exit(1);
                     }
@@ -204,11 +223,11 @@ fn run() -> Result<()> {
             if for_completion {
                 HandlerCLI::handle_list_tasks_for_completion(tm.tasks());
             } else {
-                HandlerCLI::handle_list_tasks(tm.tasks(), compact);
+                HandlerCLI::handle_list_tasks(tm.tasks(), compact || config::config().compact);
             }
         }
         None => {
-            HandlerCLI::handle_list_tasks(tm.tasks(), false);
+            HandlerCLI::handle_list_tasks(tm.tasks(), config::config().compact);
         }
         Some(Command::Restore) => {
             let mut restore_tm = match TaskManager::new_for_restore() {
@@ -252,8 +271,10 @@ fn handle_completions_install(shells: Vec<Shell>) -> Result<()> {
 
         println!(
             "{} {} {}",
-            "✓".green(),
-            format!("{} completion installed to:", shell_name(shell)).green(),
+            config::theme().success.paint("✓"),
+            config::theme()
+                .success
+                .paint(&format!("{} completion installed to:", shell_name(shell))),
             path.display()
         );
 
@@ -269,11 +290,11 @@ fn handle_completions_install(shells: Vec<Shell>) -> Result<()> {
         if shells_count > 1 {
             println!(
                 "{} {}:",
-                "Setup instructions for".cyan(),
-                shell_name(shell).cyan().bold()
+                config::theme().info.paint("Setup instructions for"),
+                config::theme().info.paint(&shell_name(shell)).bold()
             );
         }
-        println!("{}", instructions.cyan());
+        println!("{}", config::theme().info.paint(&instructions));
         if idx < installed_paths.len() - 1 {
             println!();
         }

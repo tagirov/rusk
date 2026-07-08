@@ -13,6 +13,7 @@ use crossterm::{
 use std::io::{self, Write};
 
 use super::text_ops;
+use crate::config::theme;
 
 pub(super) const ML_FOOTER: &str = "^S save  ·  ^G help  ·  Esc cancel";
 /// Lower the footer vs the prior 5-row band (wide: less padding under footer; compact: more gap above).
@@ -237,14 +238,14 @@ fn print_visual_chunk(
             stdout.queue(Print(text.reversed()))?;
         } else if is_date {
             if date_past {
-                stdout.queue(Print(text.red().bold()))?;
+                stdout.queue(Print(theme().date_overdue.paint(text).bold()))?;
             } else {
-                stdout.queue(Print(text.green().bold()))?;
+                stdout.queue(Print(theme().editor_date.paint(text).bold()))?;
             }
         } else {
             match full_text_valid {
-                Some(true) => stdout.queue(Print(text.green()))?,
-                Some(false) => stdout.queue(Print(text.red()))?,
+                Some(true) => stdout.queue(Print(theme().success.paint(text)))?,
+                Some(false) => stdout.queue(Print(theme().error.paint(text)))?,
                 _ => stdout.queue(Print(text))?,
             };
         }
@@ -392,7 +393,7 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
     let text_left = content_left;
     let text_right_excl = content_left + r.prompt_width + visible_width;
     stdout.queue(MoveTo(footer_x as u16, footer_row))?;
-    stdout.queue(Print(footer_text.truecolor(128, 128, 128)))?;
+    stdout.queue(Print(theme().editor_footer.paint(&footer_text)))?;
 
     let has_up = *r.view_top > 0;
     let has_down = *r.view_top + available_text < visuals.len();
@@ -406,7 +407,7 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
                 footer_row,
             ))?;
             if has_down {
-                stdout.queue(Print("↓".truecolor(128, 128, 128)))?;
+                stdout.queue(Print(theme().editor_footer.paint("↓")))?;
             } else {
                 stdout.queue(Print(" "))?;
             }
@@ -415,7 +416,7 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
                 footer_row,
             ))?;
             if has_up {
-                stdout.queue(Print("↑".truecolor(128, 128, 128)))?;
+                stdout.queue(Print(theme().editor_footer.paint("↑")))?;
             } else {
                 stdout.queue(Print(" "))?;
             }
@@ -440,9 +441,9 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
     .min(term_cols.saturating_sub(1));
     stdout.queue(MoveTo(status_x as u16, footer_row))?;
     if r.dirty {
-        stdout.queue(Print("●".truecolor(185, 185, 190)))?;
+        stdout.queue(Print(theme().editor_dirty.paint("●")))?;
     } else {
-        stdout.queue(Print("○".truecolor(100, 100, 100)))?;
+        stdout.queue(Print(theme().editor_clean.paint("○")))?;
     }
 
     let cur_visual_row_on_screen = cursor_vis_row.saturating_sub(*r.view_top);

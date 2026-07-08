@@ -351,7 +351,7 @@ pub(super) fn confirm_discard(stdout: &mut io::Stdout, dialog_row: Option<u16>) 
     stdout.queue(MoveTo(0, row))?;
     stdout.queue(Clear(ClearType::CurrentLine))?;
     stdout.queue(MoveTo(col as u16, row))?;
-    stdout.queue(Print(prompt.truecolor(255, 165, 0)))?;
+    stdout.queue(Print(crate::config::theme().accent.paint(prompt)))?;
     stdout.flush().ok();
     loop {
         if let Event::Key(KeyEvent {

@@ -10,6 +10,8 @@ use crate::common;
 fn with_isolated_home(cmd: &mut Command, home: &Path) {
     cmd.env("HOME", home);
     cmd.env("USERPROFILE", home);
+    // Never read or auto-create the developer's real config file.
+    cmd.env("RUSK_CONFIG", "");
     #[cfg(windows)]
     {
         let appdata = home.join("AppData").join("Roaming");
@@ -376,6 +378,7 @@ fn test_cli_completions_show() -> Result<()> {
 
     for shell_name in ["bash", "zsh", "fish", "nu", "powershell"] {
         let output = Command::new(&rusk_bin)
+            .env("RUSK_CONFIG", "")
             .args(["completions", "show", shell_name])
             .output()?;
 
@@ -558,6 +561,7 @@ fn test_cli_completions_invalid_shell() -> Result<()> {
 
     // Test with invalid shell name
     let output = Command::new(&rusk_bin)
+        .env("RUSK_CONFIG", "")
         .args(["completions", "show", "invalid_shell"])
         .output()?;
 
@@ -578,6 +582,7 @@ fn test_cli_completions_help() -> Result<()> {
 
     // Test help command
     let output = Command::new(&rusk_bin)
+        .env("RUSK_CONFIG", "")
         .args(["completions", "--help"])
         .output()?;
 

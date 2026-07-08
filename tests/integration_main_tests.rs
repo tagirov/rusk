@@ -23,6 +23,9 @@ fn debug_db_path() -> PathBuf {
 fn rusk_command() -> Command {
     let mut cmd = Command::new(rusk_bin());
     cmd.env("RUSK_DB", debug_db_path());
+    // Release binaries would otherwise read (and auto-create) the developer's
+    // real config file; an empty RUSK_CONFIG disables the config system.
+    cmd.env("RUSK_CONFIG", "");
     cmd
 }
 

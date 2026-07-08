@@ -1,5 +1,6 @@
 #[cfg(feature = "interactive")]
 use crate::parse_cli_date_for_edit;
+use crate::config::theme;
 use crate::parser::date::is_cli_date_clear_value;
 use crate::{Task, TaskManager, validate_cli_date_edit_arg};
 use anyhow::Result;
@@ -13,9 +14,9 @@ impl HandlerCLI {
     fn print_added_task(task: &Task) {
         let prefix = if let Some(date) = task.date {
             let colored_date = Self::colored_short_date(date, task.done);
-            format!("{} {}: ({})", "Added task:".green(), task.id, colored_date)
+            format!("{} {}: ({})", theme().success.paint("Added task:"), task.id, colored_date)
         } else {
-            format!("{} {}:", "Added task:".green(), task.id)
+            format!("{} {}:", theme().success.paint("Added task:"), task.id)
         };
         Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
     }
@@ -68,8 +69,8 @@ impl HandlerCLI {
 
         let prompt = format!(
             "{}{}",
-            "Restore unsaved draft for new task ".truecolor(255, 165, 0),
-            "? [y/N]: ".truecolor(255, 165, 0)
+            theme().accent.paint("Restore unsaved draft for new task "),
+            theme().accent.paint("? [y/N]: ")
         );
         let prefill_owned = Self::prefill_with_draft(base_prefill, &draft_path, &draft_key, &prompt)?;
 
@@ -110,7 +111,7 @@ impl HandlerCLI {
         } else if !ids.is_empty() {
             Self::delete_by_ids(tm, ids)
         } else {
-            println!("{}", "Please specify id(s) or --done.".yellow());
+            println!("{}", theme().warning.paint("Please specify id(s) or --done."));
             Ok(())
         }
     }
@@ -134,9 +135,9 @@ impl HandlerCLI {
         };
         let prompt = format!(
             "{} {} {} ",
-            "Restore unsaved draft for task".truecolor(255, 165, 0),
-            task_id.to_string().white(),
-            "? [y/N]:".truecolor(255, 165, 0)
+            theme().accent.paint("Restore unsaved draft for task"),
+            theme().emphasis.paint(&task_id.to_string()),
+            theme().accent.paint("? [y/N]:")
         );
         let prefill_owned = Self::prefill_with_draft(base_prefill, &draft_path, &draft_key, &prompt)?;
 
@@ -228,15 +229,15 @@ impl HandlerCLI {
                             edited.push(*id);
                             edited_info.push((*id, new_text.clone()));
                             any_changed = true;
-                            println!("{} {}", "Edited task:".green(), id);
+                            println!("{} {}", theme().success.paint("Edited task:"), id);
                         } else {
                             unchanged.push(*id);
-                            println!("{} {}", "Task unchanged:".magenta(), id);
+                            println!("{} {}", theme().notice.paint("Task unchanged:"), id);
                         }
                     }
                     Ok(None) => {
                         unchanged.push(*id);
-                        println!("{} {}", "Task unchanged:".magenta(), id);
+                        println!("{} {}", theme().notice.paint("Task unchanged:"), id);
                     }
                     Err(e) => {
                         if Self::handle_skip_task_error(&e, *id) {
@@ -267,15 +268,15 @@ impl HandlerCLI {
     fn delete_all_done(tm: &mut TaskManager) -> Result<()> {
         let done_count = tm.tasks().iter().filter(|t| t.done).count();
         if done_count == 0 {
-            println!("{}", "No done tasks to delete.".yellow());
+            println!("{}", theme().warning.paint("No done tasks to delete."));
             return Ok(());
         }
 
         let confirmed = Self::read_confirmation(&format!(
             "{}{}{}",
-            "Delete all done tasks (".truecolor(255, 165, 0),
-            done_count.to_string().white(),
-            ")? [y/N]: ".truecolor(255, 165, 0)
+            theme().accent.paint("Delete all done tasks ("),
+            theme().emphasis.paint(&done_count.to_string()),
+            theme().accent.paint(")? [y/N]: ")
         ))?;
 
         if confirmed {
@@ -283,9 +284,9 @@ impl HandlerCLI {
             if deleted > 0 {
                 println!(
                     "{}{}{}",
-                    "Deleted ".truecolor(255, 165, 0),
-                    deleted.to_string().white(),
-                    " done tasks.".truecolor(255, 165, 0)
+                    theme().accent.paint("Deleted "),
+                    theme().emphasis.paint(&deleted.to_string()),
+                    theme().accent.paint(" done tasks.")
                 );
             }
             Ok(())
@@ -301,12 +302,12 @@ impl HandlerCLI {
         if deleted > 0 {
             println!(
                 "{}{}{}",
-                "Deleted ".truecolor(255, 165, 0),
-                deleted.to_string().white(),
-                " done tasks.".truecolor(255, 165, 0)
+                theme().accent.paint("Deleted "),
+                theme().emphasis.paint(&deleted.to_string()),
+                theme().accent.paint(" done tasks.")
             );
         } else {
-            println!("{}", "No done tasks to delete.".yellow());
+            println!("{}", theme().warning.paint("No done tasks to delete."));
         }
         Ok(())
     }
@@ -324,9 +325,9 @@ impl HandlerCLI {
                 if confirmed {
                     confirmed_ids.push(id);
                 } else {
-                    print!("{} ", "Canceled deletion of task".magenta());
-                    print!("{}", id.to_string().white());
-                    println!("{}", ".".magenta());
+                    print!("{} ", theme().notice.paint("Canceled deletion of task"));
+                    print!("{}", theme().emphasis.paint(&id.to_string()));
+                    println!("{}", theme().notice.paint("."));
                 }
             } else {
                 not_found.push(id);
@@ -338,9 +339,9 @@ impl HandlerCLI {
             let _ = tm.delete_tasks(confirmed_ids)?;
             println!(
                 "{}{}{}",
-                "Deleted ".truecolor(255, 165, 0),
-                deleted_count.to_string().white(),
-                " task(s).".truecolor(255, 165, 0)
+                theme().accent.paint("Deleted "),
+                theme().emphasis.paint(&deleted_count.to_string()),
+                theme().accent.paint(" task(s).")
             );
         }
 
@@ -366,9 +367,9 @@ impl HandlerCLI {
             let _ = tm.delete_tasks(to_delete)?;
             println!(
                 "{}{}{}",
-                "Deleted ".truecolor(255, 165, 0),
-                deleted_count.to_string().white(),
-                " task(s).".truecolor(255, 165, 0)
+                theme().accent.paint("Deleted "),
+                theme().emphasis.paint(&deleted_count.to_string()),
+                theme().accent.paint(" task(s).")
             );
         }
 
@@ -393,7 +394,11 @@ impl HandlerCLI {
                 } else {
                     "undone"
                 };
-                let prefix = format!("{} {}: ", format!("Marked task as {status}:").green(), id);
+                let prefix = format!(
+                    "{} {}: ",
+                    theme().success.paint(&format!("Marked task as {status}:")),
+                    id
+                );
                 Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
             }
         }
@@ -434,7 +439,7 @@ impl HandlerCLI {
                     .and_then(|(_, d)| *d);
                 let new_date = task.date;
 
-                let prefix = format!("{} {}: ", "Edited task:".green(), id);
+                let prefix = format!("{} {}: ", theme().success.paint("Edited task:"), id);
                 Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
 
                 if date_change_requested {
@@ -442,10 +447,10 @@ impl HandlerCLI {
                         let old_date_str = Self::format_date_for_display(old_date);
                         println!(
                             " {} {} {} {} {}",
-                            "- date:".cyan(),
+                            theme().info.paint("- date:"),
                             "cleared".bold(),
                             "(".normal(),
-                            format!("was: {}", old_date_str).cyan(),
+                            theme().info.paint(&format!("was: {}", old_date_str)),
                             ")".normal()
                         );
                     } else if new_date != old_date {
@@ -454,26 +459,26 @@ impl HandlerCLI {
                         if old_date_str == "empty" {
                             println!(
                                 " {} {} {} {} {} {}",
-                                "- date:".cyan(),
+                                theme().info.paint("- date:"),
                                 new_date_str.bold(),
                                 "(".normal(),
-                                "was:".cyan(),
-                                old_date_str.white().bold(),
+                                theme().info.paint("was:"),
+                                theme().emphasis.paint(&old_date_str).bold(),
                                 ")".normal()
                             );
                         } else {
                             println!(
                                 " {} {} {} {} {}",
-                                "- date:".cyan(),
+                                theme().info.paint("- date:"),
                                 new_date_str.bold(),
                                 "(".normal(),
-                                format!("was: {}", old_date_str).cyan(),
+                                theme().info.paint(&format!("was: {}", old_date_str)),
                                 ")".normal()
                             );
                         }
                     } else {
                         let date_str = Self::format_date_for_display(new_date);
-                        println!(" {} {}", "- date:".cyan(), date_str.bold());
+                        println!(" {} {}", theme().info.paint("- date:"), date_str.bold());
                     }
                 }
             }
@@ -484,12 +489,12 @@ impl HandlerCLI {
                 let task = &tm.tasks()[idx];
                 let current_date = task.date;
 
-                let prefix = format!("{} ", "Task already has this content:".magenta());
+                let prefix = format!("{} ", theme().notice.paint("Task already has this content:"));
                 Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
 
                 if date_change_requested {
                     let date_str = Self::format_date_for_display(current_date);
-                    println!(" {} {}", "- date:".cyan(), date_str.bold());
+                    println!(" {} {}", theme().info.paint("- date:"), date_str.bold());
                 }
             }
         }
@@ -500,15 +505,15 @@ impl HandlerCLI {
 
     pub fn handle_list_tasks(tasks: &[Task], compact: bool) {
         if tasks.is_empty() {
-            println!("{}", "No tasks".yellow());
+            println!("{}", theme().warning.paint("No tasks"));
             return;
         }
 
         println!(
             "\n  #  {}    {}       {}",
-            "id".blue(),
-            "date".blue(),
-            "task".blue()
+            theme().list_header.paint("id"),
+            theme().list_header.paint("date"),
+            theme().list_header.paint("task")
         );
         println!("  ──────────────────────────────────────────────");
 
@@ -521,9 +526,9 @@ impl HandlerCLI {
 
         for task in tasks {
             let status = if task.done {
-                "✔".green()
+                theme().done_marker.paint("✔")
             } else if task.priority {
-                "p".truecolor(255, 165, 0).bold()
+                theme().priority_marker.paint("p").bold()
             } else {
                 "•".normal()
             };
@@ -553,7 +558,7 @@ impl HandlerCLI {
                 println!(
                     "  {} {:>2}  {:>9}  {}",
                     status,
-                    task.id.to_string().bold(),
+                    theme().task_id.paint(&task.id.to_string()).bold(),
                     date_colored,
                     first_line
                 );
@@ -590,7 +595,7 @@ impl HandlerCLI {
     #[cfg(feature = "interactive")]
     fn handle_skip_task_error(e: &anyhow::Error, id: u8) -> bool {
         if e.downcast_ref::<crate::error::AppError>() == Some(&crate::error::AppError::SkipTask) {
-            println!("{} {}", "Skipped task:".yellow(), id);
+            println!("{} {}", theme().warning.paint("Skipped task:"), id);
             true
         } else {
             false

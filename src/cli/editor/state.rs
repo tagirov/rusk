@@ -97,8 +97,23 @@ impl EditorState {
         self.lines.join("\n")
     }
 
+    /// Equivalent to `self.joined() != prefill`, but without allocating the
+    /// joined buffer: walks the lines against a cursor over the raw prefill.
     pub fn dirty_vs(&self, prefill: &str) -> bool {
-        self.joined() != prefill
+        let mut rest = prefill;
+        for (i, line) in self.lines.iter().enumerate() {
+            if i > 0 {
+                match rest.strip_prefix('\n') {
+                    Some(r) => rest = r,
+                    None => return true,
+                }
+            }
+            match rest.strip_prefix(line.as_str()) {
+                Some(r) => rest = r,
+                None => return true,
+            }
+        }
+        !rest.is_empty()
     }
 
     pub fn recompute_desired(&mut self, vw: usize) {
@@ -474,6 +489,24 @@ mod tests {
         let s = state_with(&["hello"], 0, 0);
         assert!(!s.dirty_vs("hello"));
         assert!(s.dirty_vs("world"));
+    }
+
+    #[test]
+    fn dirty_vs_trailing_newline_in_prefill_is_dirty() {
+        let s = state_with(&["a", "b"], 0, 0);
+        assert!(!s.dirty_vs("a\nb"));
+        assert!(s.dirty_vs("a\nb\n"));
+    }
+
+    #[test]
+    fn dirty_vs_compares_against_raw_prefill_with_cr() {
+        // split_multi_line_prefill normalizes \r\n to \n, so a state built
+        // from such a prefill differs from the raw string.
+        let lines = text_ops::split_multi_line_prefill("a\r\nb");
+        let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
+        let s = state_with(&refs, 0, 0);
+        assert!(s.dirty_vs("a\r\nb"));
+        assert!(!s.dirty_vs("a\nb"));
     }
 
     #[test]

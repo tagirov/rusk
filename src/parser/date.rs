@@ -38,16 +38,8 @@ pub fn validate_cli_date_edit_arg(s: &str) -> Result<()> {
     if is_cli_date_clear_value(t) {
         return Ok(());
     }
-    // A `None` base means `+` offsets count from today, matching the check above.
+    // A `None` base makes `+` offsets count from today.
     parse_cli_date_for_edit(t, None).map(|_| ())
-}
-
-pub fn parse_cli_date_optional_empty(s: &str) -> Result<Option<NaiveDate>> {
-    let trimmed = s.trim();
-    if trimmed.is_empty() || is_cli_date_clear_value(trimmed) {
-        return Ok(None);
-    }
-    parse_cli_date(trimmed).map(Some)
 }
 
 /// Absolute dates like `11-jan-25`, `1-Feb-2026` (day, English month, 2- or 4-digit year).
@@ -237,7 +229,7 @@ fn parse_and_apply_relative_cli_date(trimmed: &str, base: NaiveDate) -> Result<N
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_cli_date_for_edit, parse_cli_date_optional_empty, parse_cli_date_with_base};
+    use super::{parse_cli_date_for_edit, parse_cli_date_with_base};
     use chrono::{Local, NaiveDate};
 
     fn d(y: i32, m: u32, day: u32) -> NaiveDate {
@@ -325,24 +317,5 @@ mod tests {
         let base = d(2025, 1, 1);
         let err = parse_cli_date_with_base("invalid", base).unwrap_err();
         assert!(err.to_string().contains("Invalid date"));
-    }
-
-    #[test]
-    fn optional_empty_returns_none() {
-        assert_eq!(parse_cli_date_optional_empty("").unwrap(), None);
-        assert_eq!(parse_cli_date_optional_empty("  \t ").unwrap(), None);
-    }
-
-    #[test]
-    fn optional_nonempty_matches_parse_cli_date() {
-        let today = Local::now().date_naive();
-        assert_eq!(
-            parse_cli_date_optional_empty("5d").unwrap().unwrap(),
-            parse_cli_date_with_base("5d", today).unwrap()
-        );
-        let abs = parse_cli_date_optional_empty("01-06-2026")
-            .unwrap()
-            .unwrap();
-        assert_eq!(abs, NaiveDate::from_ymd_opt(2026, 6, 1).unwrap());
     }
 }

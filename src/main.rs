@@ -174,18 +174,14 @@ fn run() -> Result<()> {
                              Pass the task on the command line, e.g. `rusk add buy milk`.",
                         );
                     }
-                    if let Err(e) = HandlerCLI::handle_add_task_interactive(&mut tm, date) {
-                        exit_with_error(e);
-                    }
+                    HandlerCLI::handle_add_task_interactive(&mut tm, date)?;
                 }
                 #[cfg(not(feature = "interactive"))]
                 {
-                    if let Err(e) = HandlerCLI::handle_add_task(&mut tm, text, date) {
-                        exit_with_error(e);
-                    }
+                    HandlerCLI::handle_add_task(&mut tm, text, date)?;
                 }
-            } else if let Err(e) = HandlerCLI::handle_add_task(&mut tm, text, date) {
-                exit_with_error(e);
+            } else {
+                HandlerCLI::handle_add_task(&mut tm, text, date)?;
             }
         }
         Some(Command::Del { ids, done }) => {
@@ -256,14 +252,8 @@ fn run() -> Result<()> {
             HandlerCLI::handle_list_tasks(tm.tasks(), config::config().compact);
         }
         Some(Command::Restore) => {
-            let mut restore_tm = match TaskManager::new_for_restore() {
-                Ok(tm) => tm,
-                Err(e) => exit_with_error(e),
-            };
-
-            if let Err(e) = HandlerCLI::handle_restore(&mut restore_tm) {
-                exit_with_error(e);
-            }
+            let mut restore_tm = TaskManager::new_for_restore()?;
+            HandlerCLI::handle_restore(&mut restore_tm)?;
         }
         #[cfg(feature = "web")]
         Some(Command::Gen { output }) => {

@@ -14,7 +14,7 @@ use crossterm::{
     style::Print,
     terminal::{
         Clear, ClearType, DisableLineWrap, EnableLineWrap, EnterAlternateScreen,
-        LeaveAlternateScreen, disable_raw_mode, enable_raw_mode, size,
+        LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
     },
 };
 use std::io::{self, Write};
@@ -135,6 +135,19 @@ pub(super) fn show_help(stdout: &mut io::Stdout) -> Result<()> {
     /// Indent applied to every body row so sections visually group the pairs.
     const BODY_INDENT: usize = 2;
 
+    /// Shared overflow/scroll geometry: (max_body, visible_body, max_scroll).
+    fn help_scroll_geometry(term_rows: usize, body_len: usize) -> (usize, usize, usize) {
+        let max_body = term_rows.saturating_sub(CHROME);
+        let overflow = body_len > max_body;
+        let visible_body = if overflow { max_body } else { body_len };
+        let max_scroll = if overflow && visible_body > 0 {
+            body_len.saturating_sub(visible_body)
+        } else {
+            0
+        };
+        (max_body, visible_body, max_scroll)
+    }
+
     let body = HELP_ROWS;
 
     let key_col = body
@@ -162,18 +175,12 @@ pub(super) fn show_help(stdout: &mut io::Stdout) -> Result<()> {
     stdout.flush().ok();
 
     let paint = |stdout: &mut io::Stdout, body_scroll: &mut usize| -> Result<()> {
-        let (term_cols_u16, term_rows_u16) = size().unwrap_or((80, 24));
+        let (term_cols_u16, term_rows_u16) = super::view::term_size();
         let term_cols = term_cols_u16 as usize;
         let term_rows = term_rows_u16 as usize;
 
-        let max_body = term_rows.saturating_sub(CHROME);
+        let (max_body, visible_body, max_scroll) = help_scroll_geometry(term_rows, body.len());
         let overflow = body.len() > max_body;
-        let visible_body = if overflow { max_body } else { body.len() };
-        let max_scroll = if overflow && visible_body > 0 {
-            body.len().saturating_sub(visible_body)
-        } else {
-            0
-        };
         *body_scroll = (*body_scroll).min(max_scroll);
 
         let start_row = if overflow {
@@ -248,19 +255,9 @@ pub(super) fn show_help(stdout: &mut io::Stdout) -> Result<()> {
     // When content overflows, Up/Down/PageUp/PageDown/Home/End/scroll wheel move the view.
     // Drain queued follow-up events so they never reach the editor loop.
     loop {
-        let (_, term_rows_u16) = size().unwrap_or((80, 24));
+        let (_, term_rows_u16) = super::view::term_size();
         let term_rows = term_rows_u16 as usize;
-        let max_body = term_rows.saturating_sub(CHROME);
-        let visible_body = if body.len() > max_body {
-            max_body
-        } else {
-            body.len()
-        };
-        let max_scroll = if body.len() > max_body && visible_body > 0 {
-            body.len().saturating_sub(visible_body)
-        } else {
-            0
-        };
+        let (max_body, visible_body, max_scroll) = help_scroll_geometry(term_rows, body.len());
         let page_step = visible_body.max(1);
 
         match read()? {
@@ -272,33 +269,19 @@ pub(super) fn show_help(stdout: &mut io::Stdout) -> Result<()> {
                 code,
                 kind: KeyEventKind::Press,
                 ..
-            }) if body.len() > max_body => match code {
-                KeyCode::Up => {
-                    body_scroll = body_scroll.saturating_sub(1).min(max_scroll);
-                    paint(stdout, &mut body_scroll)?;
-                }
-                KeyCode::Down => {
-                    body_scroll = (body_scroll + 1).min(max_scroll);
-                    paint(stdout, &mut body_scroll)?;
-                }
-                KeyCode::PageUp => {
-                    body_scroll = body_scroll.saturating_sub(page_step).min(max_scroll);
-                    paint(stdout, &mut body_scroll)?;
-                }
-                KeyCode::PageDown => {
-                    body_scroll = (body_scroll + page_step).min(max_scroll);
-                    paint(stdout, &mut body_scroll)?;
-                }
-                KeyCode::Home => {
-                    body_scroll = 0;
-                    paint(stdout, &mut body_scroll)?;
-                }
-                KeyCode::End => {
-                    body_scroll = max_scroll;
-                    paint(stdout, &mut body_scroll)?;
-                }
-                _ => break,
-            },
+            }) if body.len() > max_body => {
+                let new_scroll = match code {
+                    KeyCode::Up => body_scroll.saturating_sub(1),
+                    KeyCode::Down => body_scroll + 1,
+                    KeyCode::PageUp => body_scroll.saturating_sub(page_step),
+                    KeyCode::PageDown => body_scroll + page_step,
+                    KeyCode::Home => 0,
+                    KeyCode::End => max_scroll,
+                    _ => break,
+                };
+                body_scroll = new_scroll.min(max_scroll);
+                paint(stdout, &mut body_scroll)?;
+            }
             Event::Key(KeyEvent {
                 kind: KeyEventKind::Press,
                 ..
@@ -308,17 +291,15 @@ pub(super) fn show_help(stdout: &mut io::Stdout) -> Result<()> {
                 ..
             }) => break,
             Event::Mouse(MouseEvent {
-                kind: MouseEventKind::ScrollUp,
+                kind: kind @ (MouseEventKind::ScrollUp | MouseEventKind::ScrollDown),
                 ..
             }) if body.len() > max_body => {
-                body_scroll = body_scroll.saturating_sub(3).min(max_scroll);
-                paint(stdout, &mut body_scroll)?;
-            }
-            Event::Mouse(MouseEvent {
-                kind: MouseEventKind::ScrollDown,
-                ..
-            }) if body.len() > max_body => {
-                body_scroll = (body_scroll + 3).min(max_scroll);
+                let new_scroll = if kind == MouseEventKind::ScrollUp {
+                    body_scroll.saturating_sub(3)
+                } else {
+                    body_scroll + 3
+                };
+                body_scroll = new_scroll.min(max_scroll);
                 paint(stdout, &mut body_scroll)?;
             }
             _ => {}
@@ -342,7 +323,7 @@ pub(super) fn confirm_discard(stdout: &mut io::Stdout, dialog_row: Option<u16>) 
     let _show_cursor = ShowCursorOnDrop;
     stdout.queue(Hide)?;
     stdout.flush().ok();
-    let (cols_u16, rows_u16) = size().unwrap_or((80, 24));
+    let (cols_u16, rows_u16) = super::view::term_size();
     let cols = cols_u16 as usize;
     let last = rows_u16.saturating_sub(1);
     let prompt = " Discard changes? [y/N] ";

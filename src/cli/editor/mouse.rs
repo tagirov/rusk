@@ -36,7 +36,7 @@ impl ClickTracker {
 /// Arguments for mapping a screen cell `(x, y)` to buffer `(row, byte_col)`.
 pub(super) struct ScreenToBuffer<'a> {
     pub lines: &'a [String],
-    pub visuals: &'a [(usize, String, usize)],
+    pub visuals: &'a [(usize, std::ops::Range<usize>, usize)],
     pub vw: usize,
     pub screen_x: u16,
     pub screen_y: u16,

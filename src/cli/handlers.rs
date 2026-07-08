@@ -21,8 +21,9 @@ impl HandlerCLI {
         Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
     }
 
-    /// Returns the draft text for `draft_key` when the user confirms restoring it;
-    /// otherwise deletes the draft file and returns `base_prefill` unchanged.
+    /// If a draft stored under `draft_key` exists and differs from `base_prefill`,
+    /// asks for confirmation: returns the draft text on "y", otherwise deletes the
+    /// draft file. In all other cases returns `base_prefill` unchanged.
     #[cfg(feature = "interactive")]
     fn prefill_with_draft(
         base_prefill: String,
@@ -42,6 +43,31 @@ impl HandlerCLI {
         Ok(base_prefill)
     }
 
+    /// Runs the multi-line editor with draft persistence wired up: resolves the
+    /// draft path, offers to restore an existing draft, and passes the draft
+    /// settings through `EditorExtras`.
+    #[cfg(feature = "interactive")]
+    fn run_editor_with_draft(
+        draft_key: String,
+        base_prefill: String,
+        confirm_prompt: &str,
+        relative_date_base: Option<chrono::NaiveDate>,
+        cursor_at_start: bool,
+        allow_skip: bool,
+    ) -> Result<String> {
+        let draft_path = Self::draft_path_for(&TaskManager::get_db_dir());
+        let prefill = Self::prefill_with_draft(base_prefill, &draft_path, &draft_key, confirm_prompt)?;
+
+        let extras = EditorExtras {
+            draft_path: Some(draft_path),
+            draft_key: Some(draft_key),
+            relative_date_base,
+            ..Default::default()
+        };
+
+        Self::run_multi_line_editor("    ", &prefill, cursor_at_start, None, allow_skip, extras)
+    }
+
     pub fn handle_add_task(
         tm: &mut TaskManager,
         text: Vec<String>,
@@ -56,10 +82,6 @@ impl HandlerCLI {
     /// Interactive TUI: no inline task text; optional `-d` pre-seeds the first line with that due date.
     #[cfg(feature = "interactive")]
     pub fn handle_add_task_interactive(tm: &mut TaskManager, date: Option<String>) -> Result<()> {
-        let draft_dir = TaskManager::get_db_dir();
-        let draft_path = Self::draft_path_for(&draft_dir);
-        let draft_key = "new-task".to_string();
-
         let base_prefill = if let Some(ref d) = date {
             let seed = parse_cli_date_for_edit(d, None)?;
             format!("{} ", seed.format("%d-%m-%Y"))
@@ -72,23 +94,8 @@ impl HandlerCLI {
             theme().accent.paint("Restore unsaved draft for new task "),
             theme().accent.paint("? [y/N]: ")
         );
-        let prefill_owned = Self::prefill_with_draft(base_prefill, &draft_path, &draft_key, &prompt)?;
-
-        let extras = EditorExtras {
-            draft_path: Some(draft_path),
-            draft_key: Some(draft_key),
-            relative_date_base: None,
-            ..Default::default()
-        };
-
-        let edited = Self::run_multi_line_editor(
-            "    ",
-            &prefill_owned,
-            false,
-            None,
-            false,
-            extras,
-        )?;
+        let edited =
+            Self::run_editor_with_draft("new-task".to_string(), base_prefill, &prompt, None, false, false)?;
 
         if edited.trim().is_empty() {
             return Ok(());
@@ -123,10 +130,6 @@ impl HandlerCLI {
         task_date: Option<chrono::NaiveDate>,
         allow_skip: bool,
     ) -> Result<Option<(Option<chrono::NaiveDate>, String)>> {
-        let draft_dir = crate::TaskManager::get_db_dir();
-        let draft_path = Self::draft_path_for(&draft_dir);
-        let draft_key = format!("task-{}", task_id);
-
         // Prefill embeds the task date as an editable prefix on the first line.
         let base_prefill = if let Some(date) = task_date {
             format!("{} {}", date.format("%d-%m-%Y"), current)
@@ -139,17 +142,14 @@ impl HandlerCLI {
             theme().emphasis.paint(&task_id.to_string()),
             theme().accent.paint("? [y/N]:")
         );
-        let prefill_owned = Self::prefill_with_draft(base_prefill, &draft_path, &draft_key, &prompt)?;
-
-        let extras = EditorExtras {
-            draft_path: Some(draft_path),
-            draft_key: Some(draft_key),
-            relative_date_base: task_date,
-            ..Default::default()
-        };
-
-        let edited =
-            Self::run_multi_line_editor("    ", &prefill_owned, true, None, allow_skip, extras)?;
+        let edited = Self::run_editor_with_draft(
+            format!("task-{}", task_id),
+            base_prefill,
+            &prompt,
+            task_date,
+            true,
+            allow_skip,
+        )?;
         if edited.trim().is_empty() {
             return Ok(None);
         }
@@ -202,12 +202,9 @@ impl HandlerCLI {
     }
 
     #[cfg(feature = "interactive")]
-    fn handle_edit_tasks_interactive_internal(tm: &mut TaskManager, ids: Vec<u8>) -> Result<()> {
+    pub fn handle_edit_tasks_interactive(tm: &mut TaskManager, ids: Vec<u8>) -> Result<()> {
         let mut any_changed = false;
-        let mut edited: Vec<u8> = Vec::new();
-        let mut unchanged: Vec<u8> = Vec::new();
         let mut not_found: Vec<u8> = Vec::new();
-        let mut edited_info: Vec<(u8, String)> = Vec::new();
 
         let total_ids = ids.len();
         for (task_idx, id) in ids.iter().enumerate() {
@@ -219,24 +216,16 @@ impl HandlerCLI {
                 let current_date = tm.tasks()[idx].date;
 
                 match Self::interactive_edit_text(&current_text, *id, current_date, allow_skip) {
-                    Ok(Some((new_date, new_text))) => {
-                        let text_changed = new_text != current_text;
-                        let date_changed = new_date != current_date;
-                        if text_changed || date_changed {
-                            let task = &mut tm.tasks_mut()[idx];
-                            task.text = new_text.clone();
-                            task.date = new_date;
-                            edited.push(*id);
-                            edited_info.push((*id, new_text.clone()));
-                            any_changed = true;
-                            println!("{} {}", theme().success.paint("Edited task:"), id);
-                        } else {
-                            unchanged.push(*id);
-                            println!("{} {}", theme().notice.paint("Task unchanged:"), id);
-                        }
+                    Ok(Some((new_date, new_text)))
+                        if new_text != current_text || new_date != current_date =>
+                    {
+                        let task = &mut tm.tasks_mut()[idx];
+                        task.text = new_text;
+                        task.date = new_date;
+                        any_changed = true;
+                        println!("{} {}", theme().success.paint("Edited task:"), id);
                     }
-                    Ok(None) => {
-                        unchanged.push(*id);
+                    Ok(_) => {
                         println!("{} {}", theme().notice.paint("Task unchanged:"), id);
                     }
                     Err(e) => {
@@ -259,118 +248,76 @@ impl HandlerCLI {
         Ok(())
     }
 
-    #[cfg(feature = "interactive")]
-    pub fn handle_edit_tasks_interactive(tm: &mut TaskManager, ids: Vec<u8>) -> Result<()> {
-        Self::handle_edit_tasks_interactive_internal(tm, ids)
-    }
-
-    #[cfg(feature = "interactive")]
-    fn delete_all_done(tm: &mut TaskManager) -> Result<()> {
-        let done_count = tm.tasks().iter().filter(|t| t.done).count();
-        if done_count == 0 {
-            println!("{}", theme().warning.paint("No done tasks to delete."));
-            return Ok(());
-        }
-
-        let confirmed = Self::read_confirmation(&format!(
+    fn print_deleted(count: usize, suffix: &str) {
+        println!(
             "{}{}{}",
-            theme().accent.paint("Delete all done tasks ("),
-            theme().emphasis.paint(&done_count.to_string()),
-            theme().accent.paint(")? [y/N]: ")
-        ))?;
-
-        if confirmed {
-            let deleted = tm.delete_all_done()?;
-            if deleted > 0 {
-                println!(
-                    "{}{}{}",
-                    theme().accent.paint("Deleted "),
-                    theme().emphasis.paint(&deleted.to_string()),
-                    theme().accent.paint(" done tasks.")
-                );
-            }
-            Ok(())
-        } else {
-            println!("Canceled.");
-            Ok(())
-        }
+            theme().accent.paint("Deleted "),
+            theme().emphasis.paint(&count.to_string()),
+            theme().accent.paint(suffix)
+        );
     }
 
-    #[cfg(not(feature = "interactive"))]
     fn delete_all_done(tm: &mut TaskManager) -> Result<()> {
+        #[cfg(feature = "interactive")]
+        {
+            let done_count = tm.tasks().iter().filter(|t| t.done).count();
+            if done_count == 0 {
+                println!("{}", theme().warning.paint("No done tasks to delete."));
+                return Ok(());
+            }
+
+            let confirmed = Self::read_confirmation(&format!(
+                "{}{}{}",
+                theme().accent.paint("Delete all done tasks ("),
+                theme().emphasis.paint(&done_count.to_string()),
+                theme().accent.paint(")? [y/N]: ")
+            ))?;
+            if !confirmed {
+                println!("Canceled.");
+                return Ok(());
+            }
+        }
+
         let deleted = tm.delete_all_done()?;
         if deleted > 0 {
-            println!(
-                "{}{}{}",
-                theme().accent.paint("Deleted "),
-                theme().emphasis.paint(&deleted.to_string()),
-                theme().accent.paint(" done tasks.")
-            );
-        } else {
+            Self::print_deleted(deleted, " done tasks.");
+        }
+        #[cfg(not(feature = "interactive"))]
+        if deleted == 0 {
             println!("{}", theme().warning.paint("No done tasks to delete."));
         }
         Ok(())
     }
 
-    #[cfg(feature = "interactive")]
     fn delete_by_ids(tm: &mut TaskManager, ids: Vec<u8>) -> Result<()> {
-        let mut confirmed_ids = Vec::new();
-        let mut not_found: Vec<u8> = Vec::new();
-
-        for &id in &ids {
-            if let Some(idx) = tm.find_task_by_id(id) {
-                let task = &tm.tasks()[idx];
-                let prompt = Self::print_delete_confirmation_dialog(&task.text, task.id);
-                let confirmed = Self::read_confirmation(&prompt)?;
-                if confirmed {
-                    confirmed_ids.push(id);
-                } else {
-                    print!("{} ", theme().notice.paint("Canceled deletion of task"));
-                    print!("{}", theme().emphasis.paint(&id.to_string()));
-                    println!("{}", theme().notice.paint("."));
-                }
-            } else {
-                not_found.push(id);
-            }
-        }
-
-        if !confirmed_ids.is_empty() {
-            let deleted_count = confirmed_ids.len();
-            let _ = tm.delete_tasks(confirmed_ids)?;
-            println!(
-                "{}{}{}",
-                theme().accent.paint("Deleted "),
-                theme().emphasis.paint(&deleted_count.to_string()),
-                theme().accent.paint(" task(s).")
-            );
-        }
-
-        Self::print_not_found_ids(&not_found);
-        Ok(())
-    }
-
-    #[cfg(not(feature = "interactive"))]
-    fn delete_by_ids(tm: &mut TaskManager, ids: Vec<u8>) -> Result<()> {
-        let mut not_found: Vec<u8> = Vec::new();
         let mut to_delete = Vec::new();
+        let mut not_found: Vec<u8> = Vec::new();
 
         for &id in &ids {
-            if tm.find_task_by_id(id).is_some() {
-                to_delete.push(id);
-            } else {
-                not_found.push(id);
+            match tm.find_task_by_id(id) {
+                #[cfg(feature = "interactive")]
+                Some(idx) => {
+                    let task = &tm.tasks()[idx];
+                    let prompt = Self::print_delete_confirmation_dialog(&task.text, task.id);
+                    let confirmed = Self::read_confirmation(&prompt)?;
+                    if confirmed {
+                        to_delete.push(id);
+                    } else {
+                        print!("{} ", theme().notice.paint("Canceled deletion of task"));
+                        print!("{}", theme().emphasis.paint(&id.to_string()));
+                        println!("{}", theme().notice.paint("."));
+                    }
+                }
+                #[cfg(not(feature = "interactive"))]
+                Some(_) => to_delete.push(id),
+                None => not_found.push(id),
             }
         }
 
         if !to_delete.is_empty() {
             let deleted_count = to_delete.len();
             let _ = tm.delete_tasks(to_delete)?;
-            println!(
-                "{}{}{}",
-                theme().accent.paint("Deleted "),
-                theme().emphasis.paint(&deleted_count.to_string()),
-                theme().accent.paint(" task(s).")
-            );
+            Self::print_deleted(deleted_count, " task(s).");
         }
 
         Self::print_not_found_ids(&not_found);
@@ -405,6 +352,32 @@ impl HandlerCLI {
 
         Self::print_not_found_ids(&not_found);
         Ok(())
+    }
+
+    /// Prints a " - date: {new}" report line, appending "(was: ...)" when `old`
+    /// is given. The old value "empty" gets emphasis styling only when
+    /// `emphasize_empty` is set (the changed-from-empty branch).
+    fn print_date_line(new_display: ColoredString, old: Option<&str>, emphasize_empty: bool) {
+        match old {
+            None => println!(" {} {}", theme().info.paint("- date:"), new_display),
+            Some(old) if emphasize_empty && old == "empty" => println!(
+                " {} {} {} {} {} {}",
+                theme().info.paint("- date:"),
+                new_display,
+                "(".normal(),
+                theme().info.paint("was:"),
+                theme().emphasis.paint(old).bold(),
+                ")".normal()
+            ),
+            Some(old) => println!(
+                " {} {} {} {} {}",
+                theme().info.paint("- date:"),
+                new_display,
+                "(".normal(),
+                theme().info.paint(&format!("was: {}", old)),
+                ")".normal()
+            ),
+        }
     }
 
     pub fn handle_edit_tasks(
@@ -445,40 +418,14 @@ impl HandlerCLI {
                 if date_change_requested {
                     if is_clearing_date {
                         let old_date_str = Self::format_date_for_display(old_date);
-                        println!(
-                            " {} {} {} {} {}",
-                            theme().info.paint("- date:"),
-                            "cleared".bold(),
-                            "(".normal(),
-                            theme().info.paint(&format!("was: {}", old_date_str)),
-                            ")".normal()
-                        );
+                        Self::print_date_line("cleared".bold(), Some(&old_date_str), false);
                     } else if new_date != old_date {
                         let old_date_str = Self::format_date_for_display(old_date);
                         let new_date_str = Self::format_date_for_display(new_date);
-                        if old_date_str == "empty" {
-                            println!(
-                                " {} {} {} {} {} {}",
-                                theme().info.paint("- date:"),
-                                new_date_str.bold(),
-                                "(".normal(),
-                                theme().info.paint("was:"),
-                                theme().emphasis.paint(&old_date_str).bold(),
-                                ")".normal()
-                            );
-                        } else {
-                            println!(
-                                " {} {} {} {} {}",
-                                theme().info.paint("- date:"),
-                                new_date_str.bold(),
-                                "(".normal(),
-                                theme().info.paint(&format!("was: {}", old_date_str)),
-                                ")".normal()
-                            );
-                        }
+                        Self::print_date_line(new_date_str.bold(), Some(&old_date_str), true);
                     } else {
                         let date_str = Self::format_date_for_display(new_date);
-                        println!(" {} {}", theme().info.paint("- date:"), date_str.bold());
+                        Self::print_date_line(date_str.bold(), None, false);
                     }
                 }
             }
@@ -494,7 +441,7 @@ impl HandlerCLI {
 
                 if date_change_requested {
                     let date_str = Self::format_date_for_display(current_date);
-                    println!(" {} {}", theme().info.paint("- date:"), date_str.bold());
+                    Self::print_date_line(date_str.bold(), None, false);
                 }
             }
         }

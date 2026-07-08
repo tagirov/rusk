@@ -23,20 +23,30 @@ pub(super) enum Action {
 }
 
 /// Slice of the outer editor state that the input dispatch needs to read.
+/// `cols`/`rows` hold the terminal size read once per event, so all layout
+/// math within one event sees the same geometry.
 pub(super) struct EditorContext<'a> {
     pub prompt_width: usize,
     pub editor_row: u16,
+    pub cols: u16,
+    pub rows: u16,
     pub prefill_lines: &'a [String],
 }
 
-/// Shared prologue of every movement arm: when shift is held, anchor the
-/// selection (if not yet anchored) and mark it as consumed so the epilogue
-/// keeps it alive.
-fn begin_selectable_move(state: &mut EditorState, shift: bool, selection_consumed: &mut bool) {
+/// Shared frame of every movement arm: when shift is held, anchor the
+/// selection (if not yet anchored) before moving. The selection survives
+/// because the epilogue only clears it on non-shift moves.
+fn selectable_move(
+    state: &mut EditorState,
+    history: &mut History,
+    shift: bool,
+    mv: impl FnOnce(&mut EditorState),
+) {
     if shift {
         state.start_selection_if_needed();
-        *selection_consumed = true;
     }
+    mv(state);
+    history.break_run();
 }
 
 pub(super) fn handle_key(
@@ -55,10 +65,10 @@ pub(super) fn handle_key(
     let shift = modifiers.contains(KeyModifiers::SHIFT);
     let ctrl = modifiers.contains(KeyModifiers::CONTROL);
     let alt = modifiers.contains(KeyModifiers::ALT);
-    let vw = view::visible_width(ctx.prompt_width);
+    let vw = view::editor_text_layout(ctx.cols as usize, ctx.prompt_width).0;
 
-    // Used by movement arms to preserve the selection anchor when shift is
-    // held. The outer loop clears the anchor on non-shift moves.
+    // Set by arms that create a selection without shift (Ctrl+A) so the
+    // epilogue below does not immediately clear it.
     let mut selection_consumed = false;
 
     match (code, ctrl, alt) {
@@ -129,92 +139,38 @@ pub(super) fn handle_key(
         }
 
         // ── Word movement ───────────────────────────────────────────────────
-        (KeyCode::Left, true, _) => {
-            begin_selectable_move(state, shift, &mut selection_consumed);
-            state.word_left(vw);
-            history.break_run();
-        }
-        (KeyCode::Right, true, _) => {
-            begin_selectable_move(state, shift, &mut selection_consumed);
-            state.word_right(vw);
-            history.break_run();
-        }
+        (KeyCode::Left, true, _) => selectable_move(state, history, shift, |s| s.word_left(vw)),
+        (KeyCode::Right, true, _) => selectable_move(state, history, shift, |s| s.word_right(vw)),
 
         // ── Character movement ──────────────────────────────────────────────
-        (KeyCode::Left, _, _) => {
-            begin_selectable_move(state, shift, &mut selection_consumed);
-            state.move_left(vw);
-            history.break_run();
-        }
-        (KeyCode::Right, _, _) => {
-            begin_selectable_move(state, shift, &mut selection_consumed);
-            state.move_right(vw);
-            history.break_run();
-        }
+        (KeyCode::Left, _, _) => selectable_move(state, history, shift, |s| s.move_left(vw)),
+        (KeyCode::Right, _, _) => selectable_move(state, history, shift, |s| s.move_right(vw)),
 
         // ── Vertical movement ───────────────────────────────────────────────
-        (KeyCode::Up, true, _) => {
-            begin_selectable_move(state, shift, &mut selection_consumed);
-            state.soft_up_n(5, vw);
-            history.break_run();
-        }
+        (KeyCode::Up, true, _) => selectable_move(state, history, shift, |s| s.soft_up_n(5, vw)),
         (KeyCode::Down, true, _) => {
-            begin_selectable_move(state, shift, &mut selection_consumed);
-            state.soft_down_n(5, vw);
-            history.break_run();
+            selectable_move(state, history, shift, |s| s.soft_down_n(5, vw));
         }
-        (KeyCode::Up, _, _) => {
-            begin_selectable_move(state, shift, &mut selection_consumed);
-            state.soft_up(vw);
-            history.break_run();
-        }
-        (KeyCode::Down, _, _) => {
-            begin_selectable_move(state, shift, &mut selection_consumed);
-            state.soft_down(vw);
-            history.break_run();
-        }
+        (KeyCode::Up, _, _) => selectable_move(state, history, shift, |s| s.soft_up(vw)),
+        (KeyCode::Down, _, _) => selectable_move(state, history, shift, |s| s.soft_down(vw)),
 
         // ── Page / buffer jumps ─────────────────────────────────────────────
-        (KeyCode::PageUp, true, _) => {
-            begin_selectable_move(state, shift, &mut selection_consumed);
-            state.goto_buffer_start();
-            history.break_run();
+        (KeyCode::PageUp | KeyCode::Home, true, _) => {
+            selectable_move(state, history, shift, |s| s.goto_buffer_start());
         }
-        (KeyCode::PageDown, true, _) => {
-            begin_selectable_move(state, shift, &mut selection_consumed);
-            state.goto_buffer_end(vw);
-            history.break_run();
+        (KeyCode::PageDown | KeyCode::End, true, _) => {
+            selectable_move(state, history, shift, |s| s.goto_buffer_end(vw));
         }
         (KeyCode::PageUp, _, _) => {
-            begin_selectable_move(state, shift, &mut selection_consumed);
-            state.soft_up_n(view::page_rows(), vw);
-            history.break_run();
+            let page = view::vertical_layout(ctx.cols, ctx.rows).2;
+            selectable_move(state, history, shift, |s| s.soft_up_n(page, vw));
         }
         (KeyCode::PageDown, _, _) => {
-            begin_selectable_move(state, shift, &mut selection_consumed);
-            state.soft_down_n(view::page_rows(), vw);
-            history.break_run();
+            let page = view::vertical_layout(ctx.cols, ctx.rows).2;
+            selectable_move(state, history, shift, |s| s.soft_down_n(page, vw));
         }
-        (KeyCode::Home, true, _) => {
-            begin_selectable_move(state, shift, &mut selection_consumed);
-            state.goto_buffer_start();
-            history.break_run();
-        }
-        (KeyCode::End, true, _) => {
-            begin_selectable_move(state, shift, &mut selection_consumed);
-            state.goto_buffer_end(vw);
-            history.break_run();
-        }
-        (KeyCode::Home, _, _) => {
-            begin_selectable_move(state, shift, &mut selection_consumed);
-            state.smart_home(vw);
-            history.break_run();
-        }
-        (KeyCode::End, _, _) => {
-            begin_selectable_move(state, shift, &mut selection_consumed);
-            state.goto_line_end(vw);
-            history.break_run();
-        }
+        (KeyCode::Home, _, _) => selectable_move(state, history, shift, |s| s.smart_home(vw)),
+        (KeyCode::End, _, _) => selectable_move(state, history, shift, |s| s.goto_line_end(vw)),
 
         // ── Delete-word / line-kill ─────────────────────────────────────────
         // Ctrl+H is the legacy BS byte that many terminals send for Ctrl+Backspace.
@@ -275,7 +231,7 @@ pub(super) fn handle_key(
     Ok(Action::Continue)
 }
 
-/// Map a mouse click at screen `(column, mrow)` to buffer `(row, byte_col)`
+/// Map a mouse event at screen `(column, mrow)` to buffer `(row, byte_col)`
 /// using the same layout as the current render.
 fn screen_to_buffer_pos(
     state: &EditorState,
@@ -315,8 +271,7 @@ pub(super) fn handle_mouse(
         modifiers,
     } = ev;
     let shift = modifiers.contains(KeyModifiers::SHIFT);
-    let vw = view::visible_width(ctx.prompt_width);
-    let content_left = view::content_left(ctx.prompt_width);
+    let (vw, content_left) = view::editor_text_layout(ctx.cols as usize, ctx.prompt_width);
 
     match kind {
         MouseEventKind::Down(MouseButton::Left) => {
@@ -370,23 +325,18 @@ pub(super) fn handle_mouse(
         {
             state.anchor = None;
         }
-        MouseEventKind::ScrollUp => {
-            let (vwm, av, vlen) = view::layout_metrics_for_buffer(&state.lines, ctx.prompt_width);
-            if vlen <= av {
-                return Ok(Action::Continue);
+        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+            let (vwm, av, vlen) =
+                view::layout_metrics_for_buffer(&state.lines, ctx.prompt_width, ctx.cols, ctx.rows);
+            if vlen > av {
+                if matches!(kind, MouseEventKind::ScrollUp) {
+                    state.soft_up_n(3, vwm);
+                } else {
+                    state.soft_down_n(3, vwm);
+                }
+                state.anchor = None;
+                history.break_run();
             }
-            state.soft_up_n(3, vwm);
-            state.anchor = None;
-            history.break_run();
-        }
-        MouseEventKind::ScrollDown => {
-            let (vwm, av, vlen) = view::layout_metrics_for_buffer(&state.lines, ctx.prompt_width);
-            if vlen <= av {
-                return Ok(Action::Continue);
-            }
-            state.soft_down_n(3, vwm);
-            state.anchor = None;
-            history.break_run();
         }
         _ => {}
     }
@@ -399,7 +349,7 @@ pub(super) fn handle_paste(
     history: &mut History,
     ctx: &EditorContext<'_>,
 ) -> Result<Action> {
-    let vw = view::visible_width(ctx.prompt_width);
+    let vw = view::editor_text_layout(ctx.cols as usize, ctx.prompt_width).0;
     history.record(state.snapshot(), OpKind::Other);
     state.insert_str(&pasted, vw);
     Ok(Action::Continue)

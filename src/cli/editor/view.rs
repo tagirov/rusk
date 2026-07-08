@@ -2,7 +2,6 @@
 //! and date-header coloring, footer with scroll indicators and dirty marker.
 
 use anyhow::Result;
-use chrono::NaiveDate;
 use colored::*;
 use crossterm::{
     QueueableCommand,
@@ -14,6 +13,12 @@ use std::io::{self, Write};
 
 use super::text_ops;
 use crate::config::theme;
+
+/// Terminal size with a single (80, 24) fallback shared by every caller, so
+/// layout helpers and [`render`] can never diverge on fallback geometry.
+pub(super) fn term_size() -> (u16, u16) {
+    size().unwrap_or((80, 24))
+}
 
 pub(super) const ML_FOOTER: &str = "^S save  ·  ^G help  ·  Esc cancel";
 /// Lower the footer vs the prior 5-row band (wide: less padding under footer; compact: more gap above).
@@ -44,7 +49,7 @@ const ML_VPAD_TEXT_TO_FOOTER_WIDE: usize = 1;
 /// reserved in the row budget via [`ML_VPAD_TEXT_TO_FOOTER_WIDE`]). Otherwise a compact layout
 /// with at least one empty row at the top and one above the footer when the height allows; very
 /// short terminals use best-effort.
-fn vertical_layout(term_cols: u16, term_rows: u16) -> (u16, usize, usize) {
+pub(super) fn vertical_layout(term_cols: u16, term_rows: u16) -> (u16, usize, usize) {
     let t = term_rows as usize;
     if term_cols < MIN_TERM_COLS_FOR_MARGINS {
         return compact_vertical_layout(t);
@@ -71,12 +76,6 @@ fn compact_vertical_layout(t: usize) -> (u16, usize, usize) {
     let gap = ML_MIN_VPAD_TEXT_TO_FOOTER + ML_FOOTER_SHIFT_DOWN;
     let av = t.saturating_sub(ML_MIN_VPAD_TOP as usize + gap + 1);
     (ML_MIN_VPAD_TOP, gap, av.max(1))
-}
-
-/// Top row of the text area, matching the next [`render`].
-pub(super) fn current_editor_top() -> u16 {
-    let (c, r) = size().unwrap_or((80, 24));
-    vertical_layout(c, r).0
 }
 
 fn compute_footer_row(
@@ -107,8 +106,13 @@ fn compute_footer_row(
 }
 
 /// Row of the help footer, matching the current [`render`] layout.
-pub(super) fn footer_row_for_state(lines: &[String], view_top: usize, prompt_width: usize) -> u16 {
-    let (term_cols_u16, term_rows_u16) = size().unwrap_or((0, 0));
+pub(super) fn footer_row_for_state(
+    lines: &[String],
+    view_top: usize,
+    prompt_width: usize,
+    term_size: (u16, u16),
+) -> u16 {
+    let (term_cols_u16, term_rows_u16) = term_size;
     let term_rows = term_rows_u16 as usize;
     let term_cols = term_cols_u16 as usize;
     let (editor_row, footer_gap, available_text) = vertical_layout(term_cols_u16, term_rows_u16);
@@ -140,7 +144,7 @@ pub(super) fn discard_dialog_row(footer_row: u16, term_rows: u16) -> Option<u16>
 }
 
 /// Soft-wrap width and horizontal offset to center the full line block (prompt + text) in the terminal.
-fn editor_text_layout(term_cols: usize, prompt_width: usize) -> (usize, usize) {
+pub(super) fn editor_text_layout(term_cols: usize, prompt_width: usize) -> (usize, usize) {
     // Center the text column (not the prompt+text block) so the blank gap on the left of
     // the text equals the gap on the right. The prompt sits inside the left margin, so the
     // reservation on each side must be at least `prompt_width` (plus `ML_MIN_HPAD`).
@@ -154,22 +158,31 @@ fn editor_text_layout(term_cols: usize, prompt_width: usize) -> (usize, usize) {
 }
 
 /// Split buffer lines into soft-wrapped visual rows. Each tuple is
-/// `(buffer_idx, chunk_content, start_char_offset_in_buffer_line)`.
-pub(super) fn compute_visuals(lines: &[String], vw: usize) -> Vec<(usize, String, usize)> {
-    let mut out: Vec<(usize, String, usize)> = Vec::new();
+/// `(buffer_idx, byte_range_in_buffer_line, start_char_offset_in_buffer_line)`.
+/// `vw` must be at least 1 (guaranteed by `editor_text_layout`).
+pub(super) fn compute_visuals(
+    lines: &[String],
+    vw: usize,
+) -> Vec<(usize, std::ops::Range<usize>, usize)> {
+    let mut out: Vec<(usize, std::ops::Range<usize>, usize)> = Vec::new();
     for (buf_idx, line) in lines.iter().enumerate() {
-        let chars: Vec<char> = line.chars().collect();
-        if chars.is_empty() {
-            out.push((buf_idx, String::new(), 0));
+        if line.is_empty() {
+            out.push((buf_idx, 0..0, 0));
             continue;
         }
-        let mut offset = 0usize;
-        while offset < chars.len() {
-            let end = (offset + vw).min(chars.len());
-            let chunk: String = chars[offset..end].iter().collect();
-            out.push((buf_idx, chunk, offset));
-            offset = end;
+        let mut chunk_start_byte = 0usize;
+        let mut chunk_start_char = 0usize;
+        let mut chars_in_chunk = 0usize;
+        for (byte_idx, _) in line.char_indices() {
+            if chars_in_chunk == vw {
+                out.push((buf_idx, chunk_start_byte..byte_idx, chunk_start_char));
+                chunk_start_char += chars_in_chunk;
+                chunk_start_byte = byte_idx;
+                chars_in_chunk = 0;
+            }
+            chars_in_chunk += 1;
         }
+        out.push((buf_idx, chunk_start_byte..line.len(), chunk_start_char));
     }
     out
 }
@@ -185,10 +198,10 @@ fn print_visual_chunk(
     content: &str,
     sel: Option<((usize, usize), (usize, usize))>,
     full_text_valid: Option<bool>,
-    relative_date_base: Option<NaiveDate>,
+    date_len: usize,
+    date_past: bool,
 ) -> Result<()> {
-    let chunk_chars: Vec<char> = content.chars().collect();
-    let chunk_len = chunk_chars.len();
+    let chunk_len = content.chars().count();
     let chunk_end = start_char + chunk_len;
 
     let sel_line_range: Option<(usize, usize)> = sel.and_then(|(s, e)| {
@@ -223,12 +236,11 @@ fn print_visual_chunk(
     });
 
     let date_end_in_chunk: usize = if buf_idx == 0 {
-        let date_end_in_line = text_ops::leading_date_char_len(&lines[0], relative_date_base);
-        date_end_in_line.saturating_sub(start_char).min(chunk_len)
+        date_len.saturating_sub(start_char).min(chunk_len)
     } else {
         0
     };
-    let date_past = buf_idx == 0 && text_ops::leading_date_is_past(&lines[0], relative_date_base);
+    let date_past = buf_idx == 0 && date_past;
 
     let emit = |stdout: &mut io::Stdout, text: &str, selected: bool, is_date: bool| -> Result<()> {
         if text.is_empty() {
@@ -269,118 +281,48 @@ fn print_visual_chunk(
     stops.sort_unstable();
     stops.dedup();
 
-    for w in stops.windows(2) {
-        let (a, b) = (w[0], w[1]);
+    // Map sorted char stops to byte offsets in a single pass over the chunk.
+    let mut byte_stops: Vec<usize> = vec![content.len(); stops.len()];
+    let mut si = 0usize;
+    for (ci, (bi, _)) in content.char_indices().enumerate() {
+        if si >= stops.len() {
+            break;
+        }
+        if stops[si] == ci {
+            byte_stops[si] = bi;
+            si += 1;
+        }
+    }
+
+    for i in 1..stops.len() {
+        let (a, b) = (stops[i - 1], stops[i]);
         if a == b {
             continue;
         }
-        let text: String = chunk_chars[a..b].iter().collect();
+        let text = &content[byte_stops[i - 1]..byte_stops[i]];
         let selected = match sel_in_chunk {
             Some((ss, se)) => a >= ss && b <= se,
             None => false,
         };
         let is_date = date_end_in_chunk > 0 && b <= date_end_in_chunk;
-        emit(stdout, &text, selected, is_date)?;
+        emit(stdout, text, selected, is_date)?;
     }
     Ok(())
 }
 
-pub(super) struct RenderInput<'a> {
-    pub prompt: &'a str,
-    pub prompt_width: usize,
-    pub first_line_colored: Option<&'a str>,
-    pub lines: &'a [String],
-    pub cursor_row: usize,
-    pub cursor_col: usize,
-    pub view_top: &'a mut usize,
-    pub validate: Option<&'a fn(&str) -> bool>,
-    pub selection: Option<((usize, usize), (usize, usize))>,
-    pub dirty: bool,
-    pub relative_date_base: Option<chrono::NaiveDate>,
-}
-
-pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> {
-    let (term_cols_u16, term_rows_u16) = size().unwrap_or((0, 0));
-    let term_cols = term_cols_u16 as usize;
-    let (editor_row, footer_gap, available_text) = vertical_layout(term_cols_u16, term_rows_u16);
-    let (visible_width, content_left) = editor_text_layout(term_cols, r.prompt_width);
-    let content_left_u16 = content_left.min(u16::MAX as usize) as u16;
-
-    let visuals = compute_visuals(r.lines, visible_width);
-
-    let cursor_char_in_line =
-        text_ops::byte_idx_to_char_count(&r.lines[r.cursor_row], r.cursor_col);
-    let mut visual_start_of_cursor_line: usize = 0;
-    for (vi, (bi, _, start_char)) in visuals.iter().enumerate() {
-        if *bi == r.cursor_row && *start_char == 0 {
-            visual_start_of_cursor_line = vi;
-            break;
-        }
-    }
-    let cursor_vis_row = visual_start_of_cursor_line + (cursor_char_in_line / visible_width);
-    let cursor_vis_col = cursor_char_in_line % visible_width;
-
-    if cursor_vis_row < *r.view_top {
-        *r.view_top = cursor_vis_row;
-    }
-    if cursor_vis_row >= r.view_top.saturating_add(available_text) {
-        *r.view_top = cursor_vis_row + 1 - available_text;
-    }
-
-    let full_text_valid = r.validate.map(|v| {
-        let full = r.lines.join("\n");
-        full.trim().is_empty() || v(full.as_str())
-    });
-
-    // Clear from the top; text starts at `editor_row` (vertically centered when width allows).
-    stdout.queue(MoveTo(0, 0))?;
-    stdout.queue(Clear(ClearType::FromCursorDown))?;
-
-    let sel_range = r.selection.map(|(a, b)| {
-        if text_ops::pos_cmp(a, b) != std::cmp::Ordering::Greater {
-            (a, b)
-        } else {
-            (b, a)
-        }
-    });
-
-    let visible_count = available_text.min(visuals.len().saturating_sub(*r.view_top));
-    let pad: String = " ".repeat(r.prompt_width);
-    for v_i in 0..visible_count {
-        let (buf_idx, content, start_char) = &visuals[*r.view_top + v_i];
-        stdout.queue(MoveTo(content_left_u16, editor_row + v_i as u16))?;
-        if *buf_idx == 0 && *start_char == 0 {
-            if let Some(colored) = r.first_line_colored {
-                stdout.queue(Print(colored))?;
-            } else {
-                stdout.queue(Print(r.prompt))?;
-            }
-        } else {
-            stdout.queue(Print(&pad))?;
-        }
-
-        print_visual_chunk(
-            stdout,
-            r.lines,
-            *buf_idx,
-            *start_char,
-            content,
-            sel_range,
-            full_text_valid,
-            r.relative_date_base,
-        )?;
-    }
-
-    // Wide: footer is fixed ML_FOOTER_FROM_BOTTOM full rows above the last line; narrow: under last text.
-    let footer_row = compute_footer_row(
-        term_rows_u16 as usize,
-        term_cols,
-        editor_row,
-        footer_gap,
-        available_text,
-        *r.view_top,
-        visuals.len(),
-    );
+/// Paint the footer line: centered help text, scroll arrows in the left gap,
+/// and the dirty/clean glyph to the right of the text block.
+#[allow(clippy::too_many_arguments)]
+fn render_footer(
+    stdout: &mut io::Stdout,
+    footer_row: u16,
+    term_cols: usize,
+    text_left: usize,
+    text_right_excl: usize,
+    has_up: bool,
+    has_down: bool,
+    dirty: bool,
+) -> Result<()> {
     stdout.queue(MoveTo(0, footer_row))?;
     stdout.queue(Clear(ClearType::CurrentLine))?;
     let mut footer_text = ML_FOOTER.to_string();
@@ -390,13 +332,9 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
     let footer_width = footer_text.chars().count();
     let footer_x = term_cols.saturating_sub(footer_width) / 2;
     let footer_end = footer_x + footer_width;
-    let text_left = content_left;
-    let text_right_excl = content_left + r.prompt_width + visible_width;
     stdout.queue(MoveTo(footer_x as u16, footer_row))?;
     stdout.queue(Print(theme().editor_footer.paint(&footer_text)))?;
 
-    let has_up = *r.view_top > 0;
-    let has_down = *r.view_top + available_text < visuals.len();
     if has_up || has_down {
         // Two fixed columns: down (left), up (right). Order and placement never swap.
         const ARROW_PAIR_W: usize = 2;
@@ -440,11 +378,132 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
     }
     .min(term_cols.saturating_sub(1));
     stdout.queue(MoveTo(status_x as u16, footer_row))?;
-    if r.dirty {
+    if dirty {
         stdout.queue(Print(theme().editor_dirty.paint("●")))?;
     } else {
         stdout.queue(Print(theme().editor_clean.paint("○")))?;
     }
+    Ok(())
+}
+
+pub(super) struct RenderInput<'a> {
+    pub prompt: &'a str,
+    pub prompt_width: usize,
+    pub term_size: (u16, u16),
+    pub first_line_colored: Option<&'a str>,
+    pub lines: &'a [String],
+    pub cursor_row: usize,
+    pub cursor_col: usize,
+    pub view_top: &'a mut usize,
+    pub validate: Option<&'a fn(&str) -> bool>,
+    pub selection: Option<((usize, usize), (usize, usize))>,
+    pub dirty: bool,
+    pub relative_date_base: Option<chrono::NaiveDate>,
+}
+
+pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> {
+    let (term_cols_u16, term_rows_u16) = r.term_size;
+    let term_cols = term_cols_u16 as usize;
+    let (editor_row, footer_gap, available_text) = vertical_layout(term_cols_u16, term_rows_u16);
+    let (visible_width, content_left) = editor_text_layout(term_cols, r.prompt_width);
+    let content_left_u16 = content_left.min(u16::MAX as usize) as u16;
+
+    let visuals = compute_visuals(r.lines, visible_width);
+
+    let cursor_char_in_line =
+        text_ops::byte_idx_to_char_count(&r.lines[r.cursor_row], r.cursor_col);
+    let mut visual_start_of_cursor_line: usize = 0;
+    for (vi, (bi, _, start_char)) in visuals.iter().enumerate() {
+        if *bi == r.cursor_row && *start_char == 0 {
+            visual_start_of_cursor_line = vi;
+            break;
+        }
+    }
+    let cursor_vis_row = visual_start_of_cursor_line + (cursor_char_in_line / visible_width);
+    let cursor_vis_col = cursor_char_in_line % visible_width;
+
+    if cursor_vis_row < *r.view_top {
+        *r.view_top = cursor_vis_row;
+    }
+    if cursor_vis_row >= r.view_top.saturating_add(available_text) {
+        *r.view_top = cursor_vis_row + 1 - available_text;
+    }
+
+    let full_text_valid = r.validate.map(|v| {
+        let full = r.lines.join("\n");
+        full.trim().is_empty() || v(full.as_str())
+    });
+
+    // Clear from the top; text starts at `editor_row` (vertically centered when width allows).
+    stdout.queue(MoveTo(0, 0))?;
+    stdout.queue(Clear(ClearType::FromCursorDown))?;
+
+    let sel_range = r.selection.map(|(a, b)| {
+        if text_ops::pos_cmp(a, b) != std::cmp::Ordering::Greater {
+            (a, b)
+        } else {
+            (b, a)
+        }
+    });
+
+    // Parse the leading date token once per frame; it is constant across chunks.
+    let ld = text_ops::leading_date(&r.lines[0], r.relative_date_base);
+    let date_len = ld.map_or(0, |(n, _)| n);
+    let date_past = ld.is_some_and(|(_, d)| d < chrono::Local::now().date_naive());
+
+    let visible_count = available_text.min(visuals.len().saturating_sub(*r.view_top));
+    let pad: String = " ".repeat(r.prompt_width);
+    for v_i in 0..visible_count {
+        let (buf_idx, range, start_char) = &visuals[*r.view_top + v_i];
+        let content = &r.lines[*buf_idx][range.start..range.end];
+        stdout.queue(MoveTo(content_left_u16, editor_row + v_i as u16))?;
+        if *buf_idx == 0 && *start_char == 0 {
+            if let Some(colored) = r.first_line_colored {
+                stdout.queue(Print(colored))?;
+            } else {
+                stdout.queue(Print(r.prompt))?;
+            }
+        } else {
+            stdout.queue(Print(&pad))?;
+        }
+
+        print_visual_chunk(
+            stdout,
+            r.lines,
+            *buf_idx,
+            *start_char,
+            content,
+            sel_range,
+            full_text_valid,
+            date_len,
+            date_past,
+        )?;
+    }
+
+    // Wide: footer is fixed ML_FOOTER_FROM_BOTTOM full rows above the last line; narrow: under last text.
+    let footer_row = compute_footer_row(
+        term_rows_u16 as usize,
+        term_cols,
+        editor_row,
+        footer_gap,
+        available_text,
+        *r.view_top,
+        visuals.len(),
+    );
+    let text_left = content_left;
+    let text_right_excl = content_left + r.prompt_width + visible_width;
+    let has_up = *r.view_top > 0;
+    let has_down = *r.view_top + available_text < visuals.len();
+    render_footer(
+        stdout,
+        footer_row,
+        term_cols,
+        text_left,
+        text_right_excl,
+        has_up,
+        has_down,
+        r.dirty,
+    )?;
 
     let cur_visual_row_on_screen = cursor_vis_row.saturating_sub(*r.view_top);
     let mut x = (content_left + r.prompt_width + cursor_vis_col) as u16;
@@ -457,33 +516,16 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
     Ok(())
 }
 
-/// Visible-width available for text, matching the formula used by `render`.
-pub(super) fn visible_width(prompt_width: usize) -> usize {
-    let (cols, _) = size().unwrap_or((80, 24));
-    editor_text_layout(cols as usize, prompt_width).0
-}
-
-/// Horizontal offset of the text block from the left edge (centering), matching `render`.
-pub(super) fn content_left(prompt_width: usize) -> usize {
-    let (cols, _) = size().unwrap_or((80, 24));
-    editor_text_layout(cols as usize, prompt_width).1
-}
-
-/// How many visual rows fit on screen (used by PageUp/PageDown).
-pub(super) fn page_rows() -> usize {
-    let (cols, rows) = size().unwrap_or((80, 24));
-    vertical_layout(cols, rows).2
-}
-
-/// One `size()` + same `editor_text_layout` + `vertical_layout` + `compute_visuals` as [`render`].
-/// Use for wheel and other logic that must match on-screen line counts.
+/// Same `editor_text_layout` + `vertical_layout` + `compute_visuals` as [`render`] for the
+/// given terminal size. Use for wheel and other logic that must match on-screen line counts.
 pub(super) fn layout_metrics_for_buffer(
     lines: &[String],
     prompt_width: usize,
+    cols: u16,
+    rows: u16,
 ) -> (usize, usize, usize) {
-    let (c, r) = size().unwrap_or((80, 24));
-    let (_, _, av) = vertical_layout(c, r);
-    let (vw, _) = editor_text_layout(c as usize, prompt_width);
+    let (_, _, av) = vertical_layout(cols, rows);
+    let (vw, _) = editor_text_layout(cols as usize, prompt_width);
     let vlen = compute_visuals(lines, vw).len();
     (vw, av, vlen)
 }

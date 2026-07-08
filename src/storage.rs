@@ -393,21 +393,6 @@ impl TaskManager {
         self.tasks.iter().position(|t| t.id == id)
     }
 
-    pub fn find_tasks_by_ids(&self, ids: &[u8]) -> (Vec<usize>, Vec<u8>) {
-        let mut found_indices = Vec::new();
-        let mut not_found = Vec::new();
-
-        for &id in ids {
-            if let Some(idx) = self.find_task_by_id(id) {
-                found_indices.push(idx);
-            } else {
-                not_found.push(id);
-            }
-        }
-
-        (found_indices, not_found)
-    }
-
     pub fn generate_next_id(&self) -> Result<u8> {
         let mut used: Vec<u8> = self.tasks.iter().map(|t| t.id).collect();
         used.sort_unstable();
@@ -431,10 +416,15 @@ impl TaskManager {
     }
 
     pub fn save(&self) -> Result<()> {
-        if let Some(parent) = self.db_path.parent() {
-            fs::create_dir_all(parent)
-                .context("Failed to create directory for the database file")?;
-        }
+        let ensure_dir = || {
+            if let Some(parent) = self.db_path.parent() {
+                fs::create_dir_all(parent)
+            } else {
+                Ok(())
+            }
+        };
+
+        ensure_dir().context("Failed to create directory for the database file")?;
 
         if crate::config::config().backup && self.db_path.exists() {
             let backup_path = Self::aux_path(&self.db_path, "backup");
@@ -452,20 +442,7 @@ impl TaskManager {
 
         let temp_path = Self::aux_path(&self.db_path, "tmp");
 
-        if let Some(temp_parent) = temp_path.parent() {
-            fs::create_dir_all(temp_parent)
-                .context("Failed to create directory for temporary file")?;
-        }
-
         fs::write(&temp_path, &data).context("Failed to write temporary database file")?;
-
-        let ensure_dir = || {
-            if let Some(parent) = self.db_path.parent() {
-                fs::create_dir_all(parent)
-            } else {
-                Ok(())
-            }
-        };
 
         match fs::rename(&temp_path, &self.db_path) {
             Ok(_) => {}

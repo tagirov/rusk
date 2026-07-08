@@ -45,7 +45,7 @@ use crossterm::event::{self, Event};
 #[cfg(feature = "interactive")]
 use crossterm::{
     QueueableCommand,
-    terminal::{Clear, ClearType, size},
+    terminal::{Clear, ClearType},
 };
 #[cfg(feature = "interactive")]
 use std::io::{self, Write};
@@ -74,7 +74,8 @@ pub(crate) fn run_editor(
     let prompt_width = prompt.chars().count();
     let prefill_lines = text_ops::split_multi_line_prefill(prefill);
 
-    let initial_vw = view::visible_width(prompt_width);
+    let init_size = view::term_size();
+    let initial_vw = view::editor_text_layout(init_size.0 as usize, prompt_width).0;
     let mut state = state::EditorState::from_prefill(&prefill_lines, cursor_at_start, initial_vw);
 
     let mut history = history::History::new();
@@ -85,7 +86,10 @@ pub(crate) fn run_editor(
 
     let first_line_colored = extras.first_line_colored.clone();
 
-    let render = |stdout: &mut io::Stdout, state: &mut state::EditorState| -> Result<()> {
+    let render = |stdout: &mut io::Stdout,
+                  state: &mut state::EditorState,
+                  term_size: (u16, u16)|
+     -> Result<()> {
         let selection = state.selection_range();
         let dirty = state.dirty_vs(prefill);
         view::render(
@@ -93,6 +97,7 @@ pub(crate) fn run_editor(
             view::RenderInput {
                 prompt,
                 prompt_width,
+                term_size,
                 first_line_colored: first_line_colored.as_deref(),
                 lines: &state.lines,
                 cursor_row: state.row,
@@ -106,7 +111,7 @@ pub(crate) fn run_editor(
         )
     };
 
-    render(&mut stdout, &mut state)?;
+    render(&mut stdout, &mut state, init_size)?;
 
     loop {
         draft::tick(
@@ -120,9 +125,15 @@ pub(crate) fn run_editor(
         let Some(ev) = poll_event(Duration::from_millis(500))? else {
             continue;
         };
+        // One terminal-size read per event: input dispatch and render share the
+        // same geometry even during a resize burst.
+        let mut term_size = view::term_size();
+        let (cols, rows) = term_size;
         let ctx = input::EditorContext {
             prompt_width,
-            editor_row: view::current_editor_top(),
+            editor_row: view::vertical_layout(cols, rows).0,
+            cols,
+            rows,
             prefill_lines: &prefill_lines,
         };
 
@@ -149,6 +160,9 @@ pub(crate) fn run_editor(
             Action::Continue => {}
             Action::ShowHelp => {
                 terminal::show_help(&mut stdout)?;
+                // Overlays block on read() and swallow resize events, so the
+                // pre-overlay size may be stale by the time they return.
+                term_size = view::term_size();
             }
             Action::Save => {
                 let joined = state.joined();
@@ -162,11 +176,16 @@ pub(crate) fn run_editor(
                 return Ok(joined);
             }
             Action::Cancel => {
-                let (_tc, tr) = size().unwrap_or((80, 24));
-                let fr = view::footer_row_for_state(&state.lines, state.view_top, prompt_width);
-                let dr = view::discard_dialog_row(fr, tr);
+                let fr = view::footer_row_for_state(
+                    &state.lines,
+                    state.view_top,
+                    prompt_width,
+                    term_size,
+                );
+                let dr = view::discard_dialog_row(fr, rows);
                 if state.dirty_vs(prefill) && !terminal::confirm_discard(&mut stdout, dr)? {
-                    render(&mut stdout, &mut state)?;
+                    term_size = view::term_size();
+                    render(&mut stdout, &mut state, term_size)?;
                     continue;
                 }
                 terminal::finish(&mut stdout)?;
@@ -184,7 +203,7 @@ pub(crate) fn run_editor(
             }
         }
 
-        render(&mut stdout, &mut state)?;
+        render(&mut stdout, &mut state, term_size)?;
     }
 }
 
@@ -264,16 +283,6 @@ impl HandlerCLI {
     }
 
     #[doc(hidden)]
-    pub fn first_non_space(line: &str) -> usize {
-        text_ops::first_non_space(line)
-    }
-
-    #[doc(hidden)]
-    pub fn word_bounds(line: &str, byte_idx: usize) -> (usize, usize) {
-        text_ops::word_bounds(line, byte_idx)
-    }
-
-    #[doc(hidden)]
     pub fn split_multi_line_prefill(prefill: &str) -> Vec<String> {
         text_ops::split_multi_line_prefill(prefill)
     }
@@ -304,28 +313,6 @@ impl HandlerCLI {
     }
 
     #[doc(hidden)]
-    pub fn ml_soft_up(
-        lines: &[String],
-        row: usize,
-        col: usize,
-        desired_vis_col: usize,
-        vw: usize,
-    ) -> (usize, usize) {
-        text_ops::ml_soft_up(lines, row, col, desired_vis_col, vw)
-    }
-
-    #[doc(hidden)]
-    pub fn ml_soft_down(
-        lines: &[String],
-        row: usize,
-        col: usize,
-        desired_vis_col: usize,
-        vw: usize,
-    ) -> (usize, usize) {
-        text_ops::ml_soft_down(lines, row, col, desired_vis_col, vw)
-    }
-
-    #[doc(hidden)]
     pub fn ml_backspace(lines: &mut Vec<String>, row: &mut usize, col: &mut usize) {
         text_ops::ml_backspace(lines, row, col)
     }
@@ -338,25 +325,5 @@ impl HandlerCLI {
     #[doc(hidden)]
     pub fn ml_delete_word_left(lines: &mut Vec<String>, row: &mut usize, col: &mut usize) {
         text_ops::ml_delete_word_left(lines, row, col)
-    }
-
-    #[doc(hidden)]
-    pub fn ml_delete_word_right(lines: &mut Vec<String>, row: usize, col: &mut usize) {
-        text_ops::ml_delete_word_right(lines, row, col)
-    }
-
-    #[doc(hidden)]
-    pub fn ml_kill_to_eol(lines: &mut Vec<String>, row: usize, col: &mut usize) {
-        text_ops::ml_kill_to_eol(lines, row, col)
-    }
-
-    #[doc(hidden)]
-    pub fn ml_kill_to_bol(lines: &mut [String], row: usize, col: &mut usize) {
-        text_ops::ml_kill_to_bol(lines, row, col)
-    }
-
-    #[doc(hidden)]
-    pub fn ml_delete_line(lines: &mut Vec<String>, row: &mut usize, col: &mut usize) {
-        text_ops::ml_delete_line(lines, row, col)
     }
 }

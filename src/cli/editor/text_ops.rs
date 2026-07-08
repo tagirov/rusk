@@ -6,7 +6,7 @@
 //! type) so they can be used both by the editor internals and by the
 //! public `HandlerCLI` shims re-exported in `editor/mod.rs`.
 
-use chrono::{Local, NaiveDate};
+use chrono::NaiveDate;
 use std::cmp::Ordering;
 
 // ── Byte / char helpers ─────────────────────────────────────────────────────
@@ -155,31 +155,20 @@ pub fn split_multi_line_prefill(prefill: &str) -> Vec<String> {
     normalized.split('\n').map(|s| s.to_string()).collect()
 }
 
-/// Character length of a leading date prefix on the first logical line.
-/// Returns 0 if the leading whitespace-delimited token is not a valid CLI date.
+/// Leading date prefix on the first logical line: `(char length of the token, parsed date)`.
+/// Returns `None` if the leading whitespace-delimited token is not a valid CLI date.
 /// `relative_edit_base` is the task due date before edit (`+`-prefixed relative tokens).
-pub fn leading_date_char_len(line: &str, relative_edit_base: Option<NaiveDate>) -> usize {
+pub fn leading_date(
+    line: &str,
+    relative_edit_base: Option<NaiveDate>,
+) -> Option<(usize, NaiveDate)> {
     let token: String = line.chars().take_while(|c| !c.is_whitespace()).collect();
     if token.is_empty() {
-        return 0;
+        return None;
     }
-    if crate::parse_cli_date_for_edit(&token, relative_edit_base).is_ok() {
-        token.chars().count()
-    } else {
-        0
-    }
-}
-
-/// `true` if the first line starts with a valid CLI date strictly before today.
-pub fn leading_date_is_past(line: &str, relative_edit_base: Option<NaiveDate>) -> bool {
-    let token: String = line.chars().take_while(|c| !c.is_whitespace()).collect();
-    if token.is_empty() {
-        return false;
-    }
-    match crate::parse_cli_date_for_edit(&token, relative_edit_base) {
-        Ok(d) => d < Local::now().date_naive(),
-        Err(_) => false,
-    }
+    crate::parse_cli_date_for_edit(&token, relative_edit_base)
+        .ok()
+        .map(|d| (token.chars().count(), d))
 }
 
 // ── Position / selection helpers ────────────────────────────────────────────
@@ -380,8 +369,9 @@ pub fn ml_soft_down(
 
 // ── Editing primitives ──────────────────────────────────────────────────────
 
-/// Merge the current line into the previous one (Backspace / Ctrl+Backspace at
-/// column 0); the cursor lands at the join point.
+/// Merge the current line into the previous one (any backward delete at
+/// column 0: Backspace / Ctrl+Backspace / Ctrl+W / Ctrl+H); the cursor lands
+/// at the join point.
 fn merge_line_into_prev(lines: &mut Vec<String>, row: &mut usize, col: &mut usize) {
     let current = lines.remove(*row);
     *row -= 1;
@@ -389,7 +379,8 @@ fn merge_line_into_prev(lines: &mut Vec<String>, row: &mut usize, col: &mut usiz
     lines[*row].push_str(&current);
 }
 
-/// Append the next line onto `row` (Delete / Ctrl+K at end of line).
+/// Append the next line onto `row` (any forward delete at end of line:
+/// Delete / Ctrl+Delete / Ctrl+K).
 fn join_next_line(lines: &mut Vec<String>, row: usize) {
     let next_line = lines.remove(row + 1);
     lines[row].push_str(&next_line);

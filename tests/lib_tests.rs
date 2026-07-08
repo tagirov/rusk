@@ -88,29 +88,6 @@ fn test_find_task_by_id() {
 }
 
 #[test]
-fn test_find_tasks_by_ids() {
-    let mut tm = TaskManager::new_empty().unwrap();
-    tm.tasks = vec![
-        create_test_task(1, "Task 1", false),
-        create_test_task(2, "Task 2", false),
-        create_test_task(3, "Task 3", false),
-        create_test_task(4, "Task 4", false),
-    ];
-
-    let (found, not_found) = tm.find_tasks_by_ids(&[1, 3, 5]);
-    assert_eq!(found, vec![0, 2]);
-    assert_eq!(not_found, vec![5]);
-}
-
-#[test]
-fn test_find_tasks_by_ids_empty() {
-    let tm = TaskManager::new_empty().unwrap();
-    let (found, not_found) = tm.find_tasks_by_ids(&[1, 2, 3]);
-    assert!(found.is_empty());
-    assert_eq!(not_found, vec![1, 2, 3]);
-}
-
-#[test]
 fn test_add_task_success() {
     let mut tm = TaskManager::new_empty().unwrap();
     let text = vec!["Buy".to_string(), "groceries".to_string()];

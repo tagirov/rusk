@@ -14,11 +14,14 @@
 - [Usage](#usage)
   - [Working with Multiple Tasks](#working-with-multiple-tasks)
   - [Interactive Editor](#interactive-editor)
+  - [Web UI](#web-ui)
+  - [Sync](#sync)
   - [Data Safety & Backup](#data-safety--backup)
     - [Automatic Backups](#automatic-backups)
     - [Manual Restore](#manual-restore)
   - [Aliases](#aliases)
 - [Configuration](#configuration)
+  - [Configuration File](#configuration-file)
   - [Shell Completion](#shell-completion)
     - [Quick Install (Recommended)](completions/README.md#quick-install-recommended)
     - [Manual Installation](completions/README.md#manual-installation)
@@ -28,6 +31,7 @@
       - [Nu Shell](completions/README.md#nu-shell)
       - [PowerShell](completions/README.md#powershell)
   - [Database Location](#database-location)
+  - [Database Formats](#database-formats)
   - [Disabling Colors](#disabling-colors)
 
 # Install
@@ -169,6 +173,35 @@ rusk edit 1
 rusk edit 1,2,3
 ```
 
+## Web UI
+
+A mobile-first web frontend, themed from your [configuration file](CONFIG.md)
+and built from a single embedded template — no separate frontend to install.
+Full guide (auth, VPS deployment behind Caddy/nginx, API): [WEB.md](WEB.md)
+
+```bash
+# Generate a self-contained read-only HTML page with all tasks
+rusk gen -o index.html
+
+# Serve the interactive UI (full task editing from a phone)
+rusk serve                  # http://127.0.0.1:7272
+rusk serve --host 0.0.0.0   # requires web_token in the config
+```
+
+## Sync
+
+Synchronize the database with your VPS over SSH, or with a running
+`rusk serve` over HTTP(S). Conflicts are detected via the hash of the last
+synced state — nothing is silently overwritten. Details in
+[WEB.md](WEB.md#rusk-sync)
+
+```bash
+# in the config: sync_remote = user@vps:/srv/tasks/tasks.json
+rusk sync              # fast-forward in whichever direction changed
+rusk sync push         # upload local tasks
+rusk sync pull --force # discard local changes in favor of the remote
+```
+
 ## Data Safety & Backup
 #### Automatic Backups
 - Every save operation creates a `.json.backup` file
@@ -196,6 +229,8 @@ rusk m (mark)
 rusk e (edit)
 rusk d (del)
 rusk r (restore)
+rusk g (gen)
+rusk s (serve)
 rusk c (completions)
 
 # Global flags
@@ -210,6 +245,33 @@ rusk c (completions)
 ```
 
 # Configuration
+
+### Configuration File
+
+rusk auto-creates a configuration file on first run (`~/.config/rusk/cfg` on
+Linux; see [CONFIG.md](CONFIG.md) for other platforms and the full
+reference). It controls theme colors for every element group, default
+behavior, and the web/sync settings:
+
+```
+# variables are supported: any unknown key defines one
+accent = #ffa500
+priority_marker = accent
+
+# lowercase analogs of the environment variables (env always wins)
+# rusk_db = ~/tasks/tasks.json
+# no_color = false
+# compact = true
+
+# web & sync
+# web_token = your-secret
+# sync_remote = user@vps:/srv/tasks/tasks.json
+```
+
+Colors are ANSI names (`red`, `cyan`, `bright_black`, ...) or hex
+(`#d75f00`). Broken lines never prevent rusk from starting — they produce
+warnings and fall back to defaults. `RUSK_CONFIG=<path>` overrides the file
+location; an empty `RUSK_CONFIG` disables the config entirely.
 
 ### Shell Completion
 
@@ -244,7 +306,8 @@ rusk add Add authentication endpoint
 
 # Each project has its own task list because Rusk uses a relative default database path
 ```
-You can customize the database location using the `RUSK_DB` environment variable:
+You can customize the database location using the `RUSK_DB` environment variable
+or the `rusk_db` key in the [configuration file](CONFIG.md) (`RUSK_DB` wins):
 
 ```bash
 # Use a custom database file
@@ -262,6 +325,29 @@ When running in debug mode (`cargo run` or debug builds), Rusk uses a temporary 
 
 In debug mode, the `RUSK_DB` environment variable is ignored, and the database path is printed to the console when the program starts.
 
+### Database Formats
+
+The format is chosen by the database file extension: JSON by default, CSV
+when the path ends in `.csv`:
+
+```bash
+export RUSK_DB="$HOME/tasks/tasks.csv"    # or rusk_db = ~/tasks/tasks.csv in the config
+```
+
+The CSV schema is `id,text,date,done,priority` (RFC 4180: multiline task
+text, commas and quotes are handled; dates are ISO `YYYY-MM-DD`). This is for
+spreadsheet interop:
+
+- **LibreOffice / Excel** open and save the file in place — edit your tasks
+  in a spreadsheet, the CLI sees the changes immediately.
+- **Google Sheets** has no live two-way binding to a plain file: keep the CSV
+  in a Google Drive-synced folder to view/import it in Sheets; edits made in
+  Sheets have to be exported back manually (File → Download → CSV). True
+  bidirectional Sheets sync would require the Sheets API and OAuth, which is
+  out of scope for a minimal CLI.
+
+Backups and atomic writes work the same in both formats (`tasks.csv.backup`).
+
 ### Disabling Colors
 
 Set `RUSK_NO_COLOR` to any non-empty value to disable ANSI colors in all output (dialogs, task list, errors):
@@ -271,6 +357,8 @@ export RUSK_NO_COLOR=1
 ```
 
 The standard `NO_COLOR` environment variable (see [no-color.org](https://no-color.org)) is also respected.
+The configuration file offers the same switch as `no_color = true` (the
+environment variables win over the config).
 
 <br />
 

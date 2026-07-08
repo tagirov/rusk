@@ -131,6 +131,40 @@ pub enum Command {
         about = "Restore task database from the automatic backup (.json.backup)"
     )]
     Restore,
+    #[cfg(feature = "web")]
+    #[command(
+        visible_alias = "g",
+        about = "Generate a self-contained read-only HTML page with all tasks (mobile-first, themed from the config). Examples: rusk gen; rusk gen -o /var/www/tasks/index.html; rusk gen -o -"
+    )]
+    Gen {
+        #[arg(
+            short,
+            long,
+            value_name = "PATH",
+            default_value = "index.html",
+            help = "Output file path; pass `-` to write to stdout"
+        )]
+        output: String,
+    },
+    #[cfg(feature = "web")]
+    #[command(
+        visible_alias = "s",
+        about = "Serve the web UI with full task editing (mobile-first). Binds 127.0.0.1:7272 by default; host/port/token come from the config (web_host, web_port, web_token). Examples: rusk serve; rusk serve --port 8080; rusk serve --host 0.0.0.0"
+    )]
+    Serve {
+        #[arg(
+            long,
+            value_name = "HOST",
+            help = "Bind address (overrides web_host from the config; non-loopback requires web_token)"
+        )]
+        host: Option<String>,
+        #[arg(
+            long,
+            value_name = "PORT",
+            help = "Port (overrides web_port from the config; 0 picks a free port)"
+        )]
+        port: Option<u16>,
+    },
     #[cfg(feature = "completions")]
     #[command(
         visible_alias = "c",

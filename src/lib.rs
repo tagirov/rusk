@@ -8,6 +8,8 @@ pub mod error;
 pub mod model;
 pub mod parser;
 pub mod storage;
+#[cfg(feature = "web")]
+pub mod web;
 pub mod windows_console;
 
 pub use config::{ColorValue, Config, Theme};

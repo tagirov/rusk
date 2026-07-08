@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111114">
+<title>rusk</title>
+<style>
+/* Fallback theme values; the injected block below wins by cascade. */
+:root {
+  --rusk-accent: #ffa500;
+  --rusk-list-header: #5c5cff;
+  --rusk-done-marker: #00cd00;
+  --rusk-priority-marker: #ffa500;
+  --rusk-date-overdue: #ff4444;
+  --rusk-date-upcoming: #00cdcd;
+  --rusk-date-today: #00cdcd;
+  --rusk-error: #cd0000;
+  --rusk-success: #00cd00;
+  --rusk-warning: #cdcd00;
+}
+:root { /*__THEME__*/ }
+:root {
+  --bg: #111114;
+  --card: #1c1c21;
+  --text: #e8e8ea;
+  --muted: #9a9aa2;
+  --border: #2a2a31;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f5f5f7;
+    --card: #ffffff;
+    --text: #1b1b1f;
+    --muted: #6b6b74;
+    --border: #e2e2e8;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  padding-bottom: calc(120px + env(safe-area-inset-bottom));
+}
+header {
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  z-index: 2;
+}
+header .wrap {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 12px 16px;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+h1 { font-size: 18px; margin: 0; color: var(--rusk-list-header); }
+#count { color: var(--muted); font-size: 13px; }
+#dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--rusk-success);
+  margin-left: auto; align-self: center;
+}
+#dot.off { background: var(--rusk-error); }
+main { max-width: 640px; margin: 0 auto; padding: 4px 8px 0; }
+.task {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 4px 2px;
+  min-height: 48px;
+  border-bottom: 1px solid var(--border);
+}
+.task.done .text { opacity: .45; }
+.status, .editbtn {
+  flex: 0 0 44px;
+  height: 44px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 18px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.status:active, .editbtn:active { background: var(--card); }
+.status:disabled { cursor: default; }
+.st-done { color: var(--rusk-done-marker); }
+.st-prio { color: var(--rusk-priority-marker); font-weight: 700; }
+.body { flex: 1; min-width: 0; padding: 11px 0; }
+.text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.date { display: inline-block; margin-top: 4px; font-size: 12.5px; color: var(--rusk-date-upcoming); }
+.date.today { color: var(--rusk-date-today); }
+.date.overdue { color: var(--rusk-date-overdue); }
+.editbtn { font-size: 15px; }
+#empty { text-align: center; color: var(--muted); padding: 56px 16px; }
+#empty p { margin: 4px 0; }
+#generated {
+  max-width: 640px; margin: 0 auto; padding: 16px;
+  color: var(--muted); font-size: 12.5px; text-align: center;
+}
+#addbar {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  background: var(--card);
+  border-top: 1px solid var(--border);
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  z-index: 3;
+}
+#addbar .wrap { max-width: 640px; margin: 0 auto; }
+#daterow { display: flex; gap: 8px; margin-bottom: 8px; }
+#daterow input { flex: 1; }
+#mainrow { display: flex; gap: 8px; }
+input[type="text"], input[type="date"], textarea {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font: inherit;
+  min-height: 44px;
+}
+#task-input { flex: 1; min-width: 0; }
+.btn {
+  min-width: 44px; height: 44px;
+  border: 0; border-radius: 10px;
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  font: inherit; font-weight: 600;
+  cursor: pointer;
+  padding: 0 14px;
+}
+.btn.primary { background: var(--rusk-accent); border-color: var(--rusk-accent); color: #14140a; }
+.btn.danger { color: var(--rusk-date-overdue); }
+dialog {
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  border-radius: 16px;
+  padding: 16px;
+  width: min(94vw, 480px);
+}
+dialog::backdrop { background: rgba(0, 0, 0, .55); }
+#edit-text { width: 100%; min-height: 110px; resize: vertical; margin-bottom: 10px; }
+.editrow { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+.editrow input[type="date"] { flex: 1; }
+#edit-prio { display: none; }
+#edit-prio + label {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 44px; padding: 0 14px;
+  border: 1px solid var(--border); border-radius: 10px;
+  color: var(--muted); cursor: pointer; user-select: none;
+}
+#edit-prio:checked + label {
+  color: var(--rusk-priority-marker);
+  border-color: var(--rusk-priority-marker);
+  font-weight: 700;
+}
+.editactions { display: flex; gap: 8px; }
+.editactions .spacer { flex: 1; }
+#banner {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  background: var(--rusk-error);
+  color: #fff;
+  padding: 10px 16px;
+  display: flex; gap: 12px; align-items: center;
+  z-index: 10;
+}
+#banner button { background: rgba(255,255,255,.2); color: #fff; border: 0; border-radius: 8px; height: 34px; padding: 0 12px; cursor: pointer; }
+#banner .msg { flex: 1; font-size: 14px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>rusk</h1>
+    <span id="count"></span>
+    <span id="dot" hidden></span>
+  </div>
+</header>
+
+<main id="list"></main>
+<div id="empty" hidden>
+  <p>No tasks</p>
+  <p class="hint"></p>
+</div>
+<div id="generated"></div>
+
+<form id="addbar" autocomplete="off" hidden>
+  <div class="wrap">
+    <div id="daterow" hidden>
+      <input type="date" id="add-date" aria-label="Due date">
+      <button type="button" class="btn" id="add-date-clear">✕</button>
+    </div>
+    <div id="mainrow">
+      <button type="button" class="btn" id="date-toggle" aria-label="Toggle due date">🗓</button>
+      <input type="text" id="task-input" placeholder="New task…" aria-label="New task">
+      <button type="submit" class="btn primary" aria-label="Add task">+</button>
+    </div>
+  </div>
+</form>
+
+<dialog id="editor">
+  <form method="dialog" id="edit-form">
+    <textarea id="edit-text" aria-label="Task text"></textarea>
+    <div class="editrow">
+      <input type="date" id="edit-date" aria-label="Due date">
+      <button type="button" class="btn" id="edit-date-clear" title="Clear date">✕</button>
+      <input type="checkbox" id="edit-prio">
+      <label for="edit-prio">priority</label>
+    </div>
+    <div class="editactions">
+      <button type="button" class="btn danger" id="edit-delete">Delete</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn" id="edit-cancel">Cancel</button>
+      <button type="submit" class="btn primary" id="edit-save">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="banner" hidden>
+  <span class="msg"></span>
+  <button type="button" id="retry">Retry</button>
+</div>
+
+<script>
+"use strict";
+const RUSK = {
+  mode: "__MODE__",
+  tasks: /*__DATA__*/[],
+  generated: "__GENERATED__",
+};
+
+const live = RUSK.mode === "live";
+const state = { tasks: Array.isArray(RUSK.tasks) ? RUSK.tasks : [] };
+const $ = (id) => document.getElementById(id);
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+function todayIso() {
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+
+function fmtDate(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const now = new Date();
+  return d + " " + MONTHS[m - 1] + (y === now.getFullYear() ? "" : " " + y);
+}
+
+function dateClass(t) {
+  if (!t.date) return "";
+  const today = todayIso();
+  // Mirrors the CLI rule: overdue only when not done; done tasks keep the
+  // regular date color.
+  if (t.date < today && !t.done) return "overdue";
+  if (t.date === today && !t.done) return "today";
+  return "";
+}
+
+function row(t) {
+  const r = el("div", "task" + (t.done ? " done" : ""));
+  r.dataset.id = t.id;
+  const glyph = t.done ? "✔" : (t.priority ? "p" : "•");
+  const stCls = "status" + (t.done ? " st-done" : (t.priority ? " st-prio" : ""));
+  const st = el("button", stCls, glyph);
+  st.type = "button";
+  if (live) { st.title = "Toggle done"; } else { st.disabled = true; }
+  const body = el("div", "body");
+  body.append(el("div", "text", t.text));
+  if (t.date) body.append(el("span", ("date " + dateClass(t)).trim(), fmtDate(t.date)));
+  r.append(st, body);
+  if (live) {
+    const ed = el("button", "editbtn", "✎");
+    ed.type = "button";
+    ed.title = "Edit task";
+    r.append(ed);
+  }
+  return r;
+}
+
+function render() {
+  const list = $("list");
+  list.textContent = "";
+  let open = 0, done = 0;
+  for (const t of state.tasks) {
+    t.done ? done++ : open++;
+    list.append(row(t));
+  }
+  $("empty").hidden = state.tasks.length > 0;
+  $("count").textContent = state.tasks.length ? open + " open · " + done + " done" : "";
+}
+
+function showBanner(msg) {
+  $("banner").hidden = false;
+  $("banner").querySelector(".msg").textContent = msg;
+  $("dot").classList.add("off");
+}
+
+function hideBanner() {
+  $("banner").hidden = true;
+  $("dot").classList.remove("off");
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, Object.assign({ headers: { "Content-Type": "application/json" } }, opts));
+  if (res.status === 401) { location.reload(); throw new Error("Unauthorized"); }
+  if (!res.ok) {
+    let msg = "HTTP " + res.status;
+    try { msg = (await res.json()).error || msg; } catch (e) {}
+    throw new Error(msg);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+async function refresh() {
+  state.tasks = await api("/api/tasks");
+  render();
+}
+
+// Non-optimistic: apply the change on the server, then re-render from its
+// state. Removes all rollback logic; latency on LAN is negligible.
+async function mutate(fn) {
+  try {
+    await fn();
+    await refresh();
+    hideBanner();
+  } catch (e) {
+    showBanner(e.message || "Connection lost");
+  }
+}
+
+function findTask(id) {
+  return state.tasks.find((t) => t.id === id);
+}
+
+/* ---------- live wiring ---------- */
+
+let editId = null;
+let deleteArmedAt = 0;
+
+function openEditor(id) {
+  const t = findTask(id);
+  if (!t) return;
+  editId = id;
+  $("edit-text").value = t.text;
+  $("edit-date").value = t.date || "";
+  $("edit-prio").checked = t.priority;
+  disarmDelete();
+  $("editor").showModal();
+}
+
+function disarmDelete() {
+  deleteArmedAt = 0;
+  $("edit-delete").textContent = "Delete";
+}
+
+function initLive() {
+  $("addbar").hidden = false;
+  $("dot").hidden = false;
+
+  $("list").addEventListener("click", (e) => {
+    const r = e.target.closest(".task");
+    if (!r) return;
+    const id = Number(r.dataset.id);
+    if (e.target.closest(".status")) {
+      const t = findTask(id);
+      if (t) mutate(() => api("/api/tasks/" + id, { method: "PATCH", body: JSON.stringify({ done: !t.done }) }));
+    } else if (e.target.closest(".editbtn")) {
+      openEditor(id);
+    }
+  });
+
+  $("addbar").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const text = $("task-input").value.trim();
+    if (!text) return;
+    const date = $("add-date").value || null;
+    mutate(async () => {
+      await api("/api/tasks", { method: "POST", body: JSON.stringify({ text: text, date: date }) });
+      $("task-input").value = "";
+      $("add-date").value = "";
+      $("daterow").hidden = true;
+    });
+  });
+
+  $("date-toggle").addEventListener("click", () => {
+    $("daterow").hidden = !$("daterow").hidden;
+    if (!$("daterow").hidden) $("add-date").focus();
+  });
+  $("add-date-clear").addEventListener("click", () => {
+    $("add-date").value = "";
+    $("daterow").hidden = true;
+  });
+
+  $("edit-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const id = editId;
+    const text = $("edit-text").value;
+    if (!text.trim()) { showBanner("Task text cannot be empty"); return; }
+    const patch = {
+      text: text,
+      date: $("edit-date").value || null,
+      priority: $("edit-prio").checked,
+    };
+    $("editor").close();
+    mutate(() => api("/api/tasks/" + id, { method: "PATCH", body: JSON.stringify(patch) }));
+  });
+  $("edit-cancel").addEventListener("click", () => $("editor").close());
+  $("edit-date-clear").addEventListener("click", () => { $("edit-date").value = ""; });
+  $("edit-delete").addEventListener("click", () => {
+    const now = Date.now();
+    if (now - deleteArmedAt < 3000) {
+      const id = editId;
+      $("editor").close();
+      mutate(() => api("/api/tasks/" + id, { method: "DELETE" }));
+    } else {
+      deleteArmedAt = now;
+      $("edit-delete").textContent = "Tap again to delete";
+      setTimeout(disarmDelete, 3000);
+    }
+  });
+
+  $("retry").addEventListener("click", () => mutate(async () => {}));
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) mutate(async () => {});
+  });
+
+  refresh().catch((e) => showBanner(e.message || "Connection lost"));
+}
+
+function initStatic() {
+  if (RUSK.generated && RUSK.generated.indexOf("__") !== 0) {
+    $("generated").textContent = "Generated " + RUSK.generated + " · read-only";
+  }
+  $("empty").querySelector(".hint").textContent = "Add tasks with the rusk CLI";
+}
+
+render();
+if (live) { initLive(); } else { initStatic(); }
+</script>
+</body>
+</html>

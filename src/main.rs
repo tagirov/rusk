@@ -88,6 +88,19 @@ fn run() -> Result<()> {
 
     let cli = Cli::parse();
 
+    // `serve` never uses a shared TaskManager: the server re-reads the
+    // database on every request (see web::server), so intercept it early
+    // like `completions`.
+    #[cfg(feature = "web")]
+    if let Some(Command::Serve { host, port }) = &cli.command {
+        let cfg = config::config();
+        return rusk::web::server::run(rusk::web::server::ServeOptions {
+            host: host.clone().unwrap_or_else(|| cfg.web_host.clone()),
+            port: port.unwrap_or(cfg.web_port),
+            token: cfg.web_token.clone(),
+        });
+    }
+
     #[cfg(feature = "completions")]
     if let Some(Command::Completions { action }) = &cli.command {
         match action {
@@ -238,6 +251,26 @@ fn run() -> Result<()> {
             if let Err(e) = HandlerCLI::handle_restore(&mut restore_tm) {
                 exit_with_error(e);
             }
+        }
+        #[cfg(feature = "web")]
+        Some(Command::Gen { output }) => {
+            let html = rusk::web::render_static_page(tm.tasks())?;
+            if output == "-" {
+                print!("{html}");
+            } else {
+                std::fs::write(&output, &html)
+                    .with_context(|| format!("Failed to write {output}"))?;
+                println!(
+                    "{} {} ({} tasks)",
+                    config::theme().success.paint("Generated"),
+                    output,
+                    tm.tasks().len()
+                );
+            }
+        }
+        #[cfg(feature = "web")]
+        Some(Command::Serve { .. }) => {
+            unreachable!("serve is handled before TaskManager::new()");
         }
         #[cfg(feature = "completions")]
         Some(Command::Completions { .. }) => {

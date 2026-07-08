@@ -1,5 +1,6 @@
 pub mod args;
 pub mod cli;
+pub mod codec;
 #[cfg(feature = "completions")]
 pub mod completions;
 pub mod config;

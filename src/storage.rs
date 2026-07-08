@@ -437,16 +437,20 @@ impl TaskManager {
         }
 
         if crate::config::config().backup && self.db_path.exists() {
-            let backup_path = self.db_path.with_extension("json.backup");
+            let backup_path = Self::aux_path(&self.db_path, "backup");
             if let Err(e) = fs::copy(&self.db_path, &backup_path) {
                 warn_yellow(&format!("Warning: Failed to create backup: {e}"));
             }
         }
 
-        let data =
-            serde_json::to_string_pretty(&self.tasks).context("Failed to serialize tasks")?;
+        let data = match crate::codec::DbFormat::from_path(&self.db_path) {
+            crate::codec::DbFormat::Json => {
+                serde_json::to_string_pretty(&self.tasks).context("Failed to serialize tasks")?
+            }
+            crate::codec::DbFormat::Csv => crate::codec::to_csv(&self.tasks),
+        };
 
-        let temp_path = self.db_path.with_extension("json.tmp");
+        let temp_path = Self::aux_path(&self.db_path, "tmp");
 
         if let Some(temp_parent) = temp_path.parent() {
             fs::create_dir_all(temp_parent)
@@ -494,6 +498,14 @@ impl TaskManager {
         Ok(())
     }
 
+    /// Auxiliary sibling of the database file: `tasks.json` + `backup` →
+    /// `tasks.json.backup` (and `tasks.csv` → `tasks.csv.backup`), so the
+    /// base format stays recognizable in the name.
+    fn aux_path(path: &std::path::Path, suffix: &str) -> PathBuf {
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("json");
+        path.with_extension(format!("{ext}.{suffix}"))
+    }
+
     /// Directory values (existing dir or trailing `/`) get `tasks.json` appended.
     fn db_path_from_value(path: PathBuf) -> PathBuf {
         if path.is_dir() || path.to_string_lossy().ends_with('/') {
@@ -527,6 +539,15 @@ impl TaskManager {
         } else {
             let data = fs::read_to_string(path).context("Failed to read the database file")?;
 
+            if crate::codec::DbFormat::from_path(path) == crate::codec::DbFormat::Csv {
+                return crate::codec::from_csv(&data).map_err(|e| {
+                    anyhow::anyhow!(
+                        "Failed to parse the CSV database file at '{}': {e}",
+                        path.display()
+                    )
+                });
+            }
+
             match serde_json::from_str(&data) {
                 Ok(tasks) => Ok(tasks),
                 Err(e) => {
@@ -553,7 +574,7 @@ impl TaskManager {
     }
 
     pub fn restore_from_backup(&mut self) -> Result<()> {
-        let backup_path = self.db_path.with_extension("json.backup");
+        let backup_path = Self::aux_path(&self.db_path, "backup");
 
         if !backup_path.exists() {
             anyhow::bail!("No backup file found at '{}'", backup_path.display());
@@ -562,7 +583,7 @@ impl TaskManager {
         let backup_tasks = Self::load_tasks_from_path(&backup_path)?;
 
         if self.db_path.exists() {
-            let current_backup_path = self.db_path.with_extension("json.before_restore");
+            let current_backup_path = Self::aux_path(&self.db_path, "before_restore");
             match Self::load_tasks_from_path(&self.db_path) {
                 Ok(_) => {
                     if let Err(e) = fs::copy(&self.db_path, &current_backup_path) {
@@ -607,5 +628,23 @@ mod tests {
             .unwrap();
         assert_eq!(tm.tasks[0].text, "Hello");
         assert_eq!(tm.tasks[0].date, Some(d));
+    }
+
+    #[test]
+    fn csv_db_roundtrip_via_task_manager() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tasks.csv");
+        let mut tm = TaskManager::new_empty_with_path(path.clone());
+        let d = NaiveDate::from_ymd_opt(2026, 7, 8).unwrap();
+        tm.add_task_with_parsed_date("CSV task, with \"quotes\"\nsecond line".to_string(), Some(d))
+            .unwrap();
+        tm.add_task_with_parsed_date("plain".to_string(), None)
+            .unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.starts_with("id,text,date,done,priority"));
+
+        let loaded = TaskManager::load_tasks_from_path(&path).unwrap();
+        assert_eq!(loaded, tm.tasks);
     }
 }

@@ -46,7 +46,15 @@ pub struct Cli {
 pub enum Command {
     #[command(
         visible_alias = "a",
-        about = "Add a new task. With TEXT: one-shot. Without TEXT: opens the interactive editor (set or clear a due date on the first line). Optional `-d` pre-seeds the first line when there is no TEXT. Examples: rusk add buy groceries; rusk add; rusk add -d 2w; rusk add report -d 31-12-2025",
+        about = "Add a new task (without TEXT opens the interactive editor)",
+        long_about = "Add a new task. With TEXT: one-shot. Without TEXT: opens the interactive \
+editor (set or clear a due date on the first line). Optional `-d` pre-seeds the first line \
+when there is no TEXT.\n\n\
+Examples:\n  \
+rusk add buy groceries\n  \
+rusk add report -d 31-12-2025\n  \
+rusk add                          # interactive editor\n  \
+rusk add -d 2w                    # editor with the date pre-seeded",
         help_template = "{about-section}\n\nUsage: rusk add [OPTIONS] [TEXT]...\n\n{all-args}\n\n{after-help}",
         after_long_help = DATE_FORMAT_LONG_HELP
     )]
@@ -67,7 +75,12 @@ pub enum Command {
     },
     #[command(
         visible_alias = "d",
-        about = "Delete tasks by ID, or all completed ones with --done. Examples: rusk del 3; rusk del 1,2,3; rusk del --done",
+        about = "Delete tasks by ID, or all completed ones with --done",
+        long_about = "Delete tasks by ID, or all completed ones with --done.\n\n\
+Examples:\n  \
+rusk del 3\n  \
+rusk del 1,2,3\n  \
+rusk del --done",
         help_template = "{about-section}\n\nUsage: rusk del [OPTIONS] [IDS]...\n\n{all-args}"
     )]
     Del {
@@ -82,7 +95,12 @@ pub enum Command {
     },
     #[command(
         visible_alias = "m",
-        about = "Toggle task completion by ID, or priority with -p (orange `p` instead of `•`). Examples: rusk mark 3; rusk mark 1,2,3; rusk mark 1 -p"
+        about = "Mark tasks as done/undone, or toggle priority with -p",
+        long_about = "Toggle task completion by ID, or priority with -p (orange `p` instead of `•`).\n\n\
+Examples:\n  \
+rusk mark 3\n  \
+rusk mark 1,2,3\n  \
+rusk mark 1 -p"
     )]
     Mark {
         #[arg(
@@ -99,7 +117,15 @@ pub enum Command {
     },
     #[command(
         visible_alias = "e",
-        about = "Edit tasks by ID. Without new text, opens the interactive editor (set or clear a due date on the first line). With text, sets task text in one shot. Optional `-d <date>` (non-TUI) sets the due date. Examples: rusk e 1; rusk e 1 -d 2w; rusk e 3 new text -d 15-06-2025; rusk e 1 -d _",
+        about = "Edit tasks by ID (without new text opens the interactive editor)",
+        long_about = "Edit tasks by ID. Without new text, opens the interactive editor (set or \
+clear a due date on the first line). With text, sets task text in one shot. Optional `-d <date>` \
+(non-TUI) sets the due date.\n\n\
+Examples:\n  \
+rusk e 1                          # interactive editor\n  \
+rusk e 1 -d 2w\n  \
+rusk e 3 new text -d 15-06-2025\n  \
+rusk e 1 -d _                     # clear the due date",
         help_template = "{about-section}\n\nUsage: rusk edit [ARGS]...\n\n{all-args}\n\n{after-help}",
         after_long_help = EDIT_SUBCOMMAND_LONG_HELP
     )]
@@ -114,7 +140,9 @@ pub enum Command {
     },
     #[command(
         visible_alias = "l",
-        about = "List all tasks with status, ID, date, and text. Running `rusk` without a subcommand does the same. Use -c for a compact single-line view"
+        about = "List all tasks (same as running `rusk` without a command)",
+        long_about = "List all tasks with status, ID, date, and text. Running `rusk` without a \
+subcommand does the same. Use -c for a compact single-line view."
     )]
     List {
         #[arg(long, hide = true, default_value_t = false)]
@@ -134,7 +162,13 @@ pub enum Command {
     #[cfg(feature = "web")]
     #[command(
         visible_alias = "g",
-        about = "Generate a self-contained read-only HTML page with all tasks (mobile-first, themed from the config). Examples: rusk gen; rusk gen -o /var/www/tasks/index.html; rusk gen -o -"
+        about = "Generate a read-only HTML page with all tasks",
+        long_about = "Generate a self-contained read-only HTML page with all tasks \
+(mobile-first, themed from the config).\n\n\
+Examples:\n  \
+rusk gen\n  \
+rusk gen -o /var/www/tasks/index.html\n  \
+rusk gen -o -                     # write to stdout"
     )]
     Gen {
         #[arg(
@@ -149,7 +183,14 @@ pub enum Command {
     #[cfg(feature = "web")]
     #[command(
         visible_alias = "s",
-        about = "Serve the web UI with full task editing (mobile-first). Binds 127.0.0.1:7272 by default; host/port/token come from the config (web_host, web_port, web_token). Examples: rusk serve; rusk serve --port 8080; rusk serve --host 0.0.0.0"
+        about = "Serve the web UI with full task editing",
+        long_about = "Serve the web UI with full task editing (mobile-first). Binds \
+127.0.0.1:7272 by default; host/port/token come from the config (web_host, web_port, \
+web_token).\n\n\
+Examples:\n  \
+rusk serve\n  \
+rusk serve --port 8080\n  \
+rusk serve --host 0.0.0.0"
     )]
     Serve {
         #[arg(
@@ -167,7 +208,15 @@ pub enum Command {
     },
     #[cfg(feature = "sync")]
     #[command(
-        about = "Synchronize the task database with a remote: `sync_remote` in the config is either user@host:/path/tasks.json (ssh) or https://host (rusk serve API). Without a subcommand, fast-forwards in whichever direction changed and refuses when both sides changed. Examples: rusk sync; rusk sync push; rusk sync pull --force"
+        about = "Synchronize the task database with a remote",
+        long_about = "Synchronize the task database with a remote: `sync_remote` in the config \
+is either user@host:/path/tasks.json (ssh) or https://host (rusk serve API). Without a \
+subcommand, fast-forwards in whichever direction changed and refuses when both sides \
+changed.\n\n\
+Examples:\n  \
+rusk sync\n  \
+rusk sync push\n  \
+rusk sync pull --force"
     )]
     Sync {
         #[command(subcommand)]
@@ -176,7 +225,12 @@ pub enum Command {
     #[cfg(feature = "completions")]
     #[command(
         visible_alias = "c",
-        about = "Manage shell completions. Examples: rusk completions install bash; rusk completions install fish nu; rusk completions show zsh"
+        about = "Manage shell completions (bash, zsh, fish, nu, powershell)",
+        long_about = "Manage shell completions (bash, zsh, fish, nu, powershell).\n\n\
+Examples:\n  \
+rusk completions install bash\n  \
+rusk completions install fish nu\n  \
+rusk completions show zsh"
     )]
     Completions {
         #[command(subcommand)]

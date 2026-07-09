@@ -88,6 +88,10 @@ rusk add Finish project report --date 31.12.25
 # Leading zero for day and month is optional:
 rusk add Finish project report --date 1-3-25
 
+# Plain words work too:
+rusk add Call mom --date today
+rusk add Buy milk --date tomorrow
+
 # Relative deadline from today (local date): chain number + suffix with no spaces.
 # d=days, w=weeks, m=months, q=quarters (3 months), y=years
 rusk add Follow up --date 2w

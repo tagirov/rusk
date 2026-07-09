@@ -105,6 +105,7 @@ const HELP_ROWS: &[HelpRow] = &[
     HelpRow::Blank,
     HelpRow::Section("Due date — first token of the first line"),
     HelpRow::Pair("DD-MM-YYYY", "absolute (also `/` or `.`; short year ok)"),
+    HelpRow::Pair("today / tomorrow", "plain words work too"),
     HelpRow::Pair("2d 2w 3m 1q 1y", "relative from today (combine: 10d5w)"),
     HelpRow::Pair(
         "+2w, +10d5w",

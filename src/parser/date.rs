@@ -91,6 +91,16 @@ pub fn parse_cli_date_with_base(date_str: &str, base: NaiveDate) -> Result<Naive
         anyhow::bail!("Date cannot be empty");
     }
 
+    match trimmed.to_ascii_lowercase().as_str() {
+        "today" => return Ok(base),
+        "tomorrow" => {
+            return base
+                .checked_add_signed(Duration::days(1))
+                .context("Date out of range after adding 1 day");
+        }
+        _ => {}
+    }
+
     let absolute_only = trimmed.contains('-') || trimmed.contains('/') || trimmed.contains('.');
     if !absolute_only {
         let b = trimmed.as_bytes();
@@ -109,6 +119,7 @@ pub fn parse_cli_date_with_base(date_str: &str, base: NaiveDate) -> Result<Naive
         format!(
             "Invalid date '{}': use DD-MM-YYYY, DD/MM/YYYY, or DD.MM.YYYY (D-M-YY is OK), \
 or DD-Mon-YY / DD-Mon-YYYY (e.g. 11-jan-25), \n\
+or `today` / `tomorrow`, \
 or a relative offset such as 2d, 2w, 5m, 3q, 2y (combinable, e.g. 10d5w); \
 with a leading + when editing, count from the task's current due date (today if none)",
             trimmed
@@ -301,6 +312,23 @@ mod tests {
         assert_eq!(
             parse_cli_date_with_base("01.06.2026", base).unwrap(),
             d(2026, 6, 1)
+        );
+    }
+
+    #[test]
+    fn today_and_tomorrow_words() {
+        let base = d(2025, 1, 31);
+        assert_eq!(
+            parse_cli_date_with_base("today", base).unwrap(),
+            d(2025, 1, 31)
+        );
+        assert_eq!(
+            parse_cli_date_with_base("Tomorrow", base).unwrap(),
+            d(2025, 2, 1)
+        );
+        assert_eq!(
+            parse_cli_date_with_base(" TODAY ", base).unwrap(),
+            d(2025, 1, 31)
         );
     }
 

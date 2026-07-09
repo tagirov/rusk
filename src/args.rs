@@ -6,6 +6,7 @@ use crate::completions::Shell;
 pub const DATE_FORMAT_LONG_HELP: &str = "\
 Date value for -d / --date (see `rusk add --help`):
   Absolute    DD-MM-YYYY (slashes ok; short year ok, e.g. 1-3-25).
+  Words       today, tomorrow.
   Relative    Offset from today's local date. Chain segments with no spaces.
               Suffixes: d=days, w=weeks, m=months, q=quarters (3 months), y=years.
               Examples: 2d, 2w, 5m, 3q, 2y, 10d5w, 12d2q1y.
@@ -69,7 +70,7 @@ rusk add -d 2w                    # editor with the date pre-seeded",
             long,
             value_name = "DATE",
             allow_hyphen_values = true,
-            help = "Due date: DD-MM-YYYY (slashes/dots ok, 1-7-25 ok), or relative from today (2d, 3q, 10d5w, …). See `rusk add --help` for full syntax. Pass `-d -h` for this command's help"
+            help = "Due date: DD-MM-YYYY (slashes/dots ok, 1-7-25 ok), today/tomorrow, or relative from today (2d, 3q, 10d5w, …). See `rusk add --help` for full syntax. Pass `-d -h` for this command's help"
         )]
         date: Option<String>,
     },

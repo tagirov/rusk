@@ -857,16 +857,17 @@ complete -c rusk -f -n '__fish_use_subcommand' -a 'serve' -d 'Serve the web UI'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'sync' -d 'Synchronize with a remote'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'completions' -d 'Install shell completions'
 
-# Aliases
-complete -c rusk -f -n '__fish_use_subcommand' -a 'a' -d 'Alias for add'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'e' -d 'Alias for edit'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'm' -d 'Alias for mark'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'd' -d 'Alias for del'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'l' -d 'Alias for list'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'r' -d 'Alias for restore'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'g' -d 'Alias for gen'
-complete -c rusk -f -n '__fish_use_subcommand' -a 's' -d 'Alias for serve'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'c' -d 'Alias for completions'
+# Aliases share the command description so the fish pager groups each
+# alias with its command on one aligned row (e.g. "a  add    Add a new task").
+complete -c rusk -f -n '__fish_use_subcommand' -a 'a' -d 'Add a new task'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'e' -d 'Edit tasks by id(s)'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'm' -d 'Mark tasks as done/undone'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'd' -d 'Delete tasks by id(s)'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'l' -d 'List all tasks'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'r' -d 'Restore from backup'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'g' -d 'Generate a read-only HTML page'
+complete -c rusk -f -n '__fish_use_subcommand' -a 's' -d 'Serve the web UI'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'c' -d 'Install shell completions'
 
 # Global flags (-s/-l only appear after "-" on the token; -a lists them with subcommands on bare <tab>)
 complete -c rusk -f -n '__fish_use_subcommand' -a '-h' -d 'Show help'

@@ -246,6 +246,10 @@ impl HandlerCLI {
         }
 
         Self::print_not_found_ids(&not_found);
+        if any_changed {
+            // Blank separator comes from the list header's leading newline.
+            Self::handle_list_tasks(tm.tasks(), crate::config::config().compact);
+        }
         Ok(())
     }
 
@@ -404,6 +408,7 @@ impl HandlerCLI {
         let date_change_requested = date.is_some();
 
         let (edited, unchanged, not_found) = tm.edit_tasks(ids, text, date)?;
+        let any_edited = !edited.is_empty();
 
         for id in edited {
             if let Some(idx) = tm.find_task_by_id(id) {
@@ -449,6 +454,10 @@ impl HandlerCLI {
         }
 
         Self::print_not_found_ids(&not_found);
+        if any_edited {
+            // Blank separator comes from the list header's leading newline.
+            Self::handle_list_tasks(tm.tasks(), crate::config::config().compact);
+        }
         Ok(())
     }
 

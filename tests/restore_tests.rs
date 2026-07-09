@@ -12,8 +12,7 @@ fn test_restore_from_backup() -> Result<()> {
     let db_path = temp_dir.path().join("test.json");
 
     // Create initial TaskManager with some tasks
-    let mut tm = TaskManager::new_empty()?;
-    tm.db_path = db_path.clone();
+    let mut tm = TaskManager::new_empty_with_path(db_path.clone());
     tm.tasks.push(create_test_task(1, "Original task 1", false));
     tm.tasks.push(create_test_task_with_date(
         2,
@@ -57,8 +56,7 @@ fn test_restore_no_backup_file() -> Result<()> {
     let temp_dir = TempDir::new()?;
     let db_path = temp_dir.path().join("test.json");
 
-    let mut tm = TaskManager::new_empty()?;
-    tm.db_path = db_path.clone();
+    let mut tm = TaskManager::new_empty_with_path(db_path.clone());
 
     // Try to restore without backup file
     let result = tm.restore_from_backup();
@@ -80,8 +78,7 @@ fn test_restore_corrupted_backup() -> Result<()> {
     let db_path = temp_dir.path().join("test.json");
     let backup_path = temp_dir.path().join("test.json.backup");
 
-    let mut tm = TaskManager::new_empty()?;
-    tm.db_path = db_path.clone();
+    let mut tm = TaskManager::new_empty_with_path(db_path.clone());
 
     // Create corrupted backup file
     fs::write(&backup_path, "invalid json content")?;
@@ -103,8 +100,7 @@ fn test_restore_creates_before_restore_backup() -> Result<()> {
     let before_restore_path = temp_dir.path().join("test.json.before_restore");
 
     // Create TaskManager with current data
-    let mut tm = TaskManager::new_empty()?;
-    tm.db_path = db_path.clone();
+    let mut tm = TaskManager::new_empty_with_path(db_path.clone());
     tm.tasks.push(create_test_task(1, "Current task", false));
     tm.save()?;
 
@@ -136,8 +132,7 @@ fn test_restore_with_corrupted_current_database() -> Result<()> {
     let db_path = temp_dir.path().join("test.json");
     let backup_path = temp_dir.path().join("test.json.backup");
 
-    let mut tm = TaskManager::new_empty()?;
-    tm.db_path = db_path.clone();
+    let mut tm = TaskManager::new_empty_with_path(db_path.clone());
 
     // Create valid backup
     let backup_tasks = vec![create_test_task(1, "Backup task", false)];
@@ -163,8 +158,7 @@ fn test_restore_empty_backup() -> Result<()> {
     let db_path = temp_dir.path().join("test.json");
     let backup_path = temp_dir.path().join("test.json.backup");
 
-    let mut tm = TaskManager::new_empty()?;
-    tm.db_path = db_path.clone();
+    let mut tm = TaskManager::new_empty_with_path(db_path.clone());
     tm.tasks.push(create_test_task(1, "Current task", false));
     tm.save()?;
 

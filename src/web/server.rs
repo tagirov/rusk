@@ -164,12 +164,10 @@ fn read_body(request: &mut Request) -> Result<String> {
     Ok(body)
 }
 
-/// Fresh TaskManager per request: the file is tiny (≤255 tasks) and this
+/// Fresh TaskManager per request: the database is tiny (≤255 tasks) and this
 /// guarantees CLI writes are always visible.
 fn open_tm() -> Result<TaskManager> {
-    let db_path = TaskManager::resolve_db_path();
-    let tasks = TaskManager::load_tasks_from_path(&db_path)?;
-    Ok(TaskManager { tasks, db_path })
+    TaskManager::open()
 }
 
 fn task_id_from_path(path: &str) -> Option<u8> {
@@ -322,7 +320,12 @@ pub fn run(opts: ServeOptions) -> Result<()> {
         .map(|a| a.to_string())
         .unwrap_or_else(|| format!("{}:{}", opts.host, opts.port));
     println!("rusk serve listening on http://{addr}");
-    println!("Database: {}", TaskManager::resolve_db_path().display());
+    println!(
+        "Database: {}",
+        crate::backend::Backend::resolve()
+            .map(|b| b.describe())
+            .unwrap_or_else(|e| format!("unavailable ({e})"))
+    );
     println!(
         "Auth: {}",
         if opts.token.is_some() {

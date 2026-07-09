@@ -1,35 +1,9 @@
-//! On-disk database formats. JSON stays the default; pointing the database
-//! path (`RUSK_DB` / `rusk_db`) at a `.csv` file switches to CSV (RFC 4180,
-//! fixed `id,text,date,done,priority` schema) for spreadsheet interop:
-//! LibreOffice/Excel edit the file in place, Google Sheets can import it.
+//! CSV database format (RFC 4180, fixed `id,text,date,done,priority`
+//! schema) for spreadsheet interop: LibreOffice/Excel edit the file in
+//! place, Google Sheets can import it.
 
 use crate::model::Task;
 use anyhow::{Result, bail};
-use std::path::Path;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DbFormat {
-    Json,
-    Csv,
-}
-
-impl DbFormat {
-    /// Detects the format from the database file name. Auxiliary files keep
-    /// the base extension in the name (`tasks.csv.backup`, `tasks.csv.tmp`),
-    /// so a `.csv` segment anywhere selects CSV.
-    pub fn from_path(path: &Path) -> Self {
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_ascii_lowercase();
-        if name.ends_with(".csv") || name.contains(".csv.") {
-            DbFormat::Csv
-        } else {
-            DbFormat::Json
-        }
-    }
-}
 
 const CSV_COLUMNS: [&str; 5] = ["id", "text", "date", "done", "priority"];
 
@@ -174,7 +148,6 @@ pub fn from_csv(data: &str) -> Result<Vec<Task>> {
 mod tests {
     use super::*;
     use chrono::NaiveDate;
-    use std::path::PathBuf;
 
     fn task(id: u8, text: &str) -> Task {
         Task {
@@ -184,31 +157,6 @@ mod tests {
             done: false,
             priority: false,
         }
-    }
-
-    #[test]
-    fn format_detection() {
-        assert_eq!(
-            DbFormat::from_path(&PathBuf::from("/a/tasks.json")),
-            DbFormat::Json
-        );
-        assert_eq!(
-            DbFormat::from_path(&PathBuf::from("/a/tasks.csv")),
-            DbFormat::Csv
-        );
-        assert_eq!(
-            DbFormat::from_path(&PathBuf::from("/a/Tasks.CSV")),
-            DbFormat::Csv
-        );
-        // Auxiliary files inherit the base format.
-        assert_eq!(
-            DbFormat::from_path(&PathBuf::from("/a/tasks.csv.backup")),
-            DbFormat::Csv
-        );
-        assert_eq!(
-            DbFormat::from_path(&PathBuf::from("/a/tasks.json.backup")),
-            DbFormat::Json
-        );
     }
 
     #[test]

@@ -1,4 +1,5 @@
 pub mod args;
+pub mod backend;
 pub mod cli;
 pub mod codec;
 #[cfg(feature = "completions")]
@@ -10,10 +11,13 @@ pub mod parser;
 pub mod storage;
 #[cfg(feature = "sync")]
 pub mod sync;
+#[cfg(any(feature = "backend-http", feature = "backend-ssh"))]
+pub mod transport;
 #[cfg(feature = "web")]
 pub mod web;
 pub mod windows_console;
 
+pub use backend::Backend;
 pub use config::{ColorValue, Config, Theme};
 pub use model::Task;
 

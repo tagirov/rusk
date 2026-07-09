@@ -1,12 +1,12 @@
 //! `rusk sync`: whole-database synchronization with a remote.
 //!
-//! Transports (chosen by the shape of `sync_remote`):
-//! - `user@host:/path/tasks.json` — the system `ssh` binary; pull is a remote
-//!   `cat`, push streams the file to a temp path and `mv`s it into place
-//!   (atomic replace). The user's keys, agent and ~/.ssh/config just work.
-//! - `http(s)://host[:port]` — the API of a running `rusk serve`, via the
-//!   system `curl` (GET /api/tasks, PUT /api/tasks) with an optional Bearer
-//!   token (`sync_token`).
+//! Transports (chosen by the shape of `sync_remote`) are the remote storage
+//! backends themselves: `user@host:/path/tasks.json` uses the ssh backend
+//! (system `ssh`; pull is a remote `cat`, push is an atomic temp+`mv`
+//! replace), `http(s)://host[:port]` uses the http backend (the API of a
+//! running `rusk serve` via the system `curl`, optional Bearer token from
+//! `sync_token`). Unlike `rusk_db`, the ssh form here also accepts a bare
+//! `host:/path` without `user@`.
 //!
 //! Conflict safety without merge machinery: a state file next to the
 //! database stores the hash of the last synced content. Comparing
@@ -16,12 +16,11 @@
 //! re-encoded as compact JSON), so the pretty-printed local file and the
 //! compact HTTP body compare equal, as do CSV-backed databases.
 
+use crate::backend::{Backend, http::HttpBackend, ssh::SshBackend};
 use crate::config::theme;
-use crate::{Task, TaskManager};
+use crate::Task;
 use anyhow::{Context, Result, bail};
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone, Copy)]
 pub enum Direction {
@@ -30,32 +29,47 @@ pub enum Direction {
     Pull { force: bool },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
 enum Remote {
-    Ssh { target: String, path: String },
-    Http { base: String },
+    Ssh(SshBackend),
+    Http(HttpBackend),
 }
 
 impl Remote {
-    fn parse(s: &str) -> Result<Self> {
+    fn parse(s: &str, token: Option<String>) -> Result<Self> {
         if s.starts_with("http://") || s.starts_with("https://") {
-            return Ok(Remote::Http {
-                base: s.trim_end_matches('/').to_string(),
-            });
+            return Ok(Remote::Http(HttpBackend::new(s, token)));
         }
         if let Some((target, path)) = s.split_once(':')
             && !target.is_empty()
             && !path.is_empty()
         {
-            return Ok(Remote::Ssh {
-                target: target.to_string(),
-                path: path.to_string(),
-            });
+            return Ok(Remote::Ssh(SshBackend::new(target, path)?));
         }
         bail!(
             "invalid sync remote '{s}': expected `user@host:/path/tasks.json` (ssh) \
              or `https://host` (rusk serve API)"
         );
+    }
+
+    fn describe(&self) -> String {
+        match self {
+            Remote::Ssh(b) => b.describe(),
+            Remote::Http(b) => b.describe(),
+        }
+    }
+
+    fn fetch(&self) -> Result<Vec<Task>> {
+        match self {
+            Remote::Ssh(b) => b.load(),
+            Remote::Http(b) => b.load(),
+        }
+    }
+
+    fn push(&self, tasks: &[Task]) -> Result<()> {
+        match self {
+            Remote::Ssh(b) => b.save(tasks),
+            Remote::Http(b) => b.save(tasks),
+        }
     }
 }
 
@@ -126,150 +140,26 @@ fn write_base(state_path: &Path, remote: &str, hash: &str) {
     }
 }
 
-fn shell_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', r"'\''"))
-}
-
-fn run_tool(mut cmd: Command, stdin_data: Option<&[u8]>, tool: &str) -> Result<Vec<u8>> {
-    cmd.stdin(if stdin_data.is_some() {
-        Stdio::piped()
-    } else {
-        Stdio::null()
-    });
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            anyhow::anyhow!("`{tool}` not found in PATH (required for this sync remote)")
-        } else {
-            anyhow::anyhow!("failed to run {tool}: {e}")
-        }
-    })?;
-    if let Some(data) = stdin_data {
-        child
-            .stdin
-            .take()
-            .expect("stdin piped")
-            .write_all(data)
-            .with_context(|| format!("failed to stream data to {tool}"))?;
-    }
-    let output = child
-        .wait_with_output()
-        .with_context(|| format!("failed to wait for {tool}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("{tool} failed ({}): {}", output.status, stderr.trim());
-    }
-    Ok(output.stdout)
-}
-
-impl Remote {
-    fn describe(&self) -> String {
-        match self {
-            Remote::Ssh { target, path } => format!("{target}:{path}"),
-            Remote::Http { base } => base.clone(),
-        }
-    }
-
-    fn fetch(&self, token: Option<&str>) -> Result<Vec<Task>> {
-        match self {
-            Remote::Ssh { target, path } => {
-                let quoted = shell_quote(path);
-                let mut cmd = Command::new("ssh");
-                cmd.arg(target)
-                    .arg(format!("test -f {quoted} && cat {quoted} || true"));
-                let raw = run_tool(cmd, None, "ssh")?;
-                let text = String::from_utf8_lossy(&raw);
-                if text.trim().is_empty() {
-                    return Ok(Vec::new());
-                }
-                match crate::codec::DbFormat::from_path(Path::new(path)) {
-                    crate::codec::DbFormat::Csv => crate::codec::from_csv(&text)
-                        .with_context(|| format!("remote file {path} is not valid CSV")),
-                    crate::codec::DbFormat::Json => serde_json::from_str(&text)
-                        .with_context(|| format!("remote file {path} is not a valid task list")),
-                }
-            }
-            Remote::Http { base } => {
-                let mut cmd = Command::new("curl");
-                cmd.args(["-fsS", "--max-time", "30"]);
-                if let Some(token) = token {
-                    cmd.args(["-H", &format!("Authorization: Bearer {token}")]);
-                }
-                cmd.arg(format!("{base}/api/tasks"));
-                let raw = run_tool(cmd, None, "curl")?;
-                serde_json::from_slice(&raw).context("remote API returned an invalid task list")
-            }
-        }
-    }
-
-    fn push(&self, tasks: &[Task], token: Option<&str>) -> Result<()> {
-        match self {
-            Remote::Ssh { target, path } => {
-                let data = match crate::codec::DbFormat::from_path(Path::new(path)) {
-                    crate::codec::DbFormat::Csv => crate::codec::to_csv(tasks),
-                    crate::codec::DbFormat::Json => serde_json::to_string_pretty(tasks)
-                        .context("Failed to serialize tasks")?,
-                };
-                let quoted = shell_quote(path);
-                let quoted_tmp = shell_quote(&format!("{path}.tmp"));
-                let mkdir = match path.rsplit_once('/') {
-                    Some((dir, _)) if !dir.is_empty() => {
-                        format!("mkdir -p {} && ", shell_quote(dir))
-                    }
-                    _ => String::new(),
-                };
-                let mut cmd = Command::new("ssh");
-                cmd.arg(target).arg(format!(
-                    "{mkdir}cat > {quoted_tmp} && mv {quoted_tmp} {quoted}"
-                ));
-                run_tool(cmd, Some(data.as_bytes()), "ssh")?;
-                Ok(())
-            }
-            Remote::Http { base } => {
-                let json = serde_json::to_string(tasks).context("Failed to serialize tasks")?;
-                let mut cmd = Command::new("curl");
-                cmd.args([
-                    "-fsS",
-                    "--max-time",
-                    "30",
-                    "-X",
-                    "PUT",
-                    "-H",
-                    "Content-Type: application/json",
-                    "--data-binary",
-                    "@-",
-                ]);
-                if let Some(token) = token {
-                    cmd.args(["-H", &format!("Authorization: Bearer {token}")]);
-                }
-                cmd.arg(format!("{base}/api/tasks"));
-                run_tool(cmd, Some(json.as_bytes()), "curl")?;
-                Ok(())
-            }
-        }
-    }
-}
-
-fn env_or_config(env: &str, config_value: &Option<String>) -> Option<String> {
-    std::env::var(env)
-        .ok()
-        .filter(|v| !v.is_empty())
-        .or_else(|| config_value.clone())
-}
-
 pub fn run(direction: Direction) -> Result<()> {
     let config = crate::config::config();
-    let remote_str = env_or_config("RUSK_SYNC_REMOTE", &config.sync_remote).context(
-        "no sync remote configured: set `sync_remote` in the config file \
-         or the RUSK_SYNC_REMOTE environment variable",
-    )?;
-    let token = env_or_config("RUSK_SYNC_TOKEN", &config.sync_token);
-    let remote = Remote::parse(&remote_str)?;
+    let remote_str = crate::config::env_or_config("RUSK_SYNC_REMOTE", &config.sync_remote)
+        .context(
+            "no sync remote configured: set `sync_remote` in the config file \
+             or the RUSK_SYNC_REMOTE environment variable",
+        )?;
+    let token = crate::config::env_or_config("RUSK_SYNC_TOKEN", &config.sync_token);
+    let remote = Remote::parse(&remote_str, token)?;
 
-    let db_path = TaskManager::resolve_db_path();
-    let local_tasks = TaskManager::load_tasks_from_path(&db_path)?;
-    let remote_tasks = remote.fetch(token.as_deref())?;
+    let local = Backend::resolve()?;
+    let Some(db_path) = local.local_path().map(Path::to_path_buf) else {
+        bail!(
+            "`rusk sync` needs a local database, but the database itself is remote ({}); \
+             remote databases have nothing to sync",
+            local.describe()
+        );
+    };
+    let local_tasks = local.load()?;
+    let remote_tasks = remote.fetch()?;
 
     let local_hash = canonical_hash(&local_tasks)?;
     let remote_hash = canonical_hash(&remote_tasks)?;
@@ -284,7 +174,7 @@ pub fn run(direction: Direction) -> Result<()> {
     );
 
     let push = |tasks: &[Task]| -> Result<()> {
-        remote.push(tasks, token.as_deref())?;
+        remote.push(tasks)?;
         write_base(&state_file, &remote_str, &canonical_hash(tasks)?);
         println!(
             "{} {} task(s) to {}",
@@ -296,12 +186,8 @@ pub fn run(direction: Direction) -> Result<()> {
     };
     let pull = |tasks: Vec<Task>| -> Result<()> {
         let count = tasks.len();
-        let tm = TaskManager {
-            tasks,
-            db_path: db_path.clone(),
-        };
-        tm.save()?;
-        write_base(&state_file, &remote_str, &canonical_hash(&tm.tasks)?);
+        local.save(&tasks)?;
+        write_base(&state_file, &remote_str, &canonical_hash(&tasks)?);
         println!(
             "{} {} task(s) from {}",
             theme().success.paint("Pulled"),
@@ -354,21 +240,20 @@ mod tests {
 
     #[test]
     fn remote_parsing() {
-        assert_eq!(
-            Remote::parse("user@vps:/srv/tasks/tasks.json").unwrap(),
-            Remote::Ssh {
-                target: "user@vps".into(),
-                path: "/srv/tasks/tasks.json".into()
-            }
-        );
-        assert_eq!(
-            Remote::parse("https://tasks.example.com/").unwrap(),
-            Remote::Http {
-                base: "https://tasks.example.com".into()
-            }
-        );
-        assert!(Remote::parse("just-a-host").is_err());
-        assert!(Remote::parse(":/path").is_err());
+        assert!(matches!(
+            Remote::parse("user@vps:/srv/tasks/tasks.json", None).unwrap(),
+            Remote::Ssh(_)
+        ));
+        // Bare host (no user@) is accepted for sync remotes.
+        assert!(matches!(
+            Remote::parse("vps:/srv/tasks/tasks.json", None).unwrap(),
+            Remote::Ssh(_)
+        ));
+        let http = Remote::parse("https://tasks.example.com/", None).unwrap();
+        assert!(matches!(http, Remote::Http(_)));
+        assert_eq!(http.describe(), "https://tasks.example.com");
+        assert!(Remote::parse("just-a-host", None).is_err());
+        assert!(Remote::parse(":/path", None).is_err());
     }
 
     #[test]
@@ -420,11 +305,5 @@ mod tests {
         assert_eq!(read_base(&sp, "user@h:/p"), Some("abc".to_string()));
         // A different remote invalidates the recorded base.
         assert_eq!(read_base(&sp, "user@other:/p"), None);
-    }
-
-    #[test]
-    fn shell_quoting() {
-        assert_eq!(shell_quote("/plain/path"), "'/plain/path'");
-        assert_eq!(shell_quote("with'quote"), r"'with'\''quote'");
     }
 }

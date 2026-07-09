@@ -200,7 +200,8 @@ mod tests {
         assert!(tm.tasks().is_empty());
 
         // Changes persisted to disk.
-        let loaded = TaskManager::load_tasks_from_path(tm.db_path()).unwrap();
+        let path = tm.local_path().unwrap().to_path_buf();
+        let loaded = TaskManager::load_tasks_from_path(&path).unwrap();
         assert!(loaded.is_empty());
     }
 

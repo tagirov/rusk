@@ -1,9 +1,9 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use colored::*;
-use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
+use crate::backend::Backend;
 use crate::model::Task;
 use crate::parse_cli_date_for_edit;
 use crate::parser::date::is_cli_date_clear_value;
@@ -13,118 +13,20 @@ pub type MarkResult = (Vec<(u8, bool)>, Vec<u8>);
 /// Manages task operations and persistence
 pub struct TaskManager {
     pub tasks: Vec<Task>,
-    pub db_path: PathBuf,
+    backend: Backend,
 }
 
-/// Byte offset (0-based) of the first character of each 1-based line in `s`.
-fn line_starts(s: &str) -> Vec<usize> {
-    let mut v = vec![0];
-    for (i, c) in s.char_indices() {
-        if c == '\n' {
-            v.push(i + 1);
-        }
-    }
-    v
-}
-
-fn line_byte_end(data: &str, starts: &[usize], one_based_line: usize) -> Option<usize> {
-    if one_based_line < 1 || one_based_line > starts.len() {
-        return None;
-    }
-    let s = if one_based_line < starts.len() {
-        starts[one_based_line]
-    } else {
-        data.len()
-    };
-    Some(s)
-}
-
-fn error_byte_in_file(data: &str, line: usize, column: usize) -> Option<usize> {
-    if line < 1 {
-        return None;
-    }
-    let starts = line_starts(data);
-    if line > starts.len() {
-        return None;
-    }
-    let line0 = line - 1;
-    let line_start = starts[line0];
-    let after_line = if line0 + 1 < starts.len() {
-        starts[line0 + 1]
-    } else {
-        data.len()
-    };
-    let line_len = after_line - line_start;
-    let col0 = column.saturating_sub(1);
-    if col0 > line_len {
-        return None;
-    }
-    Some(line_start + col0)
-}
-
-fn json_error_line_context(data: &str, e: &serde_json::Error) -> Option<String> {
-    let n = e.line();
-    if n == 0 {
-        return None;
-    }
-    let lines: Vec<_> = data.lines().collect();
-    let i = n - 1;
-    if i >= lines.len() {
-        return None;
-    }
-    let starts = line_starts(data);
-    let first = i.saturating_sub(1) + 1;
-    let last = (i + 2).min(lines.len());
-    let range_str = if first <= last {
-        match (
-            starts.get(first - 1).copied(),
-            line_byte_end(data, &starts, last),
-        ) {
-            (Some(a), Some(b)) if a <= b => format!("context file bytes {a}..{b}"),
-            _ => String::new(),
-        }
-    } else {
-        String::new()
-    };
-
-    let err_str = error_byte_in_file(data, n, e.column())
-        .map(|b| format!("(error at byte {b})"))
-        .unwrap_or_default();
-
-    let ctx = (i.saturating_sub(1)..(i + 2).min(lines.len()))
-        .map(|j| format!("{}: {}", j + 1, lines[j].trim_end()))
-        .collect::<Vec<_>>()
-        .join(" | ");
-
-    let parts = [err_str.as_str(), range_str.as_str()]
-        .into_iter()
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ");
-    if parts.is_empty() {
-        Some(ctx)
-    } else {
-        Some(format!("{parts}: {ctx}"))
-    }
-}
-
-/// Non-fatal warning on stderr (backup / atomic-write fallbacks), in the
-/// theme warning color (yellow by default).
-fn warn_yellow(msg: &str) {
-    eprintln!("{}", crate::config::theme().warning.paint(msg));
-}
-
-fn eprint_db_path(path: &std::path::Path) {
-    eprintln!("{}", format!("Database path: {}", path.display()).blue());
+fn eprint_db_location(location: &str) {
+    eprintln!("{}", format!("Database path: {location}").blue());
 }
 
 struct DbReporter {
-    path: PathBuf,
+    location: String,
 }
 
 impl Drop for DbReporter {
     fn drop(&mut self) {
-        eprint_db_path(&self.path);
+        eprint_db_location(&self.location);
     }
 }
 
@@ -133,14 +35,14 @@ impl TaskManager {
         crate::is_test_mode()
     }
 
-    fn maybe_log_db_path(path: &std::path::Path) {
+    fn maybe_log_db_location(location: &str) {
         static REPORTER: OnceLock<DbReporter> = OnceLock::new();
         if Self::is_test_mode() {
             let _ = REPORTER.get_or_init(|| DbReporter {
-                path: path.to_path_buf(),
+                location: location.to_string(),
             });
         } else if cfg!(debug_assertions) {
-            eprint_db_path(path);
+            eprint_db_location(location);
         }
     }
 
@@ -170,29 +72,34 @@ impl TaskManager {
     }
 
     pub fn new() -> Result<Self> {
-        let db_path = Self::resolve_db_path();
-        let mut tasks = Self::load_tasks_from_path(&db_path)?;
-        Self::maybe_log_db_path(&db_path);
+        let backend = Backend::resolve()?;
+        let mut tasks = backend.load()?;
+        Self::maybe_log_db_location(&backend.describe());
 
         if cfg!(debug_assertions) && !Self::is_test_mode() && tasks.is_empty() {
             tasks = Self::create_sample_tasks();
-            let tm = Self {
-                tasks,
-                db_path: db_path.clone(),
-            };
+            let tm = Self { tasks, backend };
             tm.save()?;
             return Ok(tm);
         }
 
-        Ok(Self { tasks, db_path })
+        Ok(Self { tasks, backend })
+    }
+
+    /// Fresh manager without the debug sample-task seeding: used where the
+    /// database is reloaded per operation (web server requests).
+    pub fn open() -> Result<Self> {
+        let backend = Backend::resolve()?;
+        let tasks = backend.load()?;
+        Ok(Self { tasks, backend })
     }
 
     pub fn new_for_restore() -> Result<Self> {
-        let db_path = Self::resolve_db_path();
-        Self::maybe_log_db_path(&db_path);
+        let backend = Backend::resolve()?;
+        Self::maybe_log_db_location(&backend.describe());
         Ok(Self {
             tasks: Vec::new(),
-            db_path,
+            backend,
         })
     }
 
@@ -201,17 +108,19 @@ impl TaskManager {
             .join("rusk_test")
             .join(std::process::id().to_string())
             .join("tasks.json");
-        Self::maybe_log_db_path(&db_path);
-        Ok(Self {
-            tasks: Vec::new(),
-            db_path,
-        })
+        Self::maybe_log_db_location(&db_path.display().to_string());
+        Ok(Self::new_empty_with_path(db_path))
     }
 
+    /// Empty manager over a local database at `path` (tests and tools).
+    /// Panics on a database location this build cannot handle — the callers
+    /// pass known-good extensions.
     pub fn new_empty_with_path(path: PathBuf) -> Self {
+        let backend =
+            Backend::from_local_path(path).expect("unsupported database path in this build");
         Self {
             tasks: Vec::new(),
-            db_path: path,
+            backend,
         }
     }
 
@@ -223,8 +132,18 @@ impl TaskManager {
         &mut self.tasks
     }
 
-    pub fn db_path(&self) -> &PathBuf {
-        &self.db_path
+    pub fn backend(&self) -> &Backend {
+        &self.backend
+    }
+
+    /// The database file path for local backends; `None` for remote ones.
+    pub fn local_path(&self) -> Option<&Path> {
+        self.backend.local_path()
+    }
+
+    /// Where the database lives, for messages and logs.
+    pub fn location(&self) -> String {
+        self.backend.describe()
     }
 
     pub fn add_task(&mut self, text: Vec<String>, date: Option<String>) -> Result<()> {
@@ -416,178 +335,34 @@ impl TaskManager {
     }
 
     pub fn save(&self) -> Result<()> {
-        let ensure_dir = || {
-            if let Some(parent) = self.db_path.parent() {
-                fs::create_dir_all(parent)
-            } else {
-                Ok(())
-            }
-        };
-
-        ensure_dir().context("Failed to create directory for the database file")?;
-
-        if crate::config::config().backup && self.db_path.exists() {
-            let backup_path = Self::aux_path(&self.db_path, "backup");
-            if let Err(e) = fs::copy(&self.db_path, &backup_path) {
-                warn_yellow(&format!("Warning: Failed to create backup: {e}"));
-            }
-        }
-
-        let data = match crate::codec::DbFormat::from_path(&self.db_path) {
-            crate::codec::DbFormat::Json => {
-                serde_json::to_string_pretty(&self.tasks).context("Failed to serialize tasks")?
-            }
-            crate::codec::DbFormat::Csv => crate::codec::to_csv(&self.tasks),
-        };
-
-        let temp_path = Self::aux_path(&self.db_path, "tmp");
-
-        fs::write(&temp_path, &data).context("Failed to write temporary database file")?;
-
-        match fs::rename(&temp_path, &self.db_path) {
-            Ok(_) => {}
-            Err(e) => {
-                ensure_dir().ok();
-
-                match fs::copy(&temp_path, &self.db_path) {
-                    Ok(_) => {
-                        let _ = fs::remove_file(&temp_path);
-                        if !Self::is_test_mode() {
-                            warn_yellow(&format!(
-                                "Warning: Atomic rename failed ({e}), used copy+remove instead"
-                            ));
-                        }
-                    }
-                    Err(copy_err) => {
-                        ensure_dir().ok();
-                        let _ = fs::remove_file(&temp_path);
-                        fs::write(&self.db_path, data).context("Failed to write database file")?;
-                        if !Self::is_test_mode() {
-                            warn_yellow(&format!(
-                                "Warning: Atomic write failed ({e}), copy fallback also failed ({copy_err}), used direct write instead"
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(())
+        self.backend.save(&self.tasks)
     }
 
-    /// Auxiliary sibling of the database file: `tasks.json` + `backup` →
-    /// `tasks.json.backup` (and `tasks.csv` → `tasks.csv.backup`), so the
-    /// base format stays recognizable in the name.
-    fn aux_path(path: &std::path::Path, suffix: &str) -> PathBuf {
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("json");
-        path.with_extension(format!("{ext}.{suffix}"))
-    }
-
-    /// Directory values (existing dir or trailing `/`) get `tasks.json` appended.
-    fn db_path_from_value(path: PathBuf) -> PathBuf {
-        if path.is_dir() || path.to_string_lossy().ends_with('/') {
-            path.join("tasks.json")
-        } else {
-            path
-        }
-    }
-
+    /// The local database file path this build would use, ignoring remote
+    /// locations (test/debug runs are pinned to a temp file anyway).
     pub fn resolve_db_path() -> PathBuf {
-        if Self::is_test_mode() || cfg!(debug_assertions) {
-            std::env::temp_dir().join("rusk_debug").join("tasks.json")
-        } else if let Ok(db_path) = std::env::var("RUSK_DB") {
-            Self::db_path_from_value(PathBuf::from(db_path))
-        } else if let Some(db_path) = &crate::config::config().rusk_db {
-            // `rusk_db` from the config file; the RUSK_DB env var wins above.
-            Self::db_path_from_value(db_path.clone())
-        } else {
-            PathBuf::from(".rusk").join("tasks.json")
-        }
+        Backend::resolve()
+            .ok()
+            .and_then(|b| b.local_path().map(Path::to_path_buf))
+            .unwrap_or_else(|| PathBuf::from(".rusk").join("tasks.json"))
     }
 
+    /// Directory for auxiliary local state (editor drafts). Remote databases
+    /// have no local directory, so those fall back to a temp subdirectory.
     pub fn get_db_dir() -> PathBuf {
-        let db_path = Self::resolve_db_path();
-        db_path.parent().unwrap_or(&db_path).to_path_buf()
+        let backend = Backend::resolve().ok();
+        match backend.as_ref().and_then(|b| b.local_path()) {
+            Some(path) => path.parent().unwrap_or(path).to_path_buf(),
+            None => std::env::temp_dir().join("rusk"),
+        }
     }
 
-    pub fn load_tasks_from_path(path: &PathBuf) -> Result<Vec<Task>> {
-        if !path.exists() {
-            Ok(Vec::new())
-        } else {
-            let data = fs::read_to_string(path).context("Failed to read the database file")?;
-
-            if crate::codec::DbFormat::from_path(path) == crate::codec::DbFormat::Csv {
-                return crate::codec::from_csv(&data).map_err(|e| {
-                    anyhow::anyhow!(
-                        "Failed to parse the CSV database file at '{}': {e}",
-                        path.display()
-                    )
-                });
-            }
-
-            match serde_json::from_str(&data) {
-                Ok(tasks) => Ok(tasks),
-                Err(e) => {
-                    let context_line = json_error_line_context(&data, &e)
-                        .map(|c| format!(" Context: {c}"))
-                        .unwrap_or_default();
-                    let error_msg = format!(
-                        "Failed to parse the database file at '{}'. The file appears to be corrupted.\n\
-                        JSON parsing error: {}{}\n\
-                        \n\
-                        To fix this issue, you can:\n\
-                        1. Delete the corrupted file: rm '{}'\n\
-                        2. Or restore from backup if you have one\n\
-                        3. The application will create a new empty database on next run",
-                        path.display(),
-                        e,
-                        context_line,
-                        path.display()
-                    );
-                    anyhow::bail!("{}", error_msg)
-                }
-            }
-        }
+    pub fn load_tasks_from_path(path: &Path) -> Result<Vec<Task>> {
+        Backend::from_local_path(path.to_path_buf())?.load()
     }
 
     pub fn restore_from_backup(&mut self) -> Result<()> {
-        let backup_path = Self::aux_path(&self.db_path, "backup");
-
-        if !backup_path.exists() {
-            anyhow::bail!("No backup file found at '{}'", backup_path.display());
-        }
-
-        let backup_tasks = Self::load_tasks_from_path(&backup_path)?;
-
-        if self.db_path.exists() {
-            let current_backup_path = Self::aux_path(&self.db_path, "before_restore");
-            match Self::load_tasks_from_path(&self.db_path) {
-                Ok(_) => {
-                    if let Err(e) = fs::copy(&self.db_path, &current_backup_path) {
-                        warn_yellow(&format!("Warning: Failed to backup current database: {e}"));
-                    } else {
-                        println!(
-                            "Current database backed up to: {}",
-                            current_backup_path.display()
-                        );
-                    }
-                }
-                Err(_) => {
-                    println!("Current database is corrupted, skipping backup");
-                }
-            }
-        }
-
-        fs::copy(&backup_path, &self.db_path).context("Failed to restore from backup")?;
-
-        self.tasks = backup_tasks;
-
-        println!(
-            "Successfully restored {} tasks from backup",
-            self.tasks.len()
-        );
-        println!("Backup file: {}", backup_path.display());
-
+        self.tasks = self.backend.restore_from_backup()?;
         Ok(())
     }
 }
@@ -620,6 +395,38 @@ mod tests {
 
         let raw = std::fs::read_to_string(&path).unwrap();
         assert!(raw.starts_with("id,text,date,done,priority"));
+
+        let loaded = TaskManager::load_tasks_from_path(&path).unwrap();
+        assert_eq!(loaded, tm.tasks);
+    }
+
+    #[cfg(feature = "fmt-markdown")]
+    #[test]
+    fn markdown_db_roundtrip_via_task_manager() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tasks.md");
+        let mut tm = TaskManager::new_empty_with_path(path.clone());
+        tm.add_task_with_parsed_date(
+            "markdown task\nwith continuation".to_string(),
+            NaiveDate::from_ymd_opt(2026, 7, 15),
+        )
+        .unwrap();
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.starts_with("- [ ] markdown task @2026-07-15"), "{raw}");
+
+        let loaded = TaskManager::load_tasks_from_path(&path).unwrap();
+        assert_eq!(loaded, tm.tasks);
+    }
+
+    #[cfg(feature = "backend-sqlite")]
+    #[test]
+    fn sqlite_db_roundtrip_via_task_manager() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tasks.db");
+        let mut tm = TaskManager::new_empty_with_path(path.clone());
+        tm.add_task_with_parsed_date("sqlite task".to_string(), None)
+            .unwrap();
 
         let loaded = TaskManager::load_tasks_from_path(&path).unwrap();
         assert_eq!(loaded, tm.tasks);

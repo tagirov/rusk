@@ -167,7 +167,11 @@ theme_keys! {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
-    pub rusk_db: Option<PathBuf>,
+    /// Database location: a path, `https://host` (backend-http) or
+    /// `user@host:/path` (backend-ssh) — see `backend::Backend::parse`.
+    pub rusk_db: Option<String>,
+    pub db_token: Option<String>,
+    pub git_backend: bool,
     pub no_color: bool,
     pub compact: bool,
     pub backup: bool,
@@ -183,6 +187,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             rusk_db: None,
+            db_token: None,
+            git_backend: false,
             no_color: false,
             compact: false,
             backup: true,
@@ -199,6 +205,8 @@ impl Default for Config {
 /// Non-theme setting keys recognized by the parser.
 const SETTINGS: &[&str] = &[
     "rusk_db",
+    "db_token",
+    "git_backend",
     "no_color",
     "compact",
     "backup",
@@ -243,13 +251,22 @@ fn parse_value(raw: &str) -> (String, bool) {
     (raw[..cut].trim_end().to_string(), false)
 }
 
-fn expand_tilde(value: &str) -> PathBuf {
+fn expand_tilde(value: &str) -> String {
     if let Some(rest) = value.strip_prefix("~/")
         && let Some(home) = dirs::home_dir()
     {
-        return home.join(rest);
+        return home.join(rest).to_string_lossy().into_owned();
     }
-    PathBuf::from(value)
+    value.to_string()
+}
+
+/// A non-empty environment variable wins over the config value.
+#[cfg(feature = "backend-http")]
+pub(crate) fn env_or_config(env: &str, config_value: &Option<String>) -> Option<String> {
+    std::env::var(env)
+        .ok()
+        .filter(|v| !v.is_empty())
+        .or_else(|| config_value.clone())
 }
 
 fn parse_bool(value: &str) -> Result<bool, String> {
@@ -283,10 +300,12 @@ fn apply_setting(
     let mut warn = |msg: String| warnings.push(format!("cfg:{line}: {msg}; using default"));
     match key {
         "rusk_db" => config.rusk_db = Some(expand_tilde(value)),
-        "no_color" | "compact" | "backup" => match parse_bool(value) {
+        "db_token" => config.db_token = Some(value.to_string()),
+        "no_color" | "compact" | "backup" | "git_backend" => match parse_bool(value) {
             Ok(b) => match key {
                 "no_color" => config.no_color = b,
                 "compact" => config.compact = b,
+                "git_backend" => config.git_backend = b,
                 _ => config.backup = b,
             },
             Err(e) => warn(format!("invalid value for '{key}': {e}")),
@@ -394,14 +413,20 @@ const DEFAULT_CONFIG: &str = "\
 # Colors: one of the 16 ANSI names (black, red, green, yellow, blue, magenta,
 # cyan, white, bright_black, bright_red, ...) or a hex value like #ffa500.
 # Environment variables always override this file:
-#   RUSK_CONFIG, RUSK_DB, RUSK_NO_COLOR / NO_COLOR,
+#   RUSK_CONFIG, RUSK_DB, RUSK_DB_TOKEN, RUSK_NO_COLOR / NO_COLOR,
 #   RUSK_SYNC_REMOTE, RUSK_SYNC_TOKEN.
 
 # --- variables (any unrecognized key defines one) ---
 # my_accent = #d75f00
 
 # --- behavior ---
-# rusk_db = default          # database path; a .csv extension switches the on-disk format to CSV
+# rusk_db = default          # database location. A path: the extension picks the format
+#                            # (.json default; .csv, .md, .txt (todo.txt), .ndjson/.jsonl,
+#                            # .ics, .db/.sqlite/.sqlite3 — each needs its build feature).
+#                            # Remote: https://host (rusk serve API) or user@host:/path (ssh).
+# db_token =                 # Bearer token when rusk_db is an http(s) location
+# git_backend = false        # commit every save of a local file database to a git repo
+#                            # in the database directory (history + undo; needs `git`)
 # no_color = false           # disable ANSI colors in terminal output
 # compact = false            # compact `rusk list` view by default
 # backup = true              # keep a .backup copy next to the database on every save
@@ -592,10 +617,7 @@ mod tests {
     #[test]
     fn quoted_values_are_literal() {
         let c = cfg("rusk_db = \"/tmp/my # tasks/db.json\"\n");
-        assert_eq!(
-            c.rusk_db.unwrap(),
-            PathBuf::from("/tmp/my # tasks/db.json")
-        );
+        assert_eq!(c.rusk_db.unwrap(), "/tmp/my # tasks/db.json");
     }
 
     #[test]
@@ -651,7 +673,7 @@ mod tests {
     #[test]
     fn default_can_be_shadowed_by_a_variable() {
         let c = cfg("default = /tmp/x.json\nrusk_db = default\n");
-        assert_eq!(c.rusk_db.unwrap(), PathBuf::from("/tmp/x.json"));
+        assert_eq!(c.rusk_db.unwrap(), "/tmp/x.json");
     }
 
     #[test]
@@ -704,8 +726,16 @@ mod tests {
         let c = cfg("rusk_db = ~/tasks/db.json\n");
         let p = c.rusk_db.unwrap();
         if let Some(home) = dirs::home_dir() {
-            assert_eq!(p, home.join("tasks/db.json"));
+            assert_eq!(p, home.join("tasks/db.json").to_string_lossy());
         }
+    }
+
+    #[test]
+    fn remote_locations_are_kept_verbatim() {
+        let c = cfg("rusk_db = https://tasks.example.com\ndb_token = tok\ngit_backend = true\n");
+        assert_eq!(c.rusk_db.as_deref(), Some("https://tasks.example.com"));
+        assert_eq!(c.db_token.as_deref(), Some("tok"));
+        assert!(c.git_backend);
     }
 
     #[test]

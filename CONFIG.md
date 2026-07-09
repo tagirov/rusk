@@ -52,7 +52,9 @@ Environment variables always win over config values.
 
 | Key | Type | Default | Env override | Meaning |
 |---|---|---|---|---|
-| `rusk_db` | path | — | `RUSK_DB` | Database file or directory. `~/` expands to the home directory. A `.csv` extension switches the on-disk format to CSV (see README → Database Formats) |
+| `rusk_db` | location | — | `RUSK_DB` | Database location. A file or directory path (`~/` expands to the home directory) — the extension picks the format: `.csv`, `.md`, `.txt` (todo.txt), `.ndjson`/`.jsonl`, `.ics`, `.db`/`.sqlite`/`.sqlite3` (SQLite), anything else is JSON. Or a remote: `https://host` (the API of a running `rusk serve`) or `user@host:/path` (a file over ssh). See README → Database Formats; non-JSON/CSV variants need their build feature |
+| `db_token` | string | — | `RUSK_DB_TOKEN` | Bearer token when `rusk_db` is an http(s) location (the serve's `web_token`) |
+| `git_backend` | bool | `false` | — | Commit every save of a local file database to a git repository in the database directory (needs `git` and the `backend-git` feature) |
 | `no_color` | bool | `false` | `RUSK_NO_COLOR` / `NO_COLOR` | Disable ANSI colors. The config can only disable colors, never re-enable them over the environment |
 | `compact` | bool | `false` | — | Compact `rusk list` view by default (`-c` still forces it per run) |
 | `backup` | bool | `true` | — | Write a `.backup` copy next to the database on every save |

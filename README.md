@@ -327,26 +327,69 @@ In debug mode, the `RUSK_DB` environment variable is ignored, and the database p
 
 ### Database Formats
 
-The format is chosen by the database file extension: JSON by default, CSV
-when the path ends in `.csv`:
+The format is chosen by the database file extension (JSON by default):
 
 ```bash
 export RUSK_DB="$HOME/tasks/tasks.csv"    # or rusk_db = ~/tasks/tasks.csv in the config
 ```
 
-The CSV schema is `id,text,date,done,priority` (RFC 4180: multiline task
-text, commas and quotes are handled; dates are ISO `YYYY-MM-DD`). This is for
-spreadsheet interop:
+| Extension | Format | Interop | Feature |
+|---|---|---|---|
+| `.json` (or anything else) | pretty JSON | the default | built-in |
+| `.csv` | RFC 4180, `id,text,date,done,priority` schema | LibreOffice / Excel / Google Sheets | built-in |
+| `.md` / `.markdown` | GitHub-style task list | GitHub, Obsidian, any editor | `fmt-markdown` |
+| `.txt` | [todo.txt](http://todotxt.org) | todo.sh, Simpletask, … | `fmt-todotxt` |
+| `.ndjson` / `.jsonl` | one JSON task per line | git diffs, `grep`, `jq` | `fmt-ndjson` |
+| `.ics` | iCalendar VTODO | Thunderbird, Nextcloud Tasks, Apple Reminders | `fmt-ics` |
+| `.db` / `.sqlite` / `.sqlite3` | SQLite | concurrent writers, SQL tooling | `backend-sqlite` |
 
-- **LibreOffice / Excel** open and save the file in place — edit your tasks
-  in a spreadsheet, the CLI sees the changes immediately.
-- **Google Sheets** has no live two-way binding to a plain file: keep the CSV
-  in a Google Drive-synced folder to view/import it in Sheets; edits made in
-  Sheets have to be exported back manually (File → Download → CSV). True
-  bidirectional Sheets sync would require the Sheets API and OAuth, which is
-  out of scope for a minimal CLI.
+All features except `backend-sqlite` (which bundles a C library) are enabled
+by default; distro builds can trim them (`--no-default-features --features …`).
 
-Backups and atomic writes work the same in both formats (`tasks.csv.backup`).
+Notes on the text formats:
+
+- **CSV**: multiline task text, commas and quotes are handled; dates are ISO
+  `YYYY-MM-DD`. LibreOffice/Excel edit the file in place; Google Sheets can
+  import it, but edits made in Sheets have to be exported back manually.
+- **Markdown**: `- [x] text @2026-07-15 <!-- id:3 -->`, a leading `!` marks
+  priority, continuation lines are indented by two spaces. Items added by
+  hand without the id comment get the lowest free id on the next run. rusk
+  owns the file: headers and prose around the list are dropped on save.
+- **todo.txt**: `x (A) text due:2026-07-15 id:3`; projects/contexts stay in
+  the task text; newlines are stored as a literal `\n`.
+- **iCalendar**: one VTODO per task; foreign components (VEVENT, VALARM) are
+  ignored and not preserved.
+
+Backups and atomic writes work the same in every file format
+(`tasks.csv.backup`); SQLite gets the same `.backup` copy per save.
+
+### Remote and git-backed Databases
+
+The database does not have to be a local file — the *shape* of `rusk_db`
+picks the storage backend:
+
+```bash
+rusk_db = https://tasks.example.com     # the API of a running `rusk serve` (feature backend-http)
+db_token = s3cret                       # its web_token, if set (or RUSK_DB_TOKEN)
+
+rusk_db = alex@vps:/srv/tasks/tasks.md  # a file over ssh (feature backend-ssh)
+
+git_backend = true                      # commit every save of a local file database
+                                        # to a git repo in its directory (feature backend-git)
+```
+
+- **http(s)** is a thin client: there is no local copy at all, every command
+  reads and writes through the server, so concurrent writers (another
+  machine, the web UI, cron scripts) never diverge. Requires the network and
+  the server to be up; for offline-first use `rusk sync` instead.
+- **ssh** reads/writes the remote file over the system `ssh` (keys, agent
+  and `~/.ssh/config` apply); the remote extension picks the format, writes
+  are atomic (temp + `mv`). Note this loads/saves per command — on flaky
+  links prefer `rusk sync`.
+- **git_backend** gives full history (`git log`, `git revert`) beyond the
+  single `.backup` copy. An existing enclosing repository is used as-is;
+  otherwise a repo is initialized in the database directory with a
+  `.gitignore` for the auxiliary files. Uses the system `git`.
 
 ### Disabling Colors
 

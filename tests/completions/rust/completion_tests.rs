@@ -447,8 +447,7 @@ fn test_completion_real_rusk_list_output() {
     }
 
     // Create tasks using TaskManager and save to actual path
-    let mut tm = TaskManager::new_empty().unwrap();
-    tm.db_path = actual_db_path.clone();
+    let mut tm = TaskManager::new_empty_with_path(actual_db_path.clone());
     tm.add_task(vec!["Test task 1".to_string()], None).unwrap();
     tm.add_task(
         vec!["Test task 2".to_string()],

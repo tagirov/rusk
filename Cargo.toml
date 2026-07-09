@@ -14,11 +14,35 @@ name = "rusk"
 path = "src/main.rs"
 
 [features]
-default = ["completions", "interactive", "web", "sync"]
+default = [
+    "completions",
+    "interactive",
+    "web",
+    "sync",
+    "fmt-markdown",
+    "fmt-todotxt",
+    "fmt-ndjson",
+    "fmt-ics",
+    "backend-http",
+    "backend-ssh",
+    "backend-git",
+]
 completions = []
 interactive = ["dep:crossterm", "dep:arboard"]
 web = ["dep:tiny_http"]
-sync = []
+# `rusk sync` shares the ssh/http transports with the remote database backends.
+sync = ["backend-ssh", "backend-http"]
+# Database file formats (selected by the rusk_db file extension).
+fmt-markdown = []
+fmt-todotxt = []
+fmt-ndjson = []
+fmt-ics = []
+# Database storage backends (selected by the shape of rusk_db).
+# backend-sqlite is off by default: it pulls in a bundled C library.
+backend-sqlite = ["dep:rusqlite"]
+backend-http = []
+backend-ssh = []
+backend-git = []
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
@@ -33,6 +57,7 @@ crossterm = { version = "0.29", optional = true }
 arboard = { version = "3.4", optional = true, default-features = false, features = [
     "wayland-data-control",
 ] }
+rusqlite = { version = "0.40", optional = true, features = ["bundled"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_Console"] }

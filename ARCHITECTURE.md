@@ -10,10 +10,24 @@ src/
 ├── lib.rs               # Crate root, re-exports
 ├── args.rs              # Clap structs: Cli, Command, CompletionAction, SyncDirection
 ├── model.rs             # Task struct (serde, chrono)
-├── storage.rs           # TaskManager: CRUD, persistence, backup/restore
-├── codec.rs             # On-disk formats: JSON (default) / CSV by db extension
+├── storage.rs           # TaskManager: CRUD over a Backend
+├── codec/               # File formats, chosen by the db extension
+│   ├── mod.rs           # DbFormat: detection, encode/decode dispatch, id fixup
+│   ├── csv.rs           # RFC 4180, spreadsheet interop
+│   ├── markdown.rs      # GitHub task list        [feature = "fmt-markdown"]
+│   ├── todotxt.rs       # todo.txt                [feature = "fmt-todotxt"]
+│   ├── ndjson.rs        # one JSON task per line  [feature = "fmt-ndjson"]
+│   └── ics.rs           # iCalendar VTODO         [feature = "fmt-ics"]
+├── backend/             # Storage backends, chosen by the shape of rusk_db
+│   ├── mod.rs           # Backend enum: resolve/parse, load/save, backup/restore
+│   ├── file.rs          # Local file: atomic write, JSON corruption reports
+│   ├── sqlite.rs        # SQLite file             [feature = "backend-sqlite"]
+│   ├── http.rs          # rusk serve API client   [feature = "backend-http"]
+│   ├── ssh.rs           # File over ssh           [feature = "backend-ssh"]
+│   └── git.rs           # Auto-commit layer for file dbs [feature = "backend-git"]
+├── transport.rs         # System ssh/curl process helpers [backend-http/-ssh]
 ├── config.rs            # Config file (~/.config/rusk/cfg): parser, Theme, global access
-├── sync.rs              # rusk sync: ssh/curl transports, conflict detection [feature = "sync"]
+├── sync.rs              # rusk sync: conflict detection over the remote backends [feature = "sync"]
 ├── error.rs             # AppError enum (typed errors for anyhow downcast)
 ├── parser/
 │   ├── mod.rs           # Re-exports
@@ -79,9 +93,15 @@ cli/dialogs
 
 storage
   ├── model     (Task)
-  ├── codec     (DbFormat, to_csv/from_csv)
-  ├── config    (rusk_db, backup, warning color)
+  ├── backend   (Backend: resolve, load, save, restore)
+  ├── config    (backup, warning color)
   └── parser/date (parse_cli_date)
+
+backend
+  ├── codec     (DbFormat encode/decode by extension)
+  ├── transport (ssh/curl helpers)  [backend-http / backend-ssh]
+  ├── rusqlite  (SQLite)            [backend-sqlite]
+  └── config    (rusk_db, db_token, git_backend, backup)
 
 config
   ├── colored   (Color for theme values)
@@ -93,8 +113,7 @@ web
   └── tiny_http (server loop)      [feature = "web"]
 
 sync
-  ├── storage   (resolve_db_path, load, save)
-  ├── codec     (remote .csv support)
+  ├── backend   (local Backend + remote ssh/http backends)
   └── config    (sync_remote, sync_token)
 
 completions
@@ -105,12 +124,23 @@ Nearly every module also reads `config::theme()` for output colors.
 
 ## Feature flags
 
-| Feature       | Default | Gates                                                        |
-|---------------|---------|--------------------------------------------------------------|
-| `completions` | yes     | `completions` module, `Completions` CLI command              |
-| `interactive` | yes     | `crossterm` + `arboard` deps, editor (clipboard), dialogs      |
-| `web`         | yes     | `tiny_http` dep, `web` module, `gen` + `serve` CLI commands  |
-| `sync`        | yes     | `sync` module, `sync` CLI command (shells out to ssh/curl)   |
+| Feature          | Default | Gates                                                        |
+|------------------|---------|--------------------------------------------------------------|
+| `completions`    | yes     | `completions` module, `Completions` CLI command              |
+| `interactive`    | yes     | `crossterm` + `arboard` deps, editor (clipboard), dialogs      |
+| `web`            | yes     | `tiny_http` dep, `web` module, `gen` + `serve` CLI commands  |
+| `sync`           | yes     | `sync` module + CLI command; implies `backend-ssh` + `backend-http` |
+| `fmt-markdown`   | yes     | `.md` database format (GitHub task list)                     |
+| `fmt-todotxt`    | yes     | `.txt` database format (todo.txt)                            |
+| `fmt-ndjson`     | yes     | `.ndjson` / `.jsonl` database format                         |
+| `fmt-ics`        | yes     | `.ics` database format (iCalendar VTODO)                     |
+| `backend-http`   | yes     | `rusk_db = https://…` (rusk serve API, system curl)          |
+| `backend-ssh`    | yes     | `rusk_db = user@host:/path` (system ssh)                     |
+| `backend-git`    | yes     | `git_backend = true` auto-commit (system git)                |
+| `backend-sqlite` | **no**  | `.db` / `.sqlite` / `.sqlite3` databases (`rusqlite`, bundled C) |
+
+A database location whose format/backend feature is compiled out fails with
+an error naming the missing feature instead of mis-parsing the file.
 
 Without `interactive`: edit commands only work with inline text (`rusk edit 1 new text`),
 delete skips confirmation. Terminal width falls back to 80 columns.
@@ -139,29 +169,44 @@ Build minimal binary: `cargo build --release --no-default-features`
 | `crossterm`  | Terminal raw mode, cursor, key events  |
 | `arboard`    | System clipboard (editor copy/paste)   |
 | `dirs`       | Config/home directory detection        |
+| `rusqlite`   | SQLite backend (feature `backend-sqlite`, bundled) |
 | `windows-sys`| Windows console API (cfg(windows))     |
+
+The remote backends and `git_backend` deliberately shell out to the system
+`ssh`/`curl`/`git` instead of adding TLS/ssh/git crates.
 
 ## Data flow
 
 ```
 User input → clap (args.rs) → main.rs (config::load → init) dispatch
   → HandlerCLI (cli/handlers.rs)
-    → TaskManager (storage.rs) ←→ codec (JSON/CSV) ←→ database file
+    → TaskManager (storage.rs) → Backend (backend/)
+        file:   codec (by extension) ←→ local file (+ optional git commit)
+        sqlite: rusqlite ←→ .db file
+        http:   curl ←→ GET/PUT /api/tasks of a running rusk serve
+        ssh:    ssh ←→ remote file (codec by remote extension)
     → formatter/editor/dialogs → stdout (colors from config::theme)
 
 rusk serve: browser ←→ tiny_http loop (web/server.rs)
-    → api.rs handlers → fresh TaskManager per request ←→ database file
+    → api.rs handlers → fresh TaskManager per request ←→ database
 
-rusk sync: sync.rs → ssh (cat / tmp+mv) or curl (GET/PUT /api/tasks)
-    → conflict check vs .sync state file → TaskManager::save or remote replace
+rusk sync: sync.rs → the ssh/http backends as transports
+    → conflict check vs .sync state file → local Backend::save or remote replace
 ```
 
 ## Persistence
 
-Database at `$RUSK_DB`, `rusk_db` from the config, or the default relative
-path. Format by extension: JSON (default) or CSV (`codec.rs`). Atomic write
-via temp+rename with copy fallback. Auto-backup to `.<ext>.backup` on every
-save (`backup = false` disables).
+Database location from `$RUSK_DB`, `rusk_db` in the config, or the default
+relative path; the shape of the value picks the backend (`backend/mod.rs`),
+the extension picks the file format (`codec/mod.rs`). Local writes are
+atomic (temp+rename with copy fallback); SQLite saves run in a transaction.
+Auto-backup to `.<ext>.backup` on every save for local backends
+(`backup = false` disables); `git_backend = true` additionally commits every
+save to a git repository in the database directory.
+
+Every backend implements the same whole-database load/save contract, so the
+formats stay interchangeable and `rusk sync` hashes content canonically
+(parsed tasks re-encoded as compact JSON) regardless of representation.
 
 Task ids are `u8`: the smallest free id is reused, and the database holds at
 most 255 tasks (adding beyond that returns an error).

@@ -90,9 +90,9 @@ impl HandlerCLI {
         };
 
         let prompt = format!(
-            "{}{}",
-            theme().accent.paint("Restore unsaved draft for new task "),
-            theme().accent.paint("? [y/N]: ")
+            "{} {}",
+            theme().accent.paint("Restore unsaved draft for new task?"),
+            Self::yn_hint()
         );
         let edited =
             Self::run_editor_with_draft("new-task".to_string(), base_prefill, &prompt, None, false, false)?;
@@ -137,10 +137,11 @@ impl HandlerCLI {
             current.to_string()
         };
         let prompt = format!(
-            "{} {} {} ",
+            "{} {}{} {}",
             theme().accent.paint("Restore unsaved draft for task"),
             theme().emphasis.paint(&task_id.to_string()),
-            theme().accent.paint("? [y/N]:")
+            theme().accent.paint("?"),
+            Self::yn_hint()
         );
         let edited = Self::run_editor_with_draft(
             format!("task-{}", task_id),
@@ -267,13 +268,14 @@ impl HandlerCLI {
             }
 
             let confirmed = Self::read_confirmation(&format!(
-                "{}{}{}",
+                "{}{}{} {}",
                 theme().accent.paint("Delete all done tasks ("),
                 theme().emphasis.paint(&done_count.to_string()),
-                theme().accent.paint(")? [y/N]: ")
+                theme().accent.paint(")?"),
+                Self::yn_hint()
             ))?;
             if !confirmed {
-                println!("Canceled.");
+                println!("{}", theme().notice.paint("Canceled."));
                 return Ok(());
             }
         }

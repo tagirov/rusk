@@ -163,7 +163,7 @@ key returns to the editor.
   edited, it prompts:
 
   ```
-  Restore unsaved draft for task 3 ? [y/N]:
+  Restore unsaved draft for task 3? [y/N]:
   ```
 
   Answering `y` pre-loads the draft instead of the stored text. Any other

@@ -12,6 +12,12 @@ use super::HandlerCLI;
 use crate::config::theme;
 
 impl HandlerCLI {
+    /// Shared "[y/N]: " tail for confirmation prompts: dimmed so the
+    /// accent-colored question stays the visual focus.
+    pub(crate) fn yn_hint() -> String {
+        format!("{} ", "[y/N]:".dimmed())
+    }
+
     pub(crate) fn read_confirmation(prompt: &str) -> Result<bool> {
         let mut stdout = io::stdout();
         enable_raw_mode().context("Failed to enable raw mode")?;
@@ -59,6 +65,7 @@ impl HandlerCLI {
         let prompt_plain = "[y/N]: ";
         let prompt_with_space = format!(" {}", prompt_plain);
         let prompt_width = prompt_with_space.chars().count();
+        let prompt_painted = format!(" {}", Self::yn_hint());
 
         let available_width_for_text = max_line_width
             .saturating_sub(LEFT_MARGIN)
@@ -71,11 +78,10 @@ impl HandlerCLI {
             last_line_width + prompt_width <= available_width_for_text;
 
         println!(
-            "{}{}{}{}",
-            theme().accent.paint("Delete "),
-            theme().accent.paint("[ID "),
+            "{}{}{}",
+            theme().accent.paint("Delete task "),
             theme().emphasis.paint(&task_id.to_string()),
-            theme().accent.paint("]:")
+            theme().accent.paint(":")
         );
 
         let left_indent = " ".repeat(LEFT_MARGIN);
@@ -85,12 +91,7 @@ impl HandlerCLI {
             if is_last && prompt_fits_on_last_line {
                 // Prompt fits after the final text line: print inline and let
                 // the caller read the answer from this position.
-                print!(
-                    "{}{}{}",
-                    left_indent,
-                    line.bold(),
-                    theme().accent.paint(&prompt_with_space)
-                );
+                print!("{}{}{}", left_indent, line.bold(), prompt_painted);
                 io::stdout().flush().ok();
                 return String::new();
             }
@@ -102,6 +103,6 @@ impl HandlerCLI {
             .saturating_sub(PROMPT_RIGHT_MARGIN);
         let indent = " ".repeat(spaces_before_prompt);
 
-        format!("{}{}", indent, theme().accent.paint(&prompt_with_space))
+        format!("{}{}", indent, prompt_painted)
     }
 }

@@ -326,13 +326,15 @@ pub(super) fn confirm_discard(stdout: &mut io::Stdout, dialog_row: Option<u16>) 
     let (cols_u16, rows_u16) = super::view::term_size();
     let cols = cols_u16 as usize;
     let last = rows_u16.saturating_sub(1);
-    let prompt = " Discard changes? [y/N] ";
+    // Same style as the CLI confirmation prompts: accent question, dimmed hint.
+    let prompt_plain = " Discard changes? [y/N] ";
     let row = dialog_row.unwrap_or(last);
-    let col = cols.saturating_sub(prompt.chars().count()) / 2;
+    let col = cols.saturating_sub(prompt_plain.chars().count()) / 2;
     stdout.queue(MoveTo(0, row))?;
     stdout.queue(Clear(ClearType::CurrentLine))?;
     stdout.queue(MoveTo(col as u16, row))?;
-    stdout.queue(Print(crate::config::theme().accent.paint(prompt)))?;
+    stdout.queue(Print(crate::config::theme().accent.paint(" Discard changes? ")))?;
+    stdout.queue(Print("[y/N] ".dimmed()))?;
     stdout.flush().ok();
     loop {
         if let Event::Key(KeyEvent {

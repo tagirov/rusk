@@ -42,7 +42,7 @@ fn test_parse_flexible_ids_invalid_ids_ignored() {
 #[test]
 fn test_parse_flexible_ids_empty_input() {
     let ids = parse_flexible_ids(&[]);
-    assert_eq!(ids, vec![] as Vec<u8>);
+    assert_eq!(ids, vec![] as Vec<u32>);
 }
 
 #[test]

@@ -7,7 +7,7 @@
 //! an HttpOnly cookie; `Authorization: Bearer` works for scripting.
 
 use super::api::{self, ApiResponse};
-use crate::TaskManager;
+use crate::{TaskId, TaskManager};
 use anyhow::{Context, Result, anyhow, bail};
 use std::io::Read;
 use tiny_http::{Header, Method, Request, Response, Server};
@@ -170,7 +170,7 @@ fn open_tm() -> Result<TaskManager> {
     TaskManager::open()
 }
 
-fn task_id_from_path(path: &str) -> Option<u8> {
+fn task_id_from_path(path: &str) -> Option<TaskId> {
     path.strip_prefix("/api/tasks/")?.parse().ok()
 }
 

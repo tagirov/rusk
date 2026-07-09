@@ -2,7 +2,7 @@
 //! functions returning `(status, JSON body)`, so they are unit-testable
 //! without a running server and never print.
 
-use crate::{Task, TaskManager};
+use crate::{Task, TaskId, TaskManager};
 use chrono::NaiveDate;
 use serde::Deserialize;
 
@@ -78,9 +78,6 @@ pub fn create_task(tm: &mut TaskManager, body: &str) -> ApiResponse {
     if new.text.trim().is_empty() {
         return ApiResponse::error(400, "Task text cannot be empty");
     }
-    if tm.tasks().len() >= 255 {
-        return ApiResponse::error(409, "Maximum number of tasks (255) reached");
-    }
     match tm.add_task_with_parsed_date(new.text, new.date) {
         Ok(()) => ApiResponse::json(201, &tm.tasks().last()),
         Err(e) => ApiResponse::error(500, &e.to_string()),
@@ -88,7 +85,7 @@ pub fn create_task(tm: &mut TaskManager, body: &str) -> ApiResponse {
 }
 
 /// PATCH /api/tasks/{id} — any subset of `{text, date, done, priority}`.
-pub fn update_task(tm: &mut TaskManager, id: u8, body: &str) -> ApiResponse {
+pub fn update_task(tm: &mut TaskManager, id: TaskId, body: &str) -> ApiResponse {
     let patch: TaskPatch = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(e) => return ApiResponse::error(400, &format!("invalid JSON: {e}")),
@@ -120,7 +117,7 @@ pub fn update_task(tm: &mut TaskManager, id: u8, body: &str) -> ApiResponse {
 }
 
 /// DELETE /api/tasks/{id}
-pub fn delete_task(tm: &mut TaskManager, id: u8) -> ApiResponse {
+pub fn delete_task(tm: &mut TaskManager, id: TaskId) -> ApiResponse {
     if tm.find_task_by_id(id).is_none() {
         return ApiResponse::error(404, &format!("no task with id {id}"));
     }
@@ -144,13 +141,10 @@ pub fn replace_tasks(tm: &mut TaskManager, body: &str) -> ApiResponse {
         Ok(v) => v,
         Err(e) => return ApiResponse::error(400, &format!("invalid JSON: {e}")),
     };
-    if tasks.len() > 255 {
-        return ApiResponse::error(400, "too many tasks (max 255)");
-    }
-    let mut ids: Vec<u8> = tasks.iter().map(|t| t.id).collect();
+    let mut ids: Vec<TaskId> = tasks.iter().map(|t| t.id).collect();
     ids.sort_unstable();
     if ids.first() == Some(&0) || ids.windows(2).any(|w| w[0] == w[1]) {
-        return ApiResponse::error(400, "task ids must be unique and in 1-255");
+        return ApiResponse::error(400, "task ids must be unique and nonzero");
     }
     let count = tasks.len();
     tm.tasks = tasks;
@@ -224,18 +218,19 @@ mod tests {
     }
 
     #[test]
-    fn task_cap_is_409() {
+    fn ids_grow_past_255() {
         let (_dir, mut tm) = tm();
-        for i in 1..=255u16 {
+        for i in 1..=255u32 {
             tm.tasks.push(Task {
-                id: i as u8,
+                id: i,
                 text: format!("t{i}"),
                 date: None,
                 done: false,
                 priority: false,
             });
         }
-        assert_eq!(create_task(&mut tm, r#"{"text":"one more"}"#).status, 409);
+        assert_eq!(create_task(&mut tm, r#"{"text":"one more"}"#).status, 201);
+        assert_eq!(tm.tasks().last().unwrap().id, 256);
     }
 
     #[test]

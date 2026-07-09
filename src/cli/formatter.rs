@@ -276,7 +276,7 @@ impl HandlerCLI {
         }
     }
 
-    pub(crate) fn print_not_found_ids(not_found: &[u8]) {
+    pub(crate) fn print_not_found_ids(not_found: &[crate::model::TaskId]) {
         if !not_found.is_empty() {
             let list = not_found
                 .iter()

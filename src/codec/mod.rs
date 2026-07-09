@@ -23,7 +23,7 @@ pub mod ndjson;
 #[cfg(feature = "fmt-todotxt")]
 pub mod todotxt;
 
-use crate::model::Task;
+use crate::model::{Task, TaskId};
 use anyhow::{Context, Result};
 use std::path::Path;
 
@@ -148,22 +148,26 @@ impl DbFormat {
 /// Post-parse id fixup for interop formats where the id is optional metadata
 /// (Markdown, todo.txt, iCalendar): tasks parsed with id 0 (missing) or with
 /// an id already taken earlier in the file get the lowest free id, mirroring
-/// `TaskManager::generate_next_id`. Fails only when 255 ids are exhausted.
+/// `TaskManager::generate_next_id`.
 #[cfg(any(feature = "fmt-markdown", feature = "fmt-todotxt", feature = "fmt-ics"))]
 pub(crate) fn assign_missing_ids(tasks: &mut [Task]) -> Result<()> {
-    let mut used = [false; 256];
+    let mut used: std::collections::HashSet<TaskId> = std::collections::HashSet::new();
     for task in tasks.iter_mut() {
-        if task.id != 0 && used[task.id as usize] {
+        if task.id != 0 && !used.insert(task.id) {
             task.id = 0; // duplicate: first occurrence wins, this one is reassigned
         }
-        used[task.id as usize] = true;
     }
+    // Ids only ever get claimed, so scanning upward from the previous
+    // assignment still yields the lowest free id for every task.
+    let mut next: TaskId = 1;
     for task in tasks.iter_mut().filter(|t| t.id == 0) {
-        let free = (1..=255u16)
-            .find(|&i| !used[i as usize])
-            .context("Maximum number of tasks (255) reached")? as u8;
-        task.id = free;
-        used[free as usize] = true;
+        while used.contains(&next) {
+            next = next
+                .checked_add(1)
+                .context("Maximum number of tasks reached")?;
+        }
+        task.id = next;
+        used.insert(next);
     }
     Ok(())
 }
@@ -219,7 +223,7 @@ mod tests {
     #[cfg(any(feature = "fmt-markdown", feature = "fmt-todotxt", feature = "fmt-ics"))]
     #[test]
     fn missing_and_duplicate_ids_get_lowest_free() {
-        let task = |id: u8| Task {
+        let task = |id: TaskId| Task {
             id,
             text: String::new(),
             date: None,
@@ -228,7 +232,7 @@ mod tests {
         };
         let mut tasks = vec![task(2), task(0), task(2), task(1)];
         assign_missing_ids(&mut tasks).unwrap();
-        let ids: Vec<u8> = tasks.iter().map(|t| t.id).collect();
+        let ids: Vec<TaskId> = tasks.iter().map(|t| t.id).collect();
         // All explicit ids (2 and 1) are reserved before any assignment, so
         // the missing id and the duplicate 2 get the lowest free ones: 3, 4.
         assert_eq!(ids, vec![2, 3, 4, 1]);

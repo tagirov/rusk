@@ -55,10 +55,10 @@ fn test_generate_next_id_max_reached() {
 }
 
 #[test]
-fn test_generate_next_id_all_255_taken_errors() {
+fn test_generate_next_id_continues_past_255() {
     let mut tm = TaskManager::new_empty().unwrap();
 
-    for i in 1..=255u8 {
+    for i in 1..=255u32 {
         tm.tasks.push(Task {
             id: i,
             text: format!("Task {i}"),
@@ -68,8 +68,8 @@ fn test_generate_next_id_all_255_taken_errors() {
         });
     }
 
-    let err = tm.generate_next_id().unwrap_err();
-    assert!(err.to_string().contains("Maximum number of tasks"));
+    // Ids are no longer capped at u8: the next free id is simply 256.
+    assert_eq!(tm.generate_next_id().unwrap(), 256);
 }
 
 #[test]

@@ -8,7 +8,7 @@
 //! reusable 1–255 ids). Foreign writers may INSERT without `pos` — rowid
 //! semantics append them at the end.
 
-use crate::model::Task;
+use crate::model::{Task, TaskId};
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
@@ -55,7 +55,7 @@ impl SqliteBackend {
         let tasks = stmt
             .query_map([], |row| {
                 Ok((
-                    row.get::<_, u8>(0)?,
+                    row.get::<_, TaskId>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, Option<String>>(2)?,
                     row.get::<_, bool>(3)?,

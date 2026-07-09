@@ -2,7 +2,7 @@
 //! schema) for spreadsheet interop: LibreOffice/Excel edit the file in
 //! place, Google Sheets can import it.
 
-use crate::model::Task;
+use crate::model::{Task, TaskId};
 use anyhow::{Result, bail};
 
 const CSV_COLUMNS: [&str; 5] = ["id", "text", "date", "done", "priority"];
@@ -123,7 +123,7 @@ pub fn from_csv(data: &str) -> Result<Vec<Task>> {
                 record.len()
             );
         }
-        let id: u8 = record[0]
+        let id: TaskId = record[0]
             .trim()
             .parse()
             .map_err(|_| anyhow::anyhow!("CSV row {row}: invalid id '{}' (1-255)", record[0]))?;
@@ -149,7 +149,7 @@ mod tests {
     use super::*;
     use chrono::NaiveDate;
 
-    fn task(id: u8, text: &str) -> Task {
+    fn task(id: TaskId, text: &str) -> Task {
         Task {
             id,
             text: text.to_string(),
@@ -199,7 +199,7 @@ mod tests {
 
     #[test]
     fn errors_carry_row_numbers() {
-        let bad_id = "id,text,date,done,priority\n999,x,,false,false\n";
+        let bad_id = "id,text,date,done,priority\nabc,x,,false,false\n";
         let err = from_csv(bad_id).unwrap_err().to_string();
         assert!(err.contains("row 2"), "{err}");
 

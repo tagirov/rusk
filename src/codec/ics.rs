@@ -10,7 +10,7 @@
 //! owns the file.
 
 use super::assign_missing_ids;
-use crate::model::Task;
+use crate::model::{Task, TaskId};
 use anyhow::{Context, Result};
 use chrono::NaiveDate;
 
@@ -169,7 +169,7 @@ pub fn decode(data: &str) -> Result<Vec<Task>> {
                             .trim()
                             .strip_prefix("rusk-")
                             .map(|r| r.split('@').next().unwrap_or(r))
-                            .and_then(|n| n.parse::<u8>().ok());
+                            .and_then(|n| n.parse::<TaskId>().ok());
                         task.id = id.unwrap_or(0);
                     }
                     "SUMMARY" => task.text = unescape(value),
@@ -196,7 +196,7 @@ pub fn decode(data: &str) -> Result<Vec<Task>> {
 mod tests {
     use super::*;
 
-    fn task(id: u8, text: &str) -> Task {
+    fn task(id: TaskId, text: &str) -> Task {
         Task {
             id,
             text: text.to_string(),

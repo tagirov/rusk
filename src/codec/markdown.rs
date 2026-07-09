@@ -23,7 +23,7 @@
 //! that matters.
 
 use super::assign_missing_ids;
-use crate::model::Task;
+use crate::model::{Task, TaskId};
 use anyhow::Result;
 use chrono::NaiveDate;
 
@@ -67,12 +67,12 @@ fn item_start(line: &str) -> Option<(bool, &str)> {
 
 /// Strips the trailing `<!-- id:N -->` comment; foreign comments stay in the
 /// text.
-fn take_id(content: &str) -> (Option<u8>, &str) {
+fn take_id(content: &str) -> (Option<TaskId>, &str) {
     let trimmed = content.trim_end();
     if let Some(before_close) = trimmed.strip_suffix("-->")
         && let Some((text, inner)) = before_close.rsplit_once("<!--")
         && let Some(id) = inner.trim().strip_prefix("id:")
-        && let Ok(id) = id.trim().parse::<u8>()
+        && let Ok(id) = id.trim().parse::<TaskId>()
         && id != 0
     {
         return (Some(id), text.trim_end());
@@ -143,7 +143,7 @@ pub fn decode(data: &str) -> Result<Vec<Task>> {
 mod tests {
     use super::*;
 
-    fn task(id: u8, text: &str) -> Task {
+    fn task(id: TaskId, text: &str) -> Task {
         Task {
             id,
             text: text.to_string(),

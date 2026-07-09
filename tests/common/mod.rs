@@ -107,7 +107,7 @@ pub fn require_rusk_bin() -> anyhow::Result<PathBuf> {
 }
 
 #[allow(dead_code)]
-pub fn create_test_task(id: u8, text: &str, done: bool) -> Task {
+pub fn create_test_task(id: u32, text: &str, done: bool) -> Task {
     Task {
         id,
         text: text.to_string(),
@@ -118,7 +118,7 @@ pub fn create_test_task(id: u8, text: &str, done: bool) -> Task {
 }
 
 #[allow(dead_code)]
-pub fn create_test_task_with_date(id: u8, text: &str, done: bool, date: &str) -> Task {
+pub fn create_test_task_with_date(id: u32, text: &str, done: bool, date: &str) -> Task {
     Task {
         id,
         text: text.to_string(),
@@ -129,7 +129,7 @@ pub fn create_test_task_with_date(id: u8, text: &str, done: bool, date: &str) ->
 }
 
 #[allow(dead_code)]
-pub fn create_test_task_with_priority(id: u8, text: &str, done: bool, priority: bool) -> Task {
+pub fn create_test_task_with_priority(id: u32, text: &str, done: bool, priority: bool) -> Task {
     Task {
         id,
         text: text.to_string(),

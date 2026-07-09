@@ -19,7 +19,7 @@ pub mod windows_console;
 
 pub use backend::Backend;
 pub use config::{ColorValue, Config, Theme};
-pub use model::Task;
+pub use model::{Task, TaskId};
 
 /// True when running under a test harness (cargo test env vars or a test
 /// binary name). Debug/test runs must not touch the user's real config file,

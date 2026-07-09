@@ -10,6 +10,7 @@ use std::io::{self, Write};
 
 use super::HandlerCLI;
 use crate::config::theme;
+use crate::model::TaskId;
 
 impl HandlerCLI {
     /// Shared "[y/N]: " tail for confirmation prompts: dimmed so the
@@ -56,7 +57,7 @@ impl HandlerCLI {
         }
     }
 
-    pub(crate) fn print_delete_confirmation_dialog(task_text: &str, task_id: u8) -> String {
+    pub(crate) fn print_delete_confirmation_dialog(task_text: &str, task_id: TaskId) -> String {
         let max_line_width = Self::get_max_line_width();
         const LEFT_MARGIN: usize = 4;
         const RIGHT_MARGIN: usize = 4;

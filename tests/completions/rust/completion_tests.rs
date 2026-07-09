@@ -70,7 +70,7 @@ fn strip_ansi_codes(text: &str) -> String {
 
 /// Extract task IDs from list output (simulating completion script logic)
 /// Completion scripts use: rusk list | grep -oE '^\s*[•✔]\s+[0-9]+' | awk '{print $2}'
-fn extract_task_ids_from_output(output: &str) -> Vec<u8> {
+fn extract_task_ids_from_output(output: &str) -> Vec<u32> {
     output
         .lines()
         .filter_map(|line| {
@@ -105,7 +105,7 @@ fn extract_task_ids_from_output(output: &str) -> Vec<u8> {
                     // If first part is status symbol, ID is second
                     // If first part is already a number, use it
                     for part in parts.iter().skip(1) {
-                        if let Ok(id) = part.parse::<u8>()
+                        if let Ok(id) = part.parse::<u32>()
                             && id > 0
                         {
                             return Some(id);
@@ -113,7 +113,7 @@ fn extract_task_ids_from_output(output: &str) -> Vec<u8> {
                     }
                 } else if parts.len() == 1 {
                     // Try to parse first part as ID if it's a number
-                    if let Ok(id) = parts[0].parse::<u8>()
+                    if let Ok(id) = parts[0].parse::<u32>()
                         && id > 0
                     {
                         return Some(id);
@@ -127,7 +127,7 @@ fn extract_task_ids_from_output(output: &str) -> Vec<u8> {
 
 /// Extract task text for a specific ID (simulating completion script logic)
 /// Completion scripts use: awk -v id=3 '$2 == id { for(i=4; i<=NF; i++) { if(i>4) printf " "; printf "%s", $i } }'
-fn extract_task_text_from_output(output: &str, task_id: u8) -> Option<String> {
+fn extract_task_text_from_output(output: &str, task_id: u32) -> Option<String> {
     for line in output.lines() {
         // Strip ANSI codes first
         let clean_line = strip_ansi_codes(line);
@@ -545,7 +545,7 @@ fn test_completion_grep_pattern_matches() {
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 2 {
                 // Status should be first non-whitespace, ID should follow
-                if let Ok(_id) = parts[1].parse::<u8>() {
+                if let Ok(_id) = parts[1].parse::<u32>() {
                     matched_lines += 1;
                 }
             }

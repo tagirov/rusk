@@ -18,7 +18,7 @@
 //! (with `\\` escaping a backslash) — nonstandard, but round-trips.
 
 use super::assign_missing_ids;
-use crate::model::Task;
+use crate::model::{Task, TaskId};
 use anyhow::Result;
 use chrono::NaiveDate;
 
@@ -120,7 +120,7 @@ pub fn decode(data: &str) -> Result<Vec<Task>> {
             {
                 date = Some(d);
             } else if let Some(n) = token.strip_prefix("id:")
-                && let Ok(n) = n.parse::<u8>()
+                && let Ok(n) = n.parse::<TaskId>()
                 && n != 0
                 && id.is_none()
             {
@@ -147,7 +147,7 @@ pub fn decode(data: &str) -> Result<Vec<Task>> {
 mod tests {
     use super::*;
 
-    fn task(id: u8, text: &str) -> Task {
+    fn task(id: TaskId, text: &str) -> Task {
         Task {
             id,
             text: text.to_string(),
@@ -195,8 +195,8 @@ mod tests {
 
     #[test]
     fn invalid_due_and_id_stay_in_text() {
-        let tasks = decode("ship due:tomorrow id:999\n").unwrap();
-        assert_eq!(tasks[0].text, "ship due:tomorrow id:999");
+        let tasks = decode("ship due:tomorrow id:zero\n").unwrap();
+        assert_eq!(tasks[0].text, "ship due:tomorrow id:zero");
         assert_eq!(tasks[0].date, None);
     }
 

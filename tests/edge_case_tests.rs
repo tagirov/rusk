@@ -184,11 +184,11 @@ fn test_edge_case_id_generation_under_load() {
     }
 
     // Verify all IDs are unique and sequential
-    let mut ids: Vec<u8> = tm.tasks.iter().map(|t| t.id).collect();
+    let mut ids: Vec<u32> = tm.tasks.iter().map(|t| t.id).collect();
     ids.sort();
 
     for (i, &id) in ids.iter().enumerate() {
-        assert_eq!(id, (i + 1) as u8);
+        assert_eq!(id, (i + 1) as u32);
     }
 
     // Delete some tasks and add new ones
@@ -305,8 +305,8 @@ fn test_edge_case_date_dot_separator() {
     );
 }
 
-// The 255-ids-taken boundary is covered by
-// test_generate_next_id_all_255_taken_errors in lib_tests.rs.
+// The 255-ids boundary (ids grow past u8) is covered by
+// test_generate_next_id_continues_past_255 in lib_tests.rs.
 
 #[test]
 fn test_edge_case_delete_all_tasks() {
@@ -349,9 +349,9 @@ fn test_edge_case_edit_with_same_values() {
         )
         .unwrap();
 
-    assert_eq!(edited, vec![] as Vec<u8>);
+    assert_eq!(edited, vec![] as Vec<u32>);
     assert_eq!(unchanged, vec![1]);
-    assert_eq!(not_found, vec![] as Vec<u8>);
+    assert_eq!(not_found, vec![] as Vec<u32>);
 
     // Verify task unchanged
     assert_eq!(tm.tasks[0].text, "Original text");
@@ -409,7 +409,7 @@ fn test_edge_case_mark_empty_task_list() {
 
     // Try to mark tasks when list is empty
     let (marked, not_found) = tm.mark_tasks(vec![1, 2, 3]).unwrap();
-    assert_eq!(marked, vec![] as Vec<(u8, bool)>);
+    assert_eq!(marked, vec![] as Vec<(u32, bool)>);
     assert_eq!(not_found, vec![1, 2, 3]);
 }
 
@@ -426,7 +426,7 @@ fn test_edge_case_edit_empty_task_list() {
         )
         .unwrap();
 
-    assert_eq!(edited, vec![] as Vec<u8>);
-    assert_eq!(unchanged, vec![] as Vec<u8>);
+    assert_eq!(edited, vec![] as Vec<u32>);
+    assert_eq!(unchanged, vec![] as Vec<u32>);
     assert_eq!(not_found, vec![1, 2]);
 }

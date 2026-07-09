@@ -1,3 +1,5 @@
+use crate::model::TaskId;
+
 /// `-d` / `--date` on `edit` with no value (a value is required; bare `-d` is not supported).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BareEditDateFlag;
@@ -34,22 +36,22 @@ pub fn strip_edit_date_flag(
 
 /// Parse comma-separated IDs from a single string segment.
 /// Shared logic used by both `parse_flexible_ids` and `parse_edit_args`.
-fn parse_comma_ids(s: &str) -> Vec<u8> {
+fn parse_comma_ids(s: &str) -> Vec<TaskId> {
     s.split(',')
         .filter_map(|part| {
             let trimmed = part.trim();
             if trimmed.is_empty() {
                 None
             } else {
-                trimmed.parse::<u8>().ok()
+                trimmed.parse::<TaskId>().ok()
             }
         })
         .collect()
 }
 
 /// Parse ID list for `del` / `mark`: use comma-separated tokens (e.g. `1,2,3`).
-/// If no argument contains a comma, only the first bare `u8` token is kept; extra argv words are ignored.
-pub fn parse_flexible_ids(args: &[String]) -> Vec<u8> {
+/// If no argument contains a comma, only the first bare integer token is kept; extra argv words are ignored.
+pub fn parse_flexible_ids(args: &[String]) -> Vec<TaskId> {
     let mut ids = Vec::new();
 
     if args.is_empty() {
@@ -64,7 +66,7 @@ pub fn parse_flexible_ids(args: &[String]) -> Vec<u8> {
             ids.extend(parse_comma_ids(trimmed_arg));
         } else if !has_comma_args
             && ids.is_empty()
-            && let Ok(id) = trimmed_arg.parse::<u8>()
+            && let Ok(id) = trimmed_arg.parse::<TaskId>()
         {
             ids.push(id);
         }
@@ -73,7 +75,7 @@ pub fn parse_flexible_ids(args: &[String]) -> Vec<u8> {
     ids
 }
 
-pub type EditArgs = (Vec<u8>, Option<Vec<String>>);
+pub type EditArgs = (Vec<TaskId>, Option<Vec<String>>);
 
 /// Parse edit command arguments to separate IDs and text
 pub fn parse_edit_args(args: Vec<String>) -> EditArgs {
@@ -95,7 +97,7 @@ pub fn parse_edit_args(args: Vec<String>) -> EditArgs {
             } else {
                 ids.extend(parsed);
             }
-        } else if let Ok(id) = trimmed_arg.parse::<u8>() {
+        } else if let Ok(id) = trimmed_arg.parse::<TaskId>() {
             if ids.is_empty() {
                 ids.push(id);
             } else {

@@ -4,11 +4,11 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use crate::backend::Backend;
-use crate::model::Task;
+use crate::model::{Task, TaskId};
 use crate::parse_cli_date_for_edit;
 use crate::parser::date::is_cli_date_clear_value;
 
-pub type MarkResult = (Vec<(u8, bool)>, Vec<u8>);
+pub type MarkResult = (Vec<(TaskId, bool)>, Vec<TaskId>);
 
 /// Manages task operations and persistence
 pub struct TaskManager {
@@ -177,7 +177,7 @@ impl TaskManager {
         Ok(())
     }
 
-    pub fn delete_tasks(&mut self, ids: Vec<u8>) -> Result<Vec<u8>> {
+    pub fn delete_tasks(&mut self, ids: Vec<TaskId>) -> Result<Vec<TaskId>> {
         let mut deleted_count = 0;
         let mut not_found = Vec::new();
 
@@ -211,7 +211,7 @@ impl TaskManager {
         }
     }
 
-    pub fn mark_tasks(&mut self, ids: Vec<u8>) -> Result<MarkResult> {
+    pub fn mark_tasks(&mut self, ids: Vec<TaskId>) -> Result<MarkResult> {
         self.toggle_tasks(ids, |task| {
             task.done = !task.done;
             task.done
@@ -220,7 +220,7 @@ impl TaskManager {
 
     /// Toggles the `priority` flag for the given task ids. Returns `(Vec<(id, new_priority)>, not_found)`.
     /// Does not touch `done`: the priority is preserved across later done toggles.
-    pub fn mark_priority_tasks(&mut self, ids: Vec<u8>) -> Result<MarkResult> {
+    pub fn mark_priority_tasks(&mut self, ids: Vec<TaskId>) -> Result<MarkResult> {
         self.toggle_tasks(ids, |task| {
             task.priority = !task.priority;
             task.priority
@@ -231,7 +231,7 @@ impl TaskManager {
     /// Saves only when at least one task was found.
     fn toggle_tasks(
         &mut self,
-        ids: Vec<u8>,
+        ids: Vec<TaskId>,
         toggle: impl Fn(&mut Task) -> bool,
     ) -> Result<MarkResult> {
         let mut not_found = Vec::new();
@@ -255,10 +255,10 @@ impl TaskManager {
 
     pub fn edit_tasks(
         &mut self,
-        ids: Vec<u8>,
+        ids: Vec<TaskId>,
         text: Option<Vec<String>>,
         date: Option<String>,
-    ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+    ) -> Result<(Vec<TaskId>, Vec<TaskId>, Vec<TaskId>)> {
         let mut not_found = Vec::new();
         let mut edited = Vec::new();
         let mut unchanged = Vec::new();
@@ -308,27 +308,23 @@ impl TaskManager {
         Ok((edited, unchanged, not_found))
     }
 
-    pub fn find_task_by_id(&self, id: u8) -> Option<usize> {
+    pub fn find_task_by_id(&self, id: TaskId) -> Option<usize> {
         self.tasks.iter().position(|t| t.id == id)
     }
 
-    pub fn generate_next_id(&self) -> Result<u8> {
-        let mut used: Vec<u8> = self.tasks.iter().map(|t| t.id).collect();
+    pub fn generate_next_id(&self) -> Result<TaskId> {
+        let mut used: Vec<TaskId> = self.tasks.iter().map(|t| t.id).collect();
         used.sort_unstable();
 
-        let mut id = 1u8;
+        let mut id: TaskId = 1;
         for &used_id in &used {
             if id == used_id {
-                // Wrap instead of overflow: 255 used ids wrap to 0, caught below
-                // (plain `+= 1` panics in debug builds when all 255 ids are taken).
-                id = id.wrapping_add(1);
+                id = id
+                    .checked_add(1)
+                    .ok_or_else(|| anyhow::anyhow!("Maximum number of tasks reached"))?;
             } else {
                 break;
             }
-        }
-
-        if id == 0 {
-            anyhow::bail!("Maximum number of tasks (255) reached");
         }
 
         Ok(id)

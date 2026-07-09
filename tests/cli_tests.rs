@@ -64,7 +64,7 @@ fn test_cli_delete_command() {
     assert_eq!(tm.tasks.len(), 2);
 
     // After deletion, remaining tasks should have IDs 2 and 4
-    let remaining_ids: Vec<u8> = tm.tasks.iter().map(|t| t.id).collect();
+    let remaining_ids: Vec<u32> = tm.tasks.iter().map(|t| t.id).collect();
     assert!(remaining_ids.contains(&2));
     assert!(remaining_ids.contains(&4));
 

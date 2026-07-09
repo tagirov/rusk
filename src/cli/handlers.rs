@@ -2,7 +2,7 @@
 use crate::parse_cli_date_for_edit;
 use crate::config::theme;
 use crate::parser::date::is_cli_date_clear_value;
-use crate::{Task, TaskManager, validate_cli_date_edit_arg};
+use crate::{Task, TaskId, TaskManager, validate_cli_date_edit_arg};
 use anyhow::Result;
 use colored::*;
 
@@ -112,7 +112,7 @@ impl HandlerCLI {
         Ok(())
     }
 
-    pub fn handle_delete_tasks(tm: &mut TaskManager, ids: Vec<u8>, done: bool) -> Result<()> {
+    pub fn handle_delete_tasks(tm: &mut TaskManager, ids: Vec<TaskId>, done: bool) -> Result<()> {
         if done && ids.is_empty() {
             Self::delete_all_done(tm)
         } else if !ids.is_empty() {
@@ -126,7 +126,7 @@ impl HandlerCLI {
     #[cfg(feature = "interactive")]
     fn interactive_edit_text(
         current: &str,
-        task_id: u8,
+        task_id: TaskId,
         task_date: Option<chrono::NaiveDate>,
         allow_skip: bool,
     ) -> Result<Option<(Option<chrono::NaiveDate>, String)>> {
@@ -203,9 +203,9 @@ impl HandlerCLI {
     }
 
     #[cfg(feature = "interactive")]
-    pub fn handle_edit_tasks_interactive(tm: &mut TaskManager, ids: Vec<u8>) -> Result<()> {
+    pub fn handle_edit_tasks_interactive(tm: &mut TaskManager, ids: Vec<TaskId>) -> Result<()> {
         let mut any_changed = false;
-        let mut not_found: Vec<u8> = Vec::new();
+        let mut not_found: Vec<TaskId> = Vec::new();
 
         let total_ids = ids.len();
         for (task_idx, id) in ids.iter().enumerate() {
@@ -291,9 +291,9 @@ impl HandlerCLI {
         Ok(())
     }
 
-    fn delete_by_ids(tm: &mut TaskManager, ids: Vec<u8>) -> Result<()> {
+    fn delete_by_ids(tm: &mut TaskManager, ids: Vec<TaskId>) -> Result<()> {
         let mut to_delete = Vec::new();
-        let mut not_found: Vec<u8> = Vec::new();
+        let mut not_found: Vec<TaskId> = Vec::new();
 
         for &id in &ids {
             match tm.find_task_by_id(id) {
@@ -326,7 +326,7 @@ impl HandlerCLI {
         Ok(())
     }
 
-    pub fn handle_mark_tasks(tm: &mut TaskManager, ids: Vec<u8>, priority: bool) -> Result<()> {
+    pub fn handle_mark_tasks(tm: &mut TaskManager, ids: Vec<TaskId>, priority: bool) -> Result<()> {
         let (marked, not_found) = if priority {
             tm.mark_priority_tasks(ids)?
         } else {
@@ -384,11 +384,11 @@ impl HandlerCLI {
 
     pub fn handle_edit_tasks(
         tm: &mut TaskManager,
-        ids: Vec<u8>,
+        ids: Vec<TaskId>,
         text: Option<Vec<String>>,
         date: Option<String>,
     ) -> Result<()> {
-        let mut old_dates: Vec<(u8, Option<chrono::NaiveDate>)> = Vec::new();
+        let mut old_dates: Vec<(TaskId, Option<chrono::NaiveDate>)> = Vec::new();
         for &id in &ids {
             if let Some(idx) = tm.find_task_by_id(id) {
                 old_dates.push((id, tm.tasks()[idx].date));
@@ -542,7 +542,7 @@ impl HandlerCLI {
     }
 
     #[cfg(feature = "interactive")]
-    fn handle_skip_task_error(e: &anyhow::Error, id: u8) -> bool {
+    fn handle_skip_task_error(e: &anyhow::Error, id: TaskId) -> bool {
         if e.downcast_ref::<crate::error::AppError>() == Some(&crate::error::AppError::SkipTask) {
             println!("{} {}", theme().warning.paint("Skipped task:"), id);
             true

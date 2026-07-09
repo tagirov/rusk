@@ -512,11 +512,18 @@ impl HandlerCLI {
                 wrapped_lines.first().map(|s| s.as_str()).unwrap_or("")
             };
 
+            // Done tasks get the id in the marker color too, matching the ✔.
+            let id_theme = if task.done {
+                theme().done_marker
+            } else {
+                theme().task_id
+            };
+
             if !first_line.is_empty() || !wrapped_lines.is_empty() {
                 println!(
                     "  {} {:>2}  {:>9}  {}",
                     status,
-                    theme().task_id.paint(&task.id.to_string()).bold(),
+                    id_theme.paint(&task.id.to_string()).bold(),
                     date_colored,
                     first_line
                 );

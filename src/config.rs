@@ -156,6 +156,7 @@ theme_keys! {
     done_marker => ColorValue::Named(2),      // green ✔
     priority_marker => ColorValue::Rgb(255, 165, 0),
     task_id => ColorValue::Default,           // bold only
+    search_match => ColorValue::Named(3),     // yellow `rusk search` highlight
     date_overdue => ColorValue::Named(1),     // red
     date_upcoming => ColorValue::Named(6),    // cyan
     date_today => ColorValue::Named(6),       // cyan (same as upcoming by default)
@@ -742,6 +743,6 @@ mod tests {
     fn theme_entries_cover_all_keys() {
         let t = Theme::default();
         assert_eq!(t.entries().len(), Theme::KEYS.len());
-        assert_eq!(t.entries().len(), 18);
+        assert_eq!(t.entries().len(), 19);
     }
 }

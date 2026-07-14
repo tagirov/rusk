@@ -85,6 +85,7 @@ render as truecolor.
 | `done_marker` | `green` | The `✔` in the list |
 | `priority_marker` | `#ffa500` | The `p` in the list |
 | `task_id` | terminal default | Task IDs in the list (always bold) |
+| `search_match` | `yellow` | Matched text in `rusk search` output (always bold) |
 | `date_overdue` | `red` | Overdue dates on not-done tasks |
 | `date_today` | `cyan` | Dates due today (same as upcoming by default) |
 | `date_upcoming` | `cyan` | All other dates |

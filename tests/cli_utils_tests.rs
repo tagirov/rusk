@@ -594,3 +594,65 @@ fn test_ml_delete_word_left_at_line_start_joins_with_prev() {
     assert_eq!(lines, vec!["abcdef".to_string()]);
     assert_eq!((row, col), (0, 3));
 }
+
+// --- `rusk search` helpers: case-insensitive find and highlight ---
+
+fn needle(q: &str) -> Vec<char> {
+    q.to_lowercase().chars().collect()
+}
+
+#[test]
+fn test_find_ci_ascii_case_insensitive() {
+    assert_eq!(
+        HandlerCLI::find_ci("Buy Groceries", &needle("groc"), 0),
+        Some((4, 8))
+    );
+}
+
+#[test]
+fn test_find_ci_cyrillic_case_insensitive() {
+    let hay = "мини-таблица по Омега-3";
+    let (start, end) = HandlerCLI::find_ci(hay, &needle("ОМЕГА"), 0).unwrap();
+    assert_eq!(&hay[start..end], "Омега");
+}
+
+#[test]
+fn test_find_ci_no_match() {
+    assert_eq!(HandlerCLI::find_ci("hello", &needle("world"), 0), None);
+}
+
+#[test]
+fn test_find_ci_empty_needle() {
+    assert_eq!(HandlerCLI::find_ci("hello", &[], 0), None);
+}
+
+#[test]
+fn test_find_ci_from_offset_finds_next_occurrence() {
+    let hay = "abc abc";
+    assert_eq!(HandlerCLI::find_ci(hay, &needle("abc"), 0), Some((0, 3)));
+    assert_eq!(HandlerCLI::find_ci(hay, &needle("abc"), 3), Some((4, 7)));
+}
+
+#[test]
+fn test_find_ci_phrase_with_space() {
+    let hay = "ингридиентами для сравнения";
+    let (start, end) = HandlerCLI::find_ci(hay, &needle("для сравнения"), 0).unwrap();
+    assert_eq!(&hay[start..end], "для сравнения");
+}
+
+#[test]
+fn test_highlight_matches_wraps_all_occurrences() {
+    colored::control::set_override(true);
+    let out = HandlerCLI::highlight_matches("foo bar Foo", &needle("foo"));
+    colored::control::unset_override();
+    // Both occurrences are colored; the original casing is preserved.
+    assert_eq!(out.matches("\x1b[").count(), 4);
+    assert!(out.contains("Foo"));
+    assert!(HandlerCLI::strip_ansi_codes(&out) == "foo bar Foo");
+}
+
+#[test]
+fn test_highlight_matches_no_match_returns_line_unchanged() {
+    let out = HandlerCLI::highlight_matches("foo bar", &needle("baz"));
+    assert_eq!(out, "foo bar");
+}

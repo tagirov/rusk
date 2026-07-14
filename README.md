@@ -106,6 +106,13 @@ rusk
 # Compact view: one line per task (no wraps, trailing punctuation trimmed)
 rusk list --compact
 
+# Search tasks by text (case-insensitive, matches highlighted)
+rusk search omega
+rusk s buy milk
+
+# Print only the IDs of matching tasks (script-friendly)
+rusk s --id omega
+
 # Mark a task as done
 rusk mark 1
 
@@ -234,7 +241,7 @@ rusk e (edit)
 rusk d (del)
 rusk r (restore)
 rusk g (gen)
-rusk s (serve)
+rusk s (search)
 rusk c (completions)
 
 # Global flags

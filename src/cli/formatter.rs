@@ -276,6 +276,67 @@ impl HandlerCLI {
         }
     }
 
+    /// Finds the next case-insensitive occurrence of `needle` (pre-lowercased
+    /// chars) in `haystack` starting at byte offset `from` (must be a char
+    /// boundary); returns the byte range of the match in `haystack`.
+    #[doc(hidden)]
+    pub fn find_ci(haystack: &str, needle: &[char], from: usize) -> Option<(usize, usize)> {
+        if needle.is_empty() {
+            return None;
+        }
+        'starts: for (offset, _) in haystack[from..].char_indices() {
+            let start = from + offset;
+            let mut matched = 0;
+            let mut end = start;
+            for c in haystack[start..].chars() {
+                // A single char may lowercase to several (e.g. İ); a match may
+                // not end in the middle of such an expansion.
+                for lc in c.to_lowercase() {
+                    if matched >= needle.len() || lc != needle[matched] {
+                        continue 'starts;
+                    }
+                    matched += 1;
+                }
+                end += c.len_utf8();
+                if matched == needle.len() {
+                    return Some((start, end));
+                }
+            }
+        }
+        None
+    }
+
+    /// Wraps every case-insensitive occurrence of `needle` in the theme's
+    /// `search_match` color (bold), leaving the rest of the line untouched.
+    #[doc(hidden)]
+    pub fn highlight_matches(line: &str, needle: &[char]) -> String {
+        let mut out = String::new();
+        let mut pos = 0;
+        while let Some((start, end)) = Self::find_ci(line, needle, pos) {
+            out.push_str(&line[pos..start]);
+            out.push_str(
+                &theme()
+                    .search_match
+                    .paint(&line[start..end])
+                    .bold()
+                    .to_string(),
+            );
+            pos = end;
+        }
+        out.push_str(&line[pos..]);
+        out
+    }
+
+    pub(crate) fn maybe_highlight<'a>(
+        line: &'a str,
+        needle: Option<&[char]>,
+    ) -> std::borrow::Cow<'a, str> {
+        match needle {
+            Some(n) => std::borrow::Cow::Owned(Self::highlight_matches(line, n)),
+            None => std::borrow::Cow::Borrowed(line),
+        }
+    }
+
     pub(crate) fn print_not_found_ids(not_found: &[crate::model::TaskId]) {
         if !not_found.is_empty() {
             let list = not_found

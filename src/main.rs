@@ -248,6 +248,9 @@ fn run() -> Result<()> {
                 HandlerCLI::handle_list_tasks(tm.tasks(), compact || config::config().compact);
             }
         }
+        Some(Command::Search { query, id }) => {
+            HandlerCLI::handle_search_tasks(tm.tasks(), &query.join(" "), id);
+        }
         None => {
             HandlerCLI::handle_list_tasks(tm.tasks(), config::config().compact);
         }

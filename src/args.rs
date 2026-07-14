@@ -156,6 +156,28 @@ subcommand does the same. Use -c for a compact single-line view."
         compact: bool,
     },
     #[command(
+        visible_alias = "s",
+        about = "Search tasks by text (case-insensitive) and highlight matches",
+        long_about = "Search tasks whose text contains the given words (case-insensitive) and \
+print them in the usual list format with matches highlighted. Multiple words are treated as \
+one phrase. With --id, print only the IDs of matching tasks (one per line, no colors).\n\n\
+Examples:\n  \
+rusk search protein\n  \
+rusk s buy groceries\n  \
+rusk s --id protein",
+        help_template = "{about-section}\n\nUsage: rusk search [OPTIONS] <QUERY>...\n\n{all-args}"
+    )]
+    Search {
+        #[arg(
+            required = true,
+            value_name = "QUERY",
+            help = "Text to search for (one or more words, matched as a phrase)"
+        )]
+        query: Vec<String>,
+        #[arg(long, help = "Print only the IDs of matching tasks, one per line")]
+        id: bool,
+    },
+    #[command(
         visible_alias = "r",
         about = "Restore task database from the automatic backup (.json.backup)"
     )]
@@ -183,7 +205,6 @@ rusk gen -o -                     # write to stdout"
     },
     #[cfg(feature = "web")]
     #[command(
-        visible_alias = "s",
         about = "Serve the web UI with full task editing",
         long_about = "Serve the web UI with full task editing (mobile-first). Binds \
 127.0.0.1:7272 by default; host/port/token come from the config (web_host, web_port, \

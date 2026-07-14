@@ -462,6 +462,36 @@ impl HandlerCLI {
     }
 
     pub fn handle_list_tasks(tasks: &[Task], compact: bool) {
+        let all: Vec<&Task> = tasks.iter().collect();
+        Self::render_task_list(&all, compact, None);
+    }
+
+    /// Case-insensitive phrase search: prints matching tasks in the usual list
+    /// format (always full text, never compact) with matches highlighted.
+    /// With `only_ids`, prints bare task IDs one per line (script-friendly).
+    pub fn handle_search_tasks(tasks: &[Task], query: &str, only_ids: bool) {
+        let needle: Vec<char> = query.to_lowercase().chars().collect();
+        let matched: Vec<&Task> = tasks
+            .iter()
+            .filter(|t| Self::find_ci(&t.text, &needle, 0).is_some())
+            .collect();
+
+        if only_ids {
+            for task in &matched {
+                println!("{}", task.id);
+            }
+            return;
+        }
+
+        if matched.is_empty() {
+            println!("{}", theme().warning.paint("No matching tasks"));
+            return;
+        }
+
+        Self::render_task_list(&matched, false, Some(&needle));
+    }
+
+    fn render_task_list(tasks: &[&Task], compact: bool, highlight: Option<&[char]>) {
         if tasks.is_empty() {
             println!("{}", theme().warning.paint("No tasks"));
             return;
@@ -525,13 +555,17 @@ impl HandlerCLI {
                     status,
                     id_theme.paint(&task.id.to_string()).bold(),
                     date_colored,
-                    first_line
+                    Self::maybe_highlight(first_line, highlight)
                 );
             }
 
             if !compact {
                 for line in wrapped_lines.iter().skip(1) {
-                    println!("{}{}", " ".repeat(prefix_width), line);
+                    println!(
+                        "{}{}",
+                        " ".repeat(prefix_width),
+                        Self::maybe_highlight(line, highlight)
+                    );
                 }
             }
         }

@@ -49,9 +49,8 @@
           nativeBuildInputs = [ pkgs.installShellFiles ];
 
           # postInstall выполняется после `cargo install`:
-          # докладываем man-страницу и комплиты рядом с бинарником
+          # докладываем комплиты рядом с бинарником
           postInstall = ''
-            installManPage man/rusk.1
             installShellCompletion \
               --bash completions/rusk.bash \
               --zsh completions/rusk.zsh \

@@ -48,6 +48,9 @@
           # в правильные места внутри $out
           nativeBuildInputs = [ pkgs.installShellFiles ];
 
+          # Тесты git-бэкенда зовут бинарник git, которого нет в песочнице сборки
+          nativeCheckInputs = [ pkgs.git ];
+
           # postInstall выполняется после `cargo install`:
           # докладываем комплиты рядом с бинарником
           postInstall = ''

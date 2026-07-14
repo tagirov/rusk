@@ -45,9 +45,10 @@ def get-commands [] {
     {value: "mark", aliases: ["m"], description: "Mark tasks as done/undone"}
     {value: "del", aliases: ["d"], description: "Delete tasks by id(s)"}
     {value: "list", aliases: ["l"], description: "List all tasks"}
+    {value: "search", aliases: ["s"], description: "Search tasks by text"}
     {value: "restore", aliases: ["r"], description: "Restore from backup"}
     {value: "gen", aliases: ["g"], description: "Generate a read-only HTML page"}
-    {value: "serve", aliases: ["s"], description: "Serve the web UI"}
+    {value: "serve", aliases: [], description: "Serve the web UI"}
     {value: "sync", aliases: [], description: "Synchronize with a remote"}
     {value: "completions", aliases: ["c"], description: "Install shell completions"}
   ]
@@ -82,6 +83,13 @@ def get-list-flags [] {
   [
     {value: "--compact", description: "Compact view: first line of each task only"}
     {value: "-c", description: "Compact view: first line of each task only"}
+  ]
+}
+
+# search subcommand: IDs-only output
+def get-search-flags [] {
+  [
+    {value: "--id", description: "Print only the IDs of matching tasks, one per line"}
   ]
 }
 
@@ -603,6 +611,14 @@ def complete-list-restore [cur: string, subcommand: string] {
   []
 }
 
+# Complete search command (query is free text: --id and -h/--help)
+def complete-search [cur: string] {
+  if ($cur == "") or ($cur | str starts-with "-") {
+    return (complete-flags ((get-search-flags) | append (get-common-flags)) $cur)
+  }
+  []
+}
+
 # Complete gen command (-o/--output value is a free-form file path: no candidates)
 def complete-gen [cur: string, prev: string] {
   if $prev == "-o" or $prev == "--output" {
@@ -873,7 +889,7 @@ def complete-root [ctx: record] {
   
   # Full subcommand name only (not short aliases): after `rusk c` + Tab offer `completions`/`c`;
   # after `rusk c ` + Tab delegate here (root returns []) so install/show come from complete-completions.
-  let exact_subcmds = [add edit mark del list restore gen serve sync completions]
+  let exact_subcmds = [add edit mark del list search restore gen serve sync completions]
   if ($ctx.word_count == 1) and (not $ctx.has_trailing_space) and ($ctx.cur in $exact_subcmds) {
     return []
   }
@@ -957,11 +973,15 @@ export def rusk-completions-main [spans: list<string>] {
       complete-list-restore $cur_n $ctx.command
     }
 
+    "search" | "s" => {
+      complete-search $cur_n
+    }
+
     "gen" | "g" => {
       complete-gen $cur_n $ctx.prev
     }
 
-    "serve" | "s" => {
+    "serve" => {
       complete-serve $cur_n $ctx.prev
     }
 

@@ -399,10 +399,10 @@ _rusk_main() {
         local cw="${words[CURRENT]}"
         # Only full subcommand names: short aliases still complete to long names, not -h/--help.
         case "$cw" in
-            add|edit|mark|del|list|restore|gen|serve|sync|completions)
+            add|edit|mark|del|list|search|restore|gen|serve|sync|completions)
                 ;;
             *)
-                compadd add edit mark del list restore gen serve sync completions a e m d l r g s c
+                compadd add edit mark del list search restore gen serve sync completions a e m d l s r g c
                 return
                 ;;
         esac
@@ -485,6 +485,11 @@ _rusk_main() {
                 _rusk_zsh_compadd_flags -- -c --compact -h --help
             fi
             ;;
+        search|s)
+            if [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; }; then
+                _rusk_zsh_compadd_flags -- --id -h --help
+            fi
+            ;;
         restore|r)
             if [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; }; then
                 _rusk_zsh_compadd_flags -- -h --help
@@ -502,7 +507,7 @@ _rusk_main() {
             fi
             ;;
 
-        serve|s)
+        serve)
             if [[ "$prev" == "--host" || "$prev" == "--port" ]]; then
                 # Free-form value: no candidates
                 :

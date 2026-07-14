@@ -396,7 +396,7 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
 
     # Complete commands (when only "rusk" is typed)
     if ($tokens.Count -eq 1) {
-        $commands = @('add', 'a', 'edit', 'e', 'mark', 'm', 'del', 'd', 'list', 'l', 'restore', 'r', 'gen', 'g', 'serve', 's', 'sync', 'completions', 'c')
+        $commands = @('add', 'a', 'edit', 'e', 'mark', 'm', 'del', 'd', 'list', 'l', 'search', 's', 'restore', 'r', 'gen', 'g', 'serve', 'sync', 'completions', 'c')
         if ([string]::IsNullOrEmpty($wordToComplete)) {
             $filtered = $commands
         } else {
@@ -411,8 +411,8 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
     }
 
     # First arg after rusk: complete unless it's already a full subcommand name (aliases expand via Tab, not to -h/--help).
-    $fullSubcommands = @('add', 'edit', 'mark', 'del', 'list', 'restore', 'gen', 'serve', 'sync', 'completions')
-    $allSubcommands = @('add', 'a', 'edit', 'e', 'mark', 'm', 'del', 'd', 'list', 'l', 'restore', 'r', 'gen', 'g', 'serve', 's', 'sync', 'completions', 'c')
+    $fullSubcommands = @('add', 'edit', 'mark', 'del', 'list', 'search', 'restore', 'gen', 'serve', 'sync', 'completions')
+    $allSubcommands = @('add', 'a', 'edit', 'e', 'mark', 'm', 'del', 'd', 'list', 'l', 'search', 's', 'restore', 'r', 'gen', 'g', 'serve', 'sync', 'completions', 'c')
     if ($tokens.Count -eq 2) {
         $first = _rusk_token_text $tokens[1]
         if (-not [string]::IsNullOrEmpty($first) -and ($fullSubcommands -notcontains $first)) {
@@ -523,6 +523,13 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
             return @()
         }
 
+        { $_ -in 'search', 's' } {
+            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur) -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
+                return _rusk_emit_flag_completions @('--id', '--help', '-h') $wordToComplete $tokens $command $cur
+            }
+            return @()
+        }
+
         { $_ -in 'restore', 'r' } {
             if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur) -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
                 return _rusk_emit_flag_completions @('--help', '-h') $wordToComplete $tokens $command $cur
@@ -541,7 +548,7 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
             return @()
         }
 
-        { $_ -in 'serve', 's' } {
+        { $_ -in 'serve' } {
             if ($prev -eq '--host' -or $prev -eq '--port') {
                 # Free-form value: no candidates
                 return @()

@@ -639,6 +639,28 @@ function __rusk_complete_list_restore_flags
     end
 end
 
+# search: --id + help flags (query is free text)
+function __rusk_should_complete_search_flags
+    __rusk_is_command search s; or return 1
+    set -l cw (__rusk_get_current_word)
+    if __rusk_is_flag "$cw"
+        return 0
+    end
+    if test -z "$cw"
+        return 0
+    end
+    if contains -- "$cw" search s
+        if test (count (__rusk_get_cmdline)) -eq 1
+            return 0
+        end
+    end
+    return 1
+end
+
+function __rusk_complete_search_flags
+    __rusk_complete_flags --id -h --help
+end
+
 # ============================================================================
 # Gen/Serve Command Functions
 # ============================================================================
@@ -692,7 +714,7 @@ end
 
 # serve: option flags (no completion for --host/--port values)
 function __rusk_should_complete_serve_flags
-    __rusk_is_command serve s; or return 1
+    __rusk_is_command serve; or return 1
     if __rusk_is_after_serve_value_flag
         return 1
     end
@@ -703,7 +725,7 @@ function __rusk_should_complete_serve_flags
     if test -z "$cw"
         return 0
     end
-    if contains -- "$cw" serve s
+    if contains -- "$cw" serve
         if test (count (__rusk_get_cmdline)) -eq 1
             return 0
         end
@@ -851,6 +873,7 @@ complete -c rusk -f -n '__fish_use_subcommand' -a 'edit' -d 'Edit tasks by id(s)
 complete -c rusk -f -n '__fish_use_subcommand' -a 'mark' -d 'Mark tasks as done/undone'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'del' -d 'Delete tasks by id(s)'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'list' -d 'List all tasks'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'search' -d 'Search tasks by text'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'restore' -d 'Restore from backup'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'gen' -d 'Generate a read-only HTML page'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'serve' -d 'Serve the web UI'
@@ -864,9 +887,9 @@ complete -c rusk -f -n '__fish_use_subcommand' -a 'e' -d 'Edit tasks by id(s)'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'm' -d 'Mark tasks as done/undone'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'd' -d 'Delete tasks by id(s)'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'l' -d 'List all tasks'
+complete -c rusk -f -n '__fish_use_subcommand' -a 's' -d 'Search tasks by text'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'r' -d 'Restore from backup'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'g' -d 'Generate a read-only HTML page'
-complete -c rusk -f -n '__fish_use_subcommand' -a 's' -d 'Serve the web UI'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'c' -d 'Install shell completions'
 
 # Global flags (-s/-l only appear after "-" on the token; -a lists them with subcommands on bare <tab>)
@@ -914,6 +937,12 @@ complete -c rusk -f -n '__rusk_should_complete_mark_del_flags' -a '(__rusk_compl
 complete -c rusk -f -n '__rusk_should_complete_list_restore_flags' -a '(__rusk_complete_list_restore_flags)'
 
 # ============================================================================
+# Search Command Completions
+# ============================================================================
+
+complete -c rusk -f -n '__rusk_should_complete_search_flags' -a '(__rusk_complete_search_flags)'
+
+# ============================================================================
 # Gen/Serve Command Completions
 # ============================================================================
 
@@ -922,7 +951,7 @@ complete -c rusk -f -n '__rusk_should_complete_gen_flags' -a '(__rusk_complete_g
 complete -c rusk -F -n '__rusk_is_command gen g; and __rusk_is_after_output_flag'
 complete -c rusk -f -n '__rusk_should_complete_serve_flags' -a '(__rusk_complete_serve_flags)'
 # --host/--port values are free-form: suppress the file fallback, offer nothing
-complete -c rusk -f -n '__rusk_is_command serve s; and __rusk_is_after_serve_value_flag'
+complete -c rusk -f -n '__rusk_is_command serve; and __rusk_is_after_serve_value_flag'
 
 # ============================================================================
 # Sync Command Completions

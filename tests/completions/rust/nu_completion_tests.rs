@@ -78,6 +78,7 @@ fn test_nu_completion_has_all_commands() {
         "mark",
         "del",
         "list",
+        "search",
         "restore",
         "gen",
         "serve",

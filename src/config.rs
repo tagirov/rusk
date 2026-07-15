@@ -306,7 +306,7 @@ fn apply_setting(
     warnings: &mut Vec<String>,
 ) {
     let mut warn = |msg: String| warnings.push(format!("cfg:{line}: {msg}; using default"));
-    // Only `keywords` accepts an (explicitly quoted) empty value.
+    // Only `keywords` accepts an empty value (`keywords =` clears the list).
     if value.is_empty() && key != "keywords" {
         warn(format!("empty value for '{key}'"));
         return;
@@ -331,8 +331,8 @@ fn apply_setting(
         "web_token" => config.web_token = Some(value.to_string()),
         "sync_remote" => config.sync_remote = Some(value.to_string()),
         "sync_token" => config.sync_token = Some(value.to_string()),
-        // Space- or comma-separated tokens; `keywords = ""` disables
-        // highlighting (the quoted empty value yields an empty list).
+        // Space- or comma-separated tokens; an empty value (`keywords =`)
+        // disables highlighting.
         "keywords" => {
             config.keywords = value
                 .split([',', ' '])
@@ -376,9 +376,9 @@ pub fn parse(text: &str) -> LoadOutcome {
             continue;
         }
         let (value, quoted) = parse_value(line[eq + 1..].trim());
-        // A quoted empty value (`keywords = ""`) is an explicit "nothing"
-        // and reaches the setting; a bare empty value is a mistake.
-        if value.is_empty() && !quoted {
+        // Settings decide themselves what an empty value means
+        // (`keywords =` clears the list); an empty variable is a mistake.
+        if value.is_empty() && !is_setting(key) {
             warnings.push(format!("cfg:{line_no}: empty value for '{key}'; line skipped"));
             continue;
         }
@@ -457,7 +457,8 @@ const DEFAULT_CONFIG: &str = "\
 # backup = true              # keep a .backup copy next to the database on every save
 # keywords = TEMP INFO FIXME WIP
 #                            # keywords highlighted when a task text starts with one
-#                            # (space- or comma-separated, case-sensitive; \"\" disables)
+#                            # (space- or comma-separated, case-sensitive;
+#                            # `keywords =` with no value disables)
 
 # --- web: rusk serve / rusk gen ---
 # web_host = 127.0.0.1
@@ -723,11 +724,13 @@ mod tests {
         // Space- and comma-separated forms are equivalent.
         assert_eq!(cfg("keywords = BUG HACK\n").keywords, vec!["BUG", "HACK"]);
         assert_eq!(cfg("keywords = BUG, HACK\n").keywords, vec!["BUG", "HACK"]);
-        // A quoted empty value disables highlighting; a bare empty value is
-        // still a skipped mistake (and other keys reject `""` too).
+        // An empty value disables highlighting, silently (`""` works too);
+        // other settings still reject empty values.
+        let outcome = parse("keywords =\n");
+        assert!(outcome.config.keywords.is_empty());
+        assert!(outcome.warnings.is_empty());
         assert!(cfg("keywords = \"\"\n").keywords.is_empty());
-        assert_eq!(warnings("keywords =\n").len(), 1);
-        let w = warnings("web_token = \"\"\n");
+        let w = warnings("web_token =\n");
         assert_eq!(w.len(), 1);
         assert!(w[0].contains("empty value"));
     }

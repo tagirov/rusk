@@ -1,6 +1,10 @@
 use chrono::NaiveDate;
 use rusk::cli::HandlerCLI;
 
+/// `colored::control::set_override` is process-global: tests that toggle it
+/// must not run concurrently with each other.
+static COLOR_OVERRIDE_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn test_wrap_text_by_words_empty() {
     let result = HandlerCLI::wrap_text_by_words("", 10);
@@ -642,6 +646,7 @@ fn test_find_ci_phrase_with_space() {
 
 #[test]
 fn test_highlight_matches_wraps_all_occurrences() {
+    let _guard = COLOR_OVERRIDE_MUTEX.lock().unwrap();
     colored::control::set_override(true);
     let out = HandlerCLI::highlight_matches("foo bar Foo", &needle("foo"));
     colored::control::unset_override();
@@ -659,6 +664,7 @@ fn test_highlight_matches_no_match_returns_line_unchanged() {
 
 #[test]
 fn test_highlight_keywords_colors_the_leading_word_only() {
+    let _guard = COLOR_OVERRIDE_MUTEX.lock().unwrap();
     colored::control::set_override(true);
     let out = HandlerCLI::highlight_keywords("TEMP buy milk INFO note");
     colored::control::unset_override();

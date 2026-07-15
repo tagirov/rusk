@@ -134,7 +134,7 @@ rusk edit 1 --after _
 
 # Keywords: a task text starting with TEMP, INFO, FIXME or WIP gets that
 # first word highlighted in the list. The set is configurable (`keywords`
-# in the config; `""` disables), the color too (`keyword` theme key, cyan)
+# in the config; empty value disables), the color too (`keyword` theme key)
 rusk add TEMP debug flag for the release
 rusk add INFO deploy notes are in the wiki
 

@@ -157,7 +157,7 @@ theme_keys! {
     priority_marker => ColorValue::Rgb(255, 165, 0),
     task_id => ColorValue::Default,           // bold only
     search_match => ColorValue::Named(3),     // yellow `rusk search` highlight
-    keyword => ColorValue::Named(6),          // cyan TEMP / INFO tokens
+    keyword => ColorValue::Named(3),          // yellow TEMP / INFO tokens
     date_overdue => ColorValue::Named(1),     // red
     date_upcoming => ColorValue::Named(6),    // cyan
     date_today => ColorValue::Named(6),       // cyan (same as upcoming by default)
@@ -482,7 +482,7 @@ priority_marker = accent
 # list_header = blue
 # done_marker = green
 # task_id = default
-# keyword = cyan
+# keyword = yellow
 # date_overdue = red
 # date_upcoming = cyan
 # date_today = cyan

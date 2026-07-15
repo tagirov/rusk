@@ -11,7 +11,8 @@
 //!
 //! `[x]` marks done, a leading `!` token marks priority, a trailing
 //! `@YYYY-MM-DD` token is the due date, and the trailing HTML comment pins
-//! the task id (invisible in rendered Markdown). Hand-added items may omit
+//! the task id and optional dependencies (`<!-- id:3 after:1,2 -->`,
+//! invisible in rendered Markdown). Hand-added items may omit
 //! the id comment: the lowest free id is assigned on load. The file renders
 //! as a normal task list on GitHub/Obsidian and can be edited by hand.
 //!
@@ -40,7 +41,17 @@ pub fn encode(tasks: &[Task]) -> String {
         if let Some(date) = task.date {
             out.push_str(&format!(" @{date}"));
         }
-        out.push_str(&format!(" <!-- id:{} -->\n", task.id));
+        if task.after.is_empty() {
+            out.push_str(&format!(" <!-- id:{} -->\n", task.id));
+        } else {
+            let after = task
+                .after
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            out.push_str(&format!(" <!-- id:{} after:{} -->\n", task.id, after));
+        }
         for line in lines {
             out.push_str("  ");
             out.push_str(line);
@@ -65,19 +76,42 @@ fn item_start(line: &str) -> Option<(bool, &str)> {
     Some((done, content.strip_prefix(' ').unwrap_or(content)))
 }
 
-/// Strips the trailing `<!-- id:N -->` comment; foreign comments stay in the
-/// text.
-fn take_id(content: &str) -> (Option<TaskId>, &str) {
+/// Strips the trailing `<!-- id:N -->` / `<!-- id:N after:A,B -->` metadata
+/// comment; foreign comments stay in the text.
+fn take_meta(content: &str) -> (Option<TaskId>, Vec<TaskId>, &str) {
     let trimmed = content.trim_end();
     if let Some(before_close) = trimmed.strip_suffix("-->")
         && let Some((text, inner)) = before_close.rsplit_once("<!--")
-        && let Some(id) = inner.trim().strip_prefix("id:")
-        && let Ok(id) = id.trim().parse::<TaskId>()
-        && id != 0
+        && let Some((id, after)) = parse_meta_comment(inner)
     {
-        return (Some(id), text.trim_end());
+        return (Some(id), after, text.trim_end());
     }
-    (None, trimmed)
+    (None, Vec::new(), trimmed)
+}
+
+/// `id:N [after:A,B]` inside the metadata comment. Anything else (a foreign
+/// comment, an invalid id) rejects the whole comment so it stays in the text.
+fn parse_meta_comment(inner: &str) -> Option<(TaskId, Vec<TaskId>)> {
+    let mut id = None;
+    let mut after = Vec::new();
+    for token in inner.split_whitespace() {
+        if let Some(n) = token.strip_prefix("id:") {
+            match n.parse::<TaskId>() {
+                Ok(n) if n != 0 && id.is_none() => id = Some(n),
+                _ => return None,
+            }
+        } else if let Some(list) = token.strip_prefix("after:") {
+            for part in list.split(',') {
+                match part.trim().parse::<TaskId>() {
+                    Ok(n) if n != 0 => after.push(n),
+                    _ => return None,
+                }
+            }
+        } else {
+            return None;
+        }
+    }
+    id.map(|id| (id, after))
 }
 
 /// Strips a trailing `@YYYY-MM-DD` token.
@@ -99,7 +133,7 @@ pub fn decode(data: &str) -> Result<Vec<Task>> {
     for (i, raw) in lines.iter().enumerate() {
         let line = raw.trim_end_matches('\r');
         if let Some((done, content)) = item_start(line.trim_start()) {
-            let (id, content) = take_id(content);
+            let (id, after, content) = take_meta(content);
             let (date, content) = take_date(content);
             let (priority, text) = match content.strip_prefix("! ") {
                 Some(rest) => (true, rest),
@@ -111,6 +145,7 @@ pub fn decode(data: &str) -> Result<Vec<Task>> {
                 date,
                 done,
                 priority,
+                after,
             });
             in_task = true;
         } else if in_task && line.starts_with("  ") {
@@ -149,7 +184,7 @@ mod tests {
             text: text.to_string(),
             date: None,
             done: false,
-            priority: false,
+            priority: false, after: Vec::new(),
         }
     }
 
@@ -198,6 +233,19 @@ mod tests {
         let tasks = decode("- [ ] keep <!-- note --> this <!-- id:5 -->\n").unwrap();
         assert_eq!(tasks[0].text, "keep <!-- note --> this");
         assert_eq!(tasks[0].id, 5);
+    }
+
+    #[test]
+    fn after_ids_roundtrip_in_the_meta_comment() {
+        let mut t = task(3, "blocked");
+        t.after = vec![1, 2];
+        let md = encode(&[t.clone()]);
+        assert_eq!(md, "- [ ] blocked <!-- id:3 after:1,2 -->\n");
+        assert_eq!(decode(&md).unwrap(), vec![t]);
+
+        // A malformed after list rejects the whole comment (kept as text).
+        let tasks = decode("- [ ] x <!-- id:3 after:oops -->\n").unwrap();
+        assert_eq!(tasks[0].text, "x <!-- id:3 after:oops -->");
     }
 
     #[test]

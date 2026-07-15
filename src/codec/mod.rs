@@ -2,7 +2,7 @@
 //! extension (`RUSK_DB` / `rusk_db`) picks the format:
 //!
 //! - `.json` (or anything unrecognized) — pretty-printed JSON, the default;
-//! - `.csv` — RFC 4180 with a fixed `id,text,date,done,priority` schema
+//! - `.csv` — RFC 4180 with a fixed `id,text,date,done,priority,after` schema
 //!   for spreadsheet interop (LibreOffice/Excel/Google Sheets);
 //! - `.md` / `.markdown` — GitHub-style task list (feature `fmt-markdown`);
 //! - `.txt` — todo.txt (feature `fmt-todotxt`);
@@ -228,7 +228,7 @@ mod tests {
             text: String::new(),
             date: None,
             done: false,
-            priority: false,
+            priority: false, after: Vec::new(),
         };
         let mut tasks = vec![task(2), task(0), task(2), task(1)];
         assign_missing_ids(&mut tasks).unwrap();

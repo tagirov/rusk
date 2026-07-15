@@ -54,20 +54,20 @@ impl TaskManager {
         let last_week = today - chrono::Duration::days(7);
 
         vec![
-            Task { id: 1, text: "Simple task without date".to_string(), date: None, done: false, priority: false },
-            Task { id: 2, text: "Completed task without date".to_string(), date: None, done: true, priority: false },
-            Task { id: 3, text: "Overdue task from last week".to_string(), date: Some(last_week), done: false, priority: true },
-            Task { id: 4, text: "Completed overdue task".to_string(), date: Some(yesterday), done: true, priority: false },
-            Task { id: 5, text: "Task due today".to_string(), date: Some(today), done: false, priority: true },
-            Task { id: 6, text: "Completed task due today".to_string(), date: Some(today), done: true, priority: false },
-            Task { id: 7, text: "Task due tomorrow".to_string(), date: Some(tomorrow), done: false, priority: false },
-            Task { id: 8, text: "Completed future task".to_string(), date: Some(next_week), done: true, priority: false },
-            Task { id: 9, text: "Short".to_string(), date: None, done: false, priority: false },
-            Task { id: 10, text: "This is a very long task description that contains multiple words and demonstrates how the system handles longer text content".to_string(), date: Some(tomorrow), done: false, priority: false },
-            Task { id: 11, text: "Task with special chars: @#$%^&*()".to_string(), date: None, done: false, priority: false },
-            Task { id: 12, text: "Complete task 42 and review items 1-10".to_string(), date: Some(next_week), done: false, priority: false },
-            Task { id: 13, text: "Buy groceries: milk, bread, eggs, and cheese".to_string(), date: Some(tomorrow), done: false, priority: false },
-            Task { id: 14, text: "Long-term project milestone".to_string(), date: Some(today + chrono::Duration::days(30)), done: false, priority: false },
+            Task { id: 1, text: "Simple task without date".to_string(), date: None, done: false, priority: false, after: Vec::new() },
+            Task { id: 2, text: "Completed task without date".to_string(), date: None, done: true, priority: false, after: Vec::new() },
+            Task { id: 3, text: "Overdue task from last week".to_string(), date: Some(last_week), done: false, priority: true, after: Vec::new() },
+            Task { id: 4, text: "Completed overdue task".to_string(), date: Some(yesterday), done: true, priority: false, after: Vec::new() },
+            Task { id: 5, text: "Task due today".to_string(), date: Some(today), done: false, priority: true, after: Vec::new() },
+            Task { id: 6, text: "Completed task due today".to_string(), date: Some(today), done: true, priority: false, after: Vec::new() },
+            Task { id: 7, text: "Task due tomorrow".to_string(), date: Some(tomorrow), done: false, priority: false, after: Vec::new() },
+            Task { id: 8, text: "Completed future task".to_string(), date: Some(next_week), done: true, priority: false, after: Vec::new() },
+            Task { id: 9, text: "Short".to_string(), date: None, done: false, priority: false, after: Vec::new() },
+            Task { id: 10, text: "This is a very long task description that contains multiple words and demonstrates how the system handles longer text content".to_string(), date: Some(tomorrow), done: false, priority: false, after: Vec::new() },
+            Task { id: 11, text: "Task with special chars: @#$%^&*()".to_string(), date: None, done: false, priority: false, after: Vec::new() },
+            Task { id: 12, text: "Complete task 42 and review items 1-10".to_string(), date: Some(next_week), done: false, priority: false, after: Vec::new() },
+            Task { id: 13, text: "Buy groceries: milk, bread, eggs, and cheese".to_string(), date: Some(tomorrow), done: false, priority: false, after: Vec::new() },
+            Task { id: 14, text: "Long-term project milestone".to_string(), date: Some(today + chrono::Duration::days(30)), done: false, priority: false, after: Vec::new() },
         ]
     }
 
@@ -147,12 +147,23 @@ impl TaskManager {
     }
 
     pub fn add_task(&mut self, text: Vec<String>, date: Option<String>) -> Result<()> {
+        self.add_task_with_after(text, date, Vec::new())
+    }
+
+    /// Like [`add_task`](Self::add_task) with a `--after` dependency list
+    /// (validated against the current database).
+    pub fn add_task_with_after(
+        &mut self,
+        text: Vec<String>,
+        date: Option<String>,
+        after: Vec<TaskId>,
+    ) -> Result<()> {
         let text = text.join(" ");
         let date = match date {
             None => None,
             Some(d) => Some(parse_cli_date_for_edit(&d, None)?),
         };
-        self.add_task_with_parsed_date(text, date)
+        self.add_task_full(text, date, after)
     }
 
     /// Like [`add_task`](Self::add_task) but with an already-parsed due date (avoids re-parsing after the editor).
@@ -161,9 +172,20 @@ impl TaskManager {
         text: String,
         date: Option<chrono::NaiveDate>,
     ) -> Result<()> {
+        self.add_task_full(text, date, Vec::new())
+    }
+
+    /// The full add: already-parsed date plus a dependency list.
+    pub fn add_task_full(
+        &mut self,
+        text: String,
+        date: Option<chrono::NaiveDate>,
+        after: Vec<TaskId>,
+    ) -> Result<()> {
         if text.trim().is_empty() {
             anyhow::bail!("Task text cannot be empty");
         }
+        let after = self.validate_after(None, &after)?;
         let id = self.generate_next_id()?;
         let task = Task {
             id,
@@ -171,14 +193,90 @@ impl TaskManager {
             date,
             done: false,
             priority: false,
+            after,
         };
         self.tasks.push(task);
         self.save()?;
         Ok(())
     }
 
+    /// Validates a `--after` dependency list against the current database:
+    /// every id must exist, self-references and cycles are rejected.
+    /// Returns the list deduplicated in input order. `own_id` is the task
+    /// being edited (`None` when adding: a new task cannot be in a cycle).
+    pub fn validate_after(&self, own_id: Option<TaskId>, after: &[TaskId]) -> Result<Vec<TaskId>> {
+        let mut clean: Vec<TaskId> = Vec::new();
+        let mut missing: Vec<TaskId> = Vec::new();
+        for &dep in after {
+            if own_id == Some(dep) {
+                anyhow::bail!("Task {dep} cannot depend on itself");
+            }
+            if clean.contains(&dep) || missing.contains(&dep) {
+                continue;
+            }
+            if self.find_task_by_id(dep).is_some() {
+                clean.push(dep);
+            } else {
+                missing.push(dep);
+            }
+        }
+        if !missing.is_empty() {
+            let list = missing
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            anyhow::bail!("Cannot depend on missing task(s): {list}");
+        }
+        if let Some(own) = own_id {
+            // Walk the dependency graph from the new deps; reaching the task
+            // itself would deadlock completion for the whole loop.
+            let mut stack: Vec<TaskId> = clean.clone();
+            let mut seen: std::collections::HashSet<TaskId> = std::collections::HashSet::new();
+            while let Some(cur) = stack.pop() {
+                if cur == own {
+                    anyhow::bail!(
+                        "Dependency cycle: task {own} would (transitively) depend on itself"
+                    );
+                }
+                if !seen.insert(cur) {
+                    continue;
+                }
+                if let Some(idx) = self.find_task_by_id(cur) {
+                    stack.extend(self.tasks[idx].after.iter().copied());
+                }
+            }
+        }
+        Ok(clean)
+    }
+
+    /// Dependencies of the task that still exist and are not done yet
+    /// (ids of deleted tasks count as satisfied).
+    pub fn unfinished_deps(&self, id: TaskId) -> Vec<TaskId> {
+        let Some(idx) = self.find_task_by_id(id) else {
+            return Vec::new();
+        };
+        self.tasks[idx]
+            .after
+            .iter()
+            .copied()
+            .filter(|dep| {
+                self.find_task_by_id(*dep)
+                    .is_some_and(|dep_idx| !self.tasks[dep_idx].done)
+            })
+            .collect()
+    }
+
+    /// Removes the given ids from every task's `after` list (deleted tasks
+    /// must not linger as dependencies: their ids get reused).
+    fn strip_deps(&mut self, removed: &[TaskId]) {
+        for task in &mut self.tasks {
+            task.after.retain(|dep| !removed.contains(dep));
+        }
+    }
+
     pub fn delete_tasks(&mut self, ids: Vec<TaskId>) -> Result<Vec<TaskId>> {
-        let mut deleted_count = 0;
+        let mut deleted = Vec::new();
         let mut not_found = Vec::new();
 
         let mut sorted_ids = ids;
@@ -187,13 +285,14 @@ impl TaskManager {
         for id in sorted_ids {
             if let Some(idx) = self.find_task_by_id(id) {
                 self.tasks.remove(idx);
-                deleted_count += 1;
+                deleted.push(id);
             } else {
                 not_found.push(id);
             }
         }
 
-        if deleted_count > 0 {
+        if !deleted.is_empty() {
+            self.strip_deps(&deleted);
             self.save()?;
         }
 
@@ -201,13 +300,19 @@ impl TaskManager {
     }
 
     pub fn delete_all_done(&mut self) -> Result<usize> {
-        let done_count = self.tasks.iter().filter(|t| t.done).count();
-        if done_count == 0 {
+        let done_ids: Vec<TaskId> = self
+            .tasks
+            .iter()
+            .filter(|t| t.done)
+            .map(|t| t.id)
+            .collect();
+        if done_ids.is_empty() {
             Ok(0)
         } else {
             self.tasks.retain(|t| !t.done);
+            self.strip_deps(&done_ids);
             self.save()?;
-            Ok(done_count)
+            Ok(done_ids.len())
         }
     }
 
@@ -259,12 +364,31 @@ impl TaskManager {
         text: Option<Vec<String>>,
         date: Option<String>,
     ) -> Result<(Vec<TaskId>, Vec<TaskId>, Vec<TaskId>)> {
+        self.edit_tasks_with_after(ids, text, date, None)
+    }
+
+    /// Like [`edit_tasks`](Self::edit_tasks) plus an optional new dependency
+    /// list: `Some(vec![])` clears it, `None` leaves it untouched.
+    pub fn edit_tasks_with_after(
+        &mut self,
+        ids: Vec<TaskId>,
+        text: Option<Vec<String>>,
+        date: Option<String>,
+        after: Option<Vec<TaskId>>,
+    ) -> Result<(Vec<TaskId>, Vec<TaskId>, Vec<TaskId>)> {
         let mut not_found = Vec::new();
         let mut edited = Vec::new();
         let mut unchanged = Vec::new();
 
         for id in ids {
             if let Some(idx) = self.find_task_by_id(id) {
+                // Cycle detection depends on the task being edited, so the
+                // list is validated per id before the task is borrowed.
+                let new_after = match &after {
+                    Some(list) => Some(self.validate_after(Some(id), list)?),
+                    None => None,
+                };
+
                 let task = &mut self.tasks[idx];
                 let mut was_changed = false;
 
@@ -289,6 +413,13 @@ impl TaskManager {
                             was_changed = true;
                         }
                     }
+                }
+
+                if let Some(new_after) = new_after
+                    && task.after != new_after
+                {
+                    task.after = new_after;
+                    was_changed = true;
                 }
 
                 if was_changed {
@@ -366,6 +497,7 @@ impl TaskManager {
 #[cfg(test)]
 mod tests {
     use super::TaskManager;
+    use crate::model::TaskId;
     use chrono::NaiveDate;
 
     #[test]
@@ -376,6 +508,82 @@ mod tests {
             .unwrap();
         assert_eq!(tm.tasks[0].text, "Hello");
         assert_eq!(tm.tasks[0].date, Some(d));
+    }
+
+    fn tm_with_tasks(n: u32) -> TaskManager {
+        let dir = std::env::temp_dir()
+            .join("rusk_after_tests")
+            .join(format!("{}-{n}", std::process::id()));
+        let mut tm = TaskManager::new_empty_with_path(dir.join("tasks.json"));
+        for i in 1..=n {
+            tm.add_task(vec![format!("task {i}")], None).unwrap();
+        }
+        tm
+    }
+
+    #[test]
+    fn after_validation_rejects_missing_self_and_cycles() {
+        let mut tm = tm_with_tasks(3);
+
+        // Missing dependency ids are reported.
+        let err = tm
+            .add_task_with_after(vec!["x".into()], None, vec![9])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("missing task(s): 9"), "{err}");
+
+        // Valid deps are stored deduplicated in input order.
+        tm.add_task_with_after(vec!["y".into()], None, vec![2, 1, 2])
+            .unwrap();
+        assert_eq!(tm.tasks.last().unwrap().after, vec![2, 1]);
+
+        // Self-reference and cycles are rejected on edit.
+        let err = tm
+            .edit_tasks_with_after(vec![1], None, None, Some(vec![1]))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("depend on itself"), "{err}");
+
+        tm.edit_tasks_with_after(vec![1], None, None, Some(vec![2]))
+            .unwrap();
+        let err = tm
+            .edit_tasks_with_after(vec![2], None, None, Some(vec![1]))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("cycle"), "{err}");
+
+        // Clearing always works.
+        tm.edit_tasks_with_after(vec![1], None, None, Some(vec![]))
+            .unwrap();
+        assert!(tm.tasks[0].after.is_empty());
+    }
+
+    #[test]
+    fn unfinished_deps_ignore_done_and_deleted_tasks() {
+        let mut tm = tm_with_tasks(3);
+        tm.edit_tasks_with_after(vec![3], None, None, Some(vec![1, 2]))
+            .unwrap();
+        assert_eq!(tm.unfinished_deps(3), vec![1, 2]);
+
+        tm.mark_tasks(vec![1]).unwrap();
+        assert_eq!(tm.unfinished_deps(3), vec![2]);
+
+        tm.delete_tasks(vec![2]).unwrap();
+        assert_eq!(tm.unfinished_deps(3), Vec::<TaskId>::new());
+    }
+
+    #[test]
+    fn deleting_tasks_strips_them_from_after_lists() {
+        let mut tm = tm_with_tasks(3);
+        tm.edit_tasks_with_after(vec![3], None, None, Some(vec![1, 2]))
+            .unwrap();
+
+        tm.delete_tasks(vec![1]).unwrap();
+        assert_eq!(tm.tasks.iter().find(|t| t.id == 3).unwrap().after, vec![2]);
+
+        tm.mark_tasks(vec![2]).unwrap();
+        tm.delete_all_done().unwrap();
+        assert!(tm.tasks.iter().find(|t| t.id == 3).unwrap().after.is_empty());
     }
 
     #[test]

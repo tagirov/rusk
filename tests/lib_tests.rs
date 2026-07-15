@@ -45,7 +45,7 @@ fn test_generate_next_id_max_reached() {
             text: format!("Task {i}"),
             date: None,
             done: false,
-            priority: false,
+            priority: false, after: Vec::new(),
         });
     }
 
@@ -64,7 +64,7 @@ fn test_generate_next_id_continues_past_255() {
             text: format!("Task {i}"),
             date: None,
             done: false,
-            priority: false,
+            priority: false, after: Vec::new(),
         });
     }
 

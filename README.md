@@ -122,6 +122,15 @@ rusk mark 1
 # Mark a task as priority. Toggle again to remove.
 rusk mark 1 --priority
 
+# Add a task that depends on other tasks: shown as `deploy (19,22)` in the
+# list and cannot be marked done before tasks 19 and 22 are.
+rusk add deploy --after 19,22
+rusk a deploy -a 19,22
+
+# Change or clear the dependency list of an existing task
+rusk edit 1 --after 19,22
+rusk edit 1 --after _
+
 # Edit task text in one shot
 rusk edit 1 Complete the project documentation
 
@@ -250,6 +259,7 @@ rusk c (completions)
 
 # Command flags
 -d (--date)
+-a (--after)
 -c (--compact)
 -p (--priority)
 

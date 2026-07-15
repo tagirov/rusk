@@ -3,14 +3,14 @@ use clap::{CommandFactory, Parser};
 #[cfg(feature = "completions")]
 use colored::*;
 use rusk::{
-    BareEditDateFlag, TaskManager,
+    BareEditAfterFlag, BareEditDateFlag, TaskManager,
     args::{Cli, Command},
     cli::HandlerCLI,
     config,
     error::AppError,
-    is_cli_date_help_value, parse_edit_args, parse_flexible_ids,
+    is_cli_date_help_value, parse_after_ids, parse_edit_args, parse_flexible_ids,
     parser::date::is_cli_date_clear_value,
-    strip_edit_date_flag, windows_console,
+    strip_edit_after_flag, strip_edit_date_flag, windows_console,
 };
 #[cfg(feature = "completions")]
 use rusk::{args::CompletionAction, completions::Shell};
@@ -134,6 +134,7 @@ fn run() -> Result<()> {
         Some(Command::Add {
             text,
             date: Some(d),
+            ..
         }) if text.is_empty() && is_cli_date_clear_value(d) => {
             exit_with_error(
                 "`-d _` cannot be used when adding a task with no text: there is no date to clear. \
@@ -163,7 +164,19 @@ fn run() -> Result<()> {
     let mut tm = TaskManager::new()?;
 
     match cli.command {
-        Some(Command::Add { text, date }) => {
+        Some(Command::Add { text, date, after }) => {
+            let after_ids = match &after {
+                None => Vec::new(),
+                Some(raw) => {
+                    let ids = parse_after_ids(raw);
+                    if ids.is_empty() {
+                        exit_with_error(format!(
+                            "`--after` expects comma-separated task ids (e.g. 19,22), got '{raw}'"
+                        ));
+                    }
+                    ids
+                }
+            };
             if text.is_empty() {
                 #[cfg(feature = "interactive")]
                 {
@@ -174,14 +187,14 @@ fn run() -> Result<()> {
                              Pass the task on the command line, e.g. `rusk add buy milk`.",
                         );
                     }
-                    HandlerCLI::handle_add_task_interactive(&mut tm, date)?;
+                    HandlerCLI::handle_add_task_interactive(&mut tm, date, after_ids)?;
                 }
                 #[cfg(not(feature = "interactive"))]
                 {
-                    HandlerCLI::handle_add_task(&mut tm, text, date)?;
+                    HandlerCLI::handle_add_task(&mut tm, text, date, after_ids)?;
                 }
             } else {
-                HandlerCLI::handle_add_task(&mut tm, text, date)?;
+                HandlerCLI::handle_add_task(&mut tm, text, date, after_ids)?;
             }
         }
         Some(Command::Del { ids, done }) => {
@@ -206,6 +219,27 @@ fn run() -> Result<()> {
                     );
                 }
             };
+            let (args, opt_after) = match strip_edit_after_flag(args) {
+                Ok(p) => p,
+                Err(BareEditAfterFlag) => {
+                    exit_with_error(
+                        "`rusk edit` does not support `-a` / `--after` without a value. \
+                         Pass comma-separated task ids (`rusk edit <id> -a 19,22`) or `_` to clear the list.",
+                    );
+                }
+            };
+            let opt_after = opt_after.map(|raw| {
+                if raw == "_" {
+                    return Vec::new();
+                }
+                let ids = parse_after_ids(&raw);
+                if ids.is_empty() {
+                    exit_with_error(format!(
+                        "`--after` expects comma-separated task ids (e.g. 19,22) or `_` to clear, got '{raw}'"
+                    ));
+                }
+                ids
+            });
 
             let (ids, text_option) = parse_edit_args(args);
 
@@ -213,12 +247,8 @@ fn run() -> Result<()> {
                 exit_with_error("No valid task IDs provided");
             }
 
-            match (text_option, opt_date) {
-                (None, Some(d)) => HandlerCLI::handle_edit_tasks(&mut tm, ids, None, Some(d))?,
-                (Some(text), Some(d)) => {
-                    HandlerCLI::handle_edit_tasks(&mut tm, ids, Some(text), Some(d))?
-                }
-                (None, None) => {
+            match (text_option, opt_date, &opt_after) {
+                (None, None, None) => {
                     #[cfg(feature = "interactive")]
                     {
                         HandlerCLI::handle_edit_tasks_interactive(&mut tm, ids)?
@@ -233,8 +263,8 @@ fn run() -> Result<()> {
                         std::process::exit(1);
                     }
                 }
-                (Some(text), None) => {
-                    HandlerCLI::handle_edit_tasks(&mut tm, ids, Some(text), None)?
+                (text_option, opt_date, _) => {
+                    HandlerCLI::handle_edit_tasks(&mut tm, ids, text_option, opt_date, opt_after)?
                 }
             }
         }

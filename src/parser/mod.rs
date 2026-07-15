@@ -6,5 +6,6 @@ pub use date::{
     parse_cli_date_with_base, validate_cli_date_edit_arg,
 };
 pub use ids::{
-    BareEditDateFlag, EditArgs, parse_edit_args, parse_flexible_ids, strip_edit_date_flag,
+    BareEditAfterFlag, BareEditDateFlag, EditArgs, parse_after_ids, parse_edit_args,
+    parse_flexible_ids, strip_edit_after_flag, strip_edit_date_flag,
 };

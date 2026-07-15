@@ -11,7 +11,8 @@
 //!
 //! Mapping: `x ` prefix = done; any `(A)`–`(Z)` priority = the priority
 //! flag (written back as `(A)`); a `due:YYYY-MM-DD` token = the due date;
-//! an `id:N` token pins the rusk id (assigned on load when missing).
+//! an `id:N` token pins the rusk id (assigned on load when missing);
+//! an `after:A,B` token lists task ids this task depends on.
 //! Projects/contexts/other `key:value` tokens are kept as part of the task
 //! text. Completion/creation dates at the head of a line are accepted but
 //! not preserved. Newlines inside task text are stored as a literal `\n`
@@ -60,6 +61,15 @@ pub fn encode(tasks: &[Task]) -> String {
         if let Some(date) = task.date {
             out.push_str(&format!(" due:{date}"));
         }
+        if !task.after.is_empty() {
+            let after = task
+                .after
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            out.push_str(&format!(" after:{after}"));
+        }
         out.push_str(&format!(" id:{}\n", task.id));
     }
     out
@@ -75,6 +85,17 @@ fn is_priority_token(token: &str) -> bool {
 
 fn is_date_token(token: &str) -> bool {
     token.parse::<NaiveDate>().is_ok()
+}
+
+/// Comma-separated ids after `after:`; any invalid part rejects the whole
+/// token so it stays in the text (like an invalid `due:`).
+fn parse_after_list(list: &str) -> Option<Vec<TaskId>> {
+    list.split(',')
+        .map(|part| match part.trim().parse::<TaskId>() {
+            Ok(n) if n != 0 => Some(n),
+            _ => None,
+        })
+        .collect()
 }
 
 pub fn decode(data: &str) -> Result<Vec<Task>> {
@@ -112,6 +133,7 @@ pub fn decode(data: &str) -> Result<Vec<Task>> {
         // survive the rebuild (empty tokens are kept verbatim).
         let mut date = None;
         let mut id = None;
+        let mut after: Vec<TaskId> = Vec::new();
         let mut words: Vec<&str> = Vec::new();
         for token in rest.split(' ') {
             if let Some(d) = token.strip_prefix("due:")
@@ -125,6 +147,11 @@ pub fn decode(data: &str) -> Result<Vec<Task>> {
                 && id.is_none()
             {
                 id = Some(n);
+            } else if let Some(list) = token.strip_prefix("after:")
+                && after.is_empty()
+                && let Some(ids) = parse_after_list(list)
+            {
+                after = ids;
             } else {
                 words.push(token);
             }
@@ -136,6 +163,7 @@ pub fn decode(data: &str) -> Result<Vec<Task>> {
             date,
             done,
             priority,
+            after,
         });
     }
 
@@ -153,7 +181,7 @@ mod tests {
             text: text.to_string(),
             date: None,
             done: false,
-            priority: false,
+            priority: false, after: Vec::new(),
         }
     }
 
@@ -198,6 +226,19 @@ mod tests {
         let tasks = decode("ship due:tomorrow id:zero\n").unwrap();
         assert_eq!(tasks[0].text, "ship due:tomorrow id:zero");
         assert_eq!(tasks[0].date, None);
+    }
+
+    #[test]
+    fn after_token_roundtrips_and_invalid_stays_in_text() {
+        let mut t = task(3, "blocked");
+        t.after = vec![1, 2];
+        let txt = encode(&[t.clone()]);
+        assert_eq!(txt, "blocked after:1,2 id:3\n");
+        assert_eq!(decode(&txt).unwrap(), vec![t]);
+
+        let tasks = decode("ship after:1,x id:3\n").unwrap();
+        assert_eq!(tasks[0].text, "ship after:1,x");
+        assert_eq!(tasks[0].after, Vec::<TaskId>::new());
     }
 
     #[test]

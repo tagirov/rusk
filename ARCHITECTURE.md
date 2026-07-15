@@ -208,8 +208,10 @@ Every backend implements the same whole-database load/save contract, so the
 formats stay interchangeable and `rusk sync` hashes content canonically
 (parsed tasks re-encoded as compact JSON) regardless of representation.
 
-Task ids are `u8`: the smallest free id is reused, and the database holds at
-most 255 tasks (adding beyond that returns an error).
+Task ids are `u32` (`TaskId` in `model.rs`): the smallest free id is reused.
+A task may list other task ids in `after` (`--after`): the dependencies are
+shown after the text as `(19,22)`, block `rusk mark` until they are done,
+and are stripped automatically when the referenced tasks are deleted.
 
 ## Configuration
 

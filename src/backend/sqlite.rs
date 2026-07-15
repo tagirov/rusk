@@ -5,8 +5,10 @@
 //! serialize on the SQLite lock instead of racing on a file rename.
 //!
 //! `pos` keeps the display order (insertion order, independent of the
-//! reusable 1–255 ids). Foreign writers may INSERT without `pos` — rowid
-//! semantics append them at the end.
+//! reusable ids). Foreign writers may INSERT without `pos` — rowid
+//! semantics append them at the end. `"after"` holds the comma-separated
+//! ids of the tasks a task depends on (NULL when none); databases created
+//! before that column exist are migrated in place on open.
 
 use crate::model::{Task, TaskId};
 use anyhow::{Context, Result};
@@ -15,11 +17,12 @@ use std::path::{Path, PathBuf};
 
 const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS tasks (
     pos      INTEGER PRIMARY KEY,
-    id       INTEGER NOT NULL UNIQUE CHECK (id BETWEEN 1 AND 255),
+    id       INTEGER NOT NULL UNIQUE CHECK (id > 0),
     text     TEXT NOT NULL,
     date     TEXT,
     done     INTEGER NOT NULL DEFAULT 0,
-    priority INTEGER NOT NULL DEFAULT 0
+    priority INTEGER NOT NULL DEFAULT 0,
+    \"after\" TEXT
 )";
 
 #[derive(Debug)]
@@ -41,6 +44,16 @@ impl SqliteBackend {
             .with_context(|| format!("Failed to open SQLite database '{}'", self.path.display()))?;
         conn.execute(SCHEMA, [])
             .context("Failed to create the tasks table")?;
+        // Databases created before the dependency feature lack the "after"
+        // column; add it in place (ALTER is cheap and preserves the data).
+        let has_after = conn
+            .prepare("SELECT 1 FROM pragma_table_info('tasks') WHERE name = 'after'")
+            .and_then(|mut stmt| stmt.exists([]))
+            .context("Failed to inspect the tasks table")?;
+        if !has_after {
+            conn.execute("ALTER TABLE tasks ADD COLUMN \"after\" TEXT", [])
+                .context("Failed to add the after column")?;
+        }
         Ok(conn)
     }
 
@@ -50,7 +63,7 @@ impl SqliteBackend {
         }
         let conn = self.open()?;
         let mut stmt = conn
-            .prepare("SELECT id, text, date, done, priority FROM tasks ORDER BY pos")
+            .prepare("SELECT id, text, date, done, priority, \"after\" FROM tasks ORDER BY pos")
             .context("Failed to query the tasks table")?;
         let tasks = stmt
             .query_map([], |row| {
@@ -60,6 +73,7 @@ impl SqliteBackend {
                     row.get::<_, Option<String>>(2)?,
                     row.get::<_, bool>(3)?,
                     row.get::<_, bool>(4)?,
+                    row.get::<_, Option<String>>(5)?,
                 ))
             })
             .context("Failed to read the tasks table")?
@@ -71,19 +85,31 @@ impl SqliteBackend {
                 )
             })?
             .into_iter()
-            .map(|(id, text, date, done, priority)| {
+            .map(|(id, text, date, done, priority, after)| {
                 let date = date
                     .map(|d| {
                         d.parse::<chrono::NaiveDate>()
                             .with_context(|| format!("task {id}: invalid date '{d}'"))
                     })
                     .transpose()?;
+                let after = after
+                    .as_deref()
+                    .unwrap_or("")
+                    .split(',')
+                    .filter(|s| !s.trim().is_empty())
+                    .map(|s| {
+                        s.trim()
+                            .parse::<TaskId>()
+                            .with_context(|| format!("task {id}: invalid after id '{s}'"))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
                 Ok(Task {
                     id,
                     text,
                     date,
                     done,
                     priority,
+                    after,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -104,11 +130,22 @@ impl SqliteBackend {
         {
             let mut stmt = tx
                 .prepare(
-                    "INSERT INTO tasks (pos, id, text, date, done, priority)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    "INSERT INTO tasks (pos, id, text, date, done, priority, \"after\")
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 )
                 .context("Failed to prepare the insert")?;
             for (pos, task) in tasks.iter().enumerate() {
+                let after = if task.after.is_empty() {
+                    None
+                } else {
+                    Some(
+                        task.after
+                            .iter()
+                            .map(|id| id.to_string())
+                            .collect::<Vec<_>>()
+                            .join(","),
+                    )
+                };
                 stmt.execute(rusqlite::params![
                     pos as i64 + 1,
                     task.id,
@@ -116,6 +153,7 @@ impl SqliteBackend {
                     task.date.map(|d| d.to_string()),
                     task.done,
                     task.priority,
+                    after,
                 ])
                 .with_context(|| format!("Failed to insert task {}", task.id))?;
             }
@@ -144,21 +182,72 @@ mod tests {
                 text: "first\nmulti-line".into(),
                 date: NaiveDate::from_ymd_opt(2026, 7, 15),
                 done: false,
-                priority: true,
+                priority: true, after: Vec::new(),
             },
             Task {
                 id: 1,
                 text: "second".into(),
                 date: None,
                 done: true,
-                priority: false,
+                priority: false, after: Vec::new(),
             },
         ];
         backend.save(&tasks).unwrap();
         assert_eq!(backend.load().unwrap(), tasks);
 
         // Saving again replaces, not appends.
-        backend.save(&tasks[..1].to_vec()).unwrap();
+        backend.save(&tasks[..1]).unwrap();
         assert_eq!(backend.load().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn after_ids_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = SqliteBackend::new(dir.path().join("tasks.db"));
+        let tasks = vec![Task {
+            id: 3,
+            text: "blocked".into(),
+            date: None,
+            done: false,
+            priority: false,
+            after: vec![1, 2],
+        }];
+        backend.save(&tasks).unwrap();
+        assert_eq!(backend.load().unwrap(), tasks);
+    }
+
+    #[test]
+    fn pre_after_databases_are_migrated_on_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tasks.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute(
+                "CREATE TABLE tasks (
+                    pos      INTEGER PRIMARY KEY,
+                    id       INTEGER NOT NULL UNIQUE CHECK (id BETWEEN 1 AND 255),
+                    text     TEXT NOT NULL,
+                    date     TEXT,
+                    done     INTEGER NOT NULL DEFAULT 0,
+                    priority INTEGER NOT NULL DEFAULT 0
+                )",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO tasks (pos, id, text) VALUES (1, 1, 'legacy')",
+                [],
+            )
+            .unwrap();
+        }
+        let backend = SqliteBackend::new(path);
+        let loaded = backend.load().unwrap();
+        assert_eq!(loaded[0].text, "legacy");
+        assert_eq!(loaded[0].after, Vec::<TaskId>::new());
+        // The migrated column persists through a save.
+        let mut tasks = loaded;
+        tasks[0].after = vec![7];
+        backend.save(&tasks).unwrap();
+        assert_eq!(backend.load().unwrap(), tasks);
     }
 }

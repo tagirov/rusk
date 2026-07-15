@@ -266,12 +266,12 @@ function __rusk_complete_flags
     end
 end
 
-# Check if previous word is a date flag
+# Check if previous word is a value-taking flag (-d/--date, -a/--after)
 function __rusk_is_after_date_flag
     set -l cmdline (__rusk_get_cmdline)
     if test (count $cmdline) -ge 2
         set -l prev_word $cmdline[-1]
-        test "$prev_word" = "-d"; or test "$prev_word" = "--date"
+        contains -- "$prev_word" -d --date -a --after
     else
         return 1
     end
@@ -301,11 +301,11 @@ function __rusk_add_has_prior_task_text
     for j in (seq $start $n)
         set -l w "$cmdline[$j]"
         test -n "$w"; or continue
-        if test "$prev" = -d; or test "$prev" = --date
+        if contains -- "$prev" -d --date -a --after
             set prev "$w"
             continue
         end
-        if test "$w" = -d; or test "$w" = --date
+        if contains -- "$w" -d --date -a --after
             set prev "$w"
             continue
         end
@@ -318,7 +318,7 @@ function __rusk_add_has_prior_task_text
     return 1
 end
 
-# Complete flags for add command (-d/--date only after task text)
+# Complete flags for add command (-d/--date, -a/--after only after task text)
 function __rusk_complete_add_flags
     if __rusk_is_after_date_flag
         set -l cw (__rusk_get_current_word)
@@ -329,7 +329,7 @@ function __rusk_complete_add_flags
     end
     set -l all_flags -h --help
     if __rusk_add_has_prior_task_text
-        set all_flags -d --date -h --help
+        set all_flags -d --date -a --after -h --help
     end
     __rusk_complete_flags $all_flags
 end
@@ -387,11 +387,11 @@ function __rusk_edit_has_task_id
     for j in (seq $start $n)
         set -l w "$cmdline[$j]"
         test -n "$w"; or continue
-        if test "$prev" = -d; or test "$prev" = --date
+        if contains -- "$prev" -d --date -a --after
             set prev "$w"
             continue
         end
-        if test "$w" = -d; or test "$w" = --date
+        if contains -- "$w" -d --date -a --after
             set prev "$w"
             continue
         end
@@ -407,7 +407,7 @@ function __rusk_edit_has_task_id
     return 1
 end
 
-# Complete flags for edit: -d/--date after a task id (unless -d already present)
+# Complete flags for edit: -d/--date, -a/--after after a task id (unless already present)
 function __rusk_complete_edit_flags
     if __rusk_is_after_date_flag
         set -l cw (__rusk_get_current_word)
@@ -421,6 +421,7 @@ function __rusk_complete_edit_flags
         set -l cmdline (__rusk_get_cmdline)
         set -l n (count $cmdline)
         set -l has_d 0
+        set -l has_a 0
         set -l rusk_i -1
         for i in (seq 1 $n)
             if test "$cmdline[$i]" = rusk
@@ -433,19 +434,27 @@ function __rusk_complete_edit_flags
             for j in (seq (math $rusk_i + 2) (math $n - 1))
                 set -l a "$cmdline[$j]"
                 test -n "$a"; or continue
-                if test "$p" = -d; or test "$p" = --date
+                if contains -- "$p" -d --date -a --after
                     set p "$a"
                     continue
                 end
                 if test "$a" = -d; or test "$a" = --date
                     set has_d 1
                 end
+                if test "$a" = -a; or test "$a" = --after
+                    set has_a 1
+                end
                 set p "$a"
             end
         end
+        set all_flags
         if test $has_d -eq 0
-            set all_flags -d --date -h --help
+            set -a all_flags -d --date
         end
+        if test $has_a -eq 0
+            set -a all_flags -a --after
+        end
+        set -a all_flags -h --help
     end
     __rusk_complete_flags $all_flags
 end

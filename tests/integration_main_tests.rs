@@ -421,3 +421,125 @@ fn test_binary_rusk_no_color_empty_does_not_disable() {
         "empty RUSK_NO_COLOR should not disable colors:\n{stderr:?}"
     );
 }
+
+#[test]
+fn test_binary_add_with_after_shows_deps_and_blocks_mark() {
+    let _guard = BIN_TEST_MUTEX.lock().unwrap();
+    setup_test_db(
+        r#"[{"id":1,"text":"base","date":null,"done":false,"priority":false},
+            {"id":2,"text":"other","date":null,"done":false,"priority":false}]"#,
+    );
+
+    let out = rusk_command()
+        .env("RUSK_NO_COLOR", "1")
+        .args(["add", "deploy", "-a", "1,2"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "add -a should succeed: {out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("deploy (1,2)"),
+        "added task should show its deps:\n{stdout}"
+    );
+    assert!(read_db().contains("\"after\""), "deps must be persisted");
+
+    // The list appends the deps in parentheses after the text.
+    let out = rusk_command()
+        .env("RUSK_NO_COLOR", "1")
+        .args(["list"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("deploy (1,2)"),
+        "list should show the deps suffix:\n{stdout}"
+    );
+
+    // Completing the dependent task is blocked while deps are unfinished.
+    let out = rusk_command()
+        .env("RUSK_NO_COLOR", "1")
+        .args(["mark", "3"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("blocked by unfinished task(s): 1, 2"),
+        "mark must be blocked:\n{stdout}"
+    );
+    assert!(!read_db().contains("\"done\": true"), "task 3 must stay undone");
+
+    // Finish the deps: now the task completes.
+    rusk_command().args(["mark", "1,2"]).output().unwrap();
+    let out = rusk_command()
+        .env("RUSK_NO_COLOR", "1")
+        .args(["mark", "3"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("Marked task as done"),
+        "mark should succeed after deps are done:\n{stdout}"
+    );
+}
+
+#[test]
+fn test_binary_add_rejects_missing_after_ids() {
+    let _guard = BIN_TEST_MUTEX.lock().unwrap();
+    setup_test_db(r#"[{"id":1,"text":"T","date":null,"done":false,"priority":false}]"#);
+
+    let out = rusk_command()
+        .args(["add", "x", "-a", "9"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "missing dep id must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("missing task(s): 9"),
+        "error should name the missing id:\n{stderr}"
+    );
+
+    let out = rusk_command()
+        .args(["add", "x", "-a", "oops"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "non-numeric --after must fail");
+}
+
+#[test]
+fn test_binary_edit_sets_and_clears_after() {
+    let _guard = BIN_TEST_MUTEX.lock().unwrap();
+    setup_test_db(
+        r#"[{"id":1,"text":"base","date":null,"done":false,"priority":false},
+            {"id":2,"text":"dep","date":null,"done":false,"priority":false}]"#,
+    );
+
+    let out = rusk_command()
+        .env("RUSK_NO_COLOR", "1")
+        .args(["edit", "1", "-a", "2"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "edit -a should succeed: {out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("- after: 2"),
+        "edit should report the new deps:\n{stdout}"
+    );
+    assert!(read_db().contains("\"after\""), "deps must be persisted");
+
+    // Self-dependency is rejected.
+    let out = rusk_command().args(["edit", "1", "-a", "1"]).output().unwrap();
+    assert!(!out.status.success(), "self-dependency must fail");
+
+    // `_` clears the list.
+    let out = rusk_command()
+        .env("RUSK_NO_COLOR", "1")
+        .args(["edit", "1", "-a", "_"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "edit -a _ should succeed: {out:?}");
+    assert!(
+        !read_db().contains("\"after\""),
+        "cleared deps must not be persisted"
+    );
+}
+

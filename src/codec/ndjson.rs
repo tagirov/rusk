@@ -39,14 +39,14 @@ mod tests {
                 text: "multi\nline".into(),
                 date: NaiveDate::from_ymd_opt(2026, 7, 15),
                 done: false,
-                priority: true,
+                priority: true, after: Vec::new(),
             },
             Task {
                 id: 2,
                 text: "plain".into(),
                 date: None,
                 done: true,
-                priority: false,
+                priority: false, after: Vec::new(),
             },
         ];
         let data = encode(&tasks).unwrap();

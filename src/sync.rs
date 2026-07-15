@@ -278,7 +278,7 @@ mod tests {
             text: "hello".into(),
             date: chrono::NaiveDate::from_ymd_opt(2026, 7, 8),
             done: false,
-            priority: true,
+            priority: true, after: Vec::new(),
         }];
         // Pretty JSON on disk and compact JSON over HTTP hash identically
         // because hashing re-encodes parsed tasks canonically.

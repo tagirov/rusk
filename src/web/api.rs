@@ -37,10 +37,13 @@ struct NewTask {
     text: String,
     #[serde(default)]
     date: Option<NaiveDate>,
+    #[serde(default)]
+    after: Vec<TaskId>,
 }
 
 /// PATCH body: absent fields stay untouched. `date` uses the double-Option
 /// pattern so `"date": null` (clear) differs from the field being absent.
+/// `after` replaces the whole dependency list (`[]` clears it).
 #[derive(Deserialize)]
 pub struct TaskPatch {
     text: Option<String>,
@@ -48,6 +51,7 @@ pub struct TaskPatch {
     date: Option<Option<NaiveDate>>,
     done: Option<bool>,
     priority: Option<bool>,
+    after: Option<Vec<TaskId>>,
 }
 
 fn some_option<'de, D>(deserializer: D) -> Result<Option<Option<NaiveDate>>, D::Error>
@@ -78,7 +82,11 @@ pub fn create_task(tm: &mut TaskManager, body: &str) -> ApiResponse {
     if new.text.trim().is_empty() {
         return ApiResponse::error(400, "Task text cannot be empty");
     }
-    match tm.add_task_with_parsed_date(new.text, new.date) {
+    // A bad dependency list is a client error, not a save failure.
+    if let Err(e) = tm.validate_after(None, &new.after) {
+        return ApiResponse::error(400, &e.to_string());
+    }
+    match tm.add_task_full(new.text, new.date, new.after) {
         Ok(()) => ApiResponse::json(201, &tm.tasks().last()),
         Err(e) => ApiResponse::error(500, &e.to_string()),
     }
@@ -98,6 +106,13 @@ pub fn update_task(tm: &mut TaskManager, id: TaskId, body: &str) -> ApiResponse 
     {
         return ApiResponse::error(400, "Task text cannot be empty");
     }
+    let new_after = match &patch.after {
+        Some(list) => match tm.validate_after(Some(id), list) {
+            Ok(clean) => Some(clean),
+            Err(e) => return ApiResponse::error(400, &e.to_string()),
+        },
+        None => None,
+    };
 
     let task = &mut tm.tasks_mut()[idx];
     if let Some(text) = patch.text {
@@ -111,6 +126,9 @@ pub fn update_task(tm: &mut TaskManager, id: TaskId, body: &str) -> ApiResponse 
     }
     if let Some(priority) = patch.priority {
         task.priority = priority;
+    }
+    if let Some(after) = new_after {
+        task.after = after;
     }
     let updated = tm.tasks()[idx].clone();
     save_or_500(tm, ApiResponse::json(200, &updated))
@@ -226,7 +244,7 @@ mod tests {
                 text: format!("t{i}"),
                 date: None,
                 done: false,
-                priority: false,
+                priority: false, after: Vec::new(),
             });
         }
         assert_eq!(create_task(&mut tm, r#"{"text":"one more"}"#).status, 201);

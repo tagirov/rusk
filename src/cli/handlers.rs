@@ -11,6 +11,21 @@ use super::HandlerCLI;
 use super::editor::EditorExtras;
 
 impl HandlerCLI {
+    /// `(19,22)` suffix for a task with dependencies; appended after the
+    /// task text everywhere the task is shown.
+    fn after_suffix(task: &Task) -> Option<String> {
+        if task.after.is_empty() {
+            return None;
+        }
+        let ids = task
+            .after
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        Some(format!("({ids})"))
+    }
+
     fn print_added_task(task: &Task) {
         let prefix = if let Some(date) = task.date {
             let colored_date = Self::colored_short_date(date, task.done);
@@ -18,7 +33,11 @@ impl HandlerCLI {
         } else {
             format!("{} {}:", theme().success.paint("Added task:"), task.id)
         };
-        Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
+        let text = match Self::after_suffix(task) {
+            Some(suffix) => format!("{} {}", task.text, suffix),
+            None => task.text.clone(),
+        };
+        Self::print_task_text_with_wrapping(&prefix, &text.bold().to_string());
     }
 
     /// If a draft stored under `draft_key` exists and differs from `base_prefill`,
@@ -72,8 +91,9 @@ impl HandlerCLI {
         tm: &mut TaskManager,
         text: Vec<String>,
         date: Option<String>,
+        after: Vec<crate::TaskId>,
     ) -> Result<()> {
-        tm.add_task(text, date)?;
+        tm.add_task_with_after(text, date, after)?;
         let task = tm.tasks().last().unwrap();
         Self::print_added_task(task);
         Ok(())
@@ -81,7 +101,14 @@ impl HandlerCLI {
 
     /// Interactive TUI: no inline task text; optional `-d` pre-seeds the first line with that due date.
     #[cfg(feature = "interactive")]
-    pub fn handle_add_task_interactive(tm: &mut TaskManager, date: Option<String>) -> Result<()> {
+    pub fn handle_add_task_interactive(
+        tm: &mut TaskManager,
+        date: Option<String>,
+        after: Vec<crate::TaskId>,
+    ) -> Result<()> {
+        // Reject a bad dependency list before the editor opens, not after
+        // the text has been typed.
+        let after = tm.validate_after(None, &after)?;
         let base_prefill = if let Some(ref d) = date {
             let seed = parse_cli_date_for_edit(d, None)?;
             format!("{} ", seed.format("%d-%m-%Y"))
@@ -106,7 +133,7 @@ impl HandlerCLI {
             anyhow::bail!("Task text cannot be empty");
         }
 
-        tm.add_task_with_parsed_date(stripped, parsed_date)?;
+        tm.add_task_full(stripped, parsed_date, after)?;
         let task = tm.tasks().last().unwrap();
         Self::print_added_task(task);
         Ok(())
@@ -331,6 +358,37 @@ impl HandlerCLI {
     }
 
     pub fn handle_mark_tasks(tm: &mut TaskManager, ids: Vec<TaskId>, priority: bool) -> Result<()> {
+        // A task must not be completed before its `--after` dependencies:
+        // report and skip those ids (undoing a done task is always allowed).
+        let ids = if priority {
+            ids
+        } else {
+            let mut allowed = Vec::with_capacity(ids.len());
+            for id in ids {
+                let is_undone = tm
+                    .find_task_by_id(id)
+                    .is_some_and(|idx| !tm.tasks()[idx].done);
+                let blocked_by = tm.unfinished_deps(id);
+                if is_undone && !blocked_by.is_empty() {
+                    let list = blocked_by
+                        .iter()
+                        .map(|dep| dep.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    println!(
+                        "{} {} {} {}",
+                        theme().warning.paint("Task"),
+                        theme().emphasis.paint(&id.to_string()),
+                        theme().warning.paint("is blocked by unfinished task(s):"),
+                        theme().emphasis.paint(&list)
+                    );
+                } else {
+                    allowed.push(id);
+                }
+            }
+            allowed
+        };
+
         let (marked, not_found) = if priority {
             tm.mark_priority_tasks(ids)?
         } else {
@@ -352,7 +410,11 @@ impl HandlerCLI {
                     theme().success.paint(&format!("Marked task as {status}:")),
                     id
                 );
-                Self::print_task_text_with_wrapping(&prefix, &task.text.bold().to_string());
+                let text = match Self::after_suffix(task) {
+                    Some(suffix) => format!("{} {}", task.text, suffix),
+                    None => task.text.clone(),
+                };
+                Self::print_task_text_with_wrapping(&prefix, &text.bold().to_string());
             }
         }
 
@@ -360,15 +422,16 @@ impl HandlerCLI {
         Ok(())
     }
 
-    /// Prints a " - date: {new}" report line, appending "(was: ...)" when `old`
-    /// is given. The old value "empty" gets emphasis styling only when
+    /// Prints a " - {label}: {new}" report line, appending "(was: ...)" when
+    /// `old` is given. The old value "empty" gets emphasis styling only when
     /// `emphasize_empty` is set (the changed-from-empty branch).
-    fn print_date_line(new_display: ColoredString, old: Option<&str>, emphasize_empty: bool) {
+    fn print_field_line(label: &str, new_display: ColoredString, old: Option<&str>, emphasize_empty: bool) {
+        let label = format!("- {label}:");
         match old {
-            None => println!(" {} {}", theme().info.paint("- date:"), new_display),
+            None => println!(" {} {}", theme().info.paint(&label), new_display),
             Some(old) if emphasize_empty && old == "empty" => println!(
                 " {} {} {} {} {} {}",
-                theme().info.paint("- date:"),
+                theme().info.paint(&label),
                 new_display,
                 "(".normal(),
                 theme().info.paint("was:"),
@@ -377,7 +440,7 @@ impl HandlerCLI {
             ),
             Some(old) => println!(
                 " {} {} {} {} {}",
-                theme().info.paint("- date:"),
+                theme().info.paint(&label),
                 new_display,
                 "(".normal(),
                 theme().info.paint(&format!("was: {}", old)),
@@ -386,16 +449,31 @@ impl HandlerCLI {
         }
     }
 
+    fn format_after_for_display(after: &[TaskId]) -> String {
+        if after.is_empty() {
+            "empty".to_string()
+        } else {
+            after
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        }
+    }
+
     pub fn handle_edit_tasks(
         tm: &mut TaskManager,
         ids: Vec<TaskId>,
         text: Option<Vec<String>>,
         date: Option<String>,
+        after: Option<Vec<TaskId>>,
     ) -> Result<()> {
         let mut old_dates: Vec<(TaskId, Option<chrono::NaiveDate>)> = Vec::new();
+        let mut old_afters: Vec<(TaskId, Vec<TaskId>)> = Vec::new();
         for &id in &ids {
             if let Some(idx) = tm.find_task_by_id(id) {
                 old_dates.push((id, tm.tasks()[idx].date));
+                old_afters.push((id, tm.tasks()[idx].after.clone()));
             }
         }
 
@@ -406,8 +484,10 @@ impl HandlerCLI {
             validate_cli_date_edit_arg(d)?;
         }
         let date_change_requested = date.is_some();
+        let after_change_requested = after.is_some();
+        let is_clearing_after = after.as_deref().is_some_and(<[TaskId]>::is_empty);
 
-        let (edited, unchanged, not_found) = tm.edit_tasks(ids, text, date)?;
+        let (edited, unchanged, not_found) = tm.edit_tasks_with_after(ids, text, date, after)?;
         let any_edited = !edited.is_empty();
 
         for id in edited {
@@ -425,14 +505,33 @@ impl HandlerCLI {
                 if date_change_requested {
                     if is_clearing_date {
                         let old_date_str = Self::format_date_for_display(old_date);
-                        Self::print_date_line("cleared".bold(), Some(&old_date_str), false);
+                        Self::print_field_line("date", "cleared".bold(), Some(&old_date_str), false);
                     } else if new_date != old_date {
                         let old_date_str = Self::format_date_for_display(old_date);
                         let new_date_str = Self::format_date_for_display(new_date);
-                        Self::print_date_line(new_date_str.bold(), Some(&old_date_str), true);
+                        Self::print_field_line("date", new_date_str.bold(), Some(&old_date_str), true);
                     } else {
                         let date_str = Self::format_date_for_display(new_date);
-                        Self::print_date_line(date_str.bold(), None, false);
+                        Self::print_field_line("date", date_str.bold(), None, false);
+                    }
+                }
+
+                if after_change_requested {
+                    let old_after = old_afters
+                        .iter()
+                        .find(|(i, _)| *i == id)
+                        .map(|(_, a)| a.as_slice())
+                        .unwrap_or(&[]);
+                    if is_clearing_after {
+                        let old_str = Self::format_after_for_display(old_after);
+                        Self::print_field_line("after", "cleared".bold(), Some(&old_str), false);
+                    } else if task.after != old_after {
+                        let old_str = Self::format_after_for_display(old_after);
+                        let new_str = Self::format_after_for_display(&task.after);
+                        Self::print_field_line("after", new_str.bold(), Some(&old_str), true);
+                    } else {
+                        let after_str = Self::format_after_for_display(&task.after);
+                        Self::print_field_line("after", after_str.bold(), None, false);
                     }
                 }
             }
@@ -448,7 +547,11 @@ impl HandlerCLI {
 
                 if date_change_requested {
                     let date_str = Self::format_date_for_display(current_date);
-                    Self::print_date_line(date_str.bold(), None, false);
+                    Self::print_field_line("date", date_str.bold(), None, false);
+                }
+                if after_change_requested {
+                    let after_str = Self::format_after_for_display(&task.after);
+                    Self::print_field_line("after", after_str.bold(), None, false);
                 }
             }
         }
@@ -549,22 +652,37 @@ impl HandlerCLI {
                 theme().task_id
             };
 
+            // Dependencies land in bold right after the text: on the single
+            // shown line in compact mode, otherwise after the last line.
+            let after_note = Self::after_suffix(task).map(|s| format!(" {}", s.bold()));
+            let last_line_idx = if compact { 0 } else { wrapped_lines.len().saturating_sub(1) };
+
             if !first_line.is_empty() || !wrapped_lines.is_empty() {
                 println!(
-                    "  {} {:>2}  {:>9}  {}",
+                    "  {} {:>2}  {:>9}  {}{}",
                     status,
                     id_theme.paint(&task.id.to_string()).bold(),
                     date_colored,
-                    Self::maybe_highlight(first_line, highlight)
+                    Self::maybe_highlight(first_line, highlight),
+                    if last_line_idx == 0 {
+                        after_note.as_deref().unwrap_or("")
+                    } else {
+                        ""
+                    }
                 );
             }
 
             if !compact {
-                for line in wrapped_lines.iter().skip(1) {
+                for (i, line) in wrapped_lines.iter().enumerate().skip(1) {
                     println!(
-                        "{}{}",
+                        "{}{}{}",
                         " ".repeat(prefix_width),
-                        Self::maybe_highlight(line, highlight)
+                        Self::maybe_highlight(line, highlight),
+                        if i == last_line_idx {
+                            after_note.as_deref().unwrap_or("")
+                        } else {
+                            ""
+                        }
                     );
                 }
             }

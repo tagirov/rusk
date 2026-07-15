@@ -50,10 +50,12 @@ pub enum Command {
         about = "Add a new task (without TEXT opens the interactive editor)",
         long_about = "Add a new task. With TEXT: one-shot. Without TEXT: opens the interactive \
 editor (set or clear a due date on the first line). Optional `-d` pre-seeds the first line \
-when there is no TEXT.\n\n\
+when there is no TEXT. Optional `-a` lists tasks this one depends on: they are shown after \
+the text, e.g. `text (19,22)`, and the task cannot be marked done before they are.\n\n\
 Examples:\n  \
 rusk add buy groceries\n  \
 rusk add report -d 31-12-2025\n  \
+rusk add deploy -a 19,22          # done no earlier than tasks 19 and 22\n  \
 rusk add                          # interactive editor\n  \
 rusk add -d 2w                    # editor with the date pre-seeded",
         help_template = "{about-section}\n\nUsage: rusk add [OPTIONS] [TEXT]...\n\n{all-args}\n\n{after-help}",
@@ -73,6 +75,13 @@ rusk add -d 2w                    # editor with the date pre-seeded",
             help = "Due date: DD-MM-YYYY (slashes/dots ok, 1-7-25 ok), today/tomorrow, or relative from today (2d, 3q, 10d5w, …). See `rusk add --help` for full syntax. Pass `-d -h` for this command's help"
         )]
         date: Option<String>,
+        #[arg(
+            short = 'a',
+            long,
+            value_name = "IDS",
+            help = "Tasks this one depends on, comma-separated (e.g. 19,22): shown after the text and block completion until they are done"
+        )]
+        after: Option<String>,
     },
     #[command(
         visible_alias = "d",
@@ -121,12 +130,14 @@ rusk mark 1 -p"
         about = "Edit tasks by ID (without new text opens the interactive editor)",
         long_about = "Edit tasks by ID. Without new text, opens the interactive editor (set or \
 clear a due date on the first line). With text, sets task text in one shot. Optional `-d <date>` \
-(non-TUI) sets the due date.\n\n\
+(non-TUI) sets the due date; optional `-a <ids>` (non-TUI) sets the dependency list (`_` clears it).\n\n\
 Examples:\n  \
 rusk e 1                          # interactive editor\n  \
 rusk e 1 -d 2w\n  \
 rusk e 3 new text -d 15-06-2025\n  \
-rusk e 1 -d _                     # clear the due date",
+rusk e 1 -d _                     # clear the due date\n  \
+rusk e 1 -a 19,22                 # done no earlier than tasks 19 and 22\n  \
+rusk e 1 -a _                     # clear the dependency list",
         help_template = "{about-section}\n\nUsage: rusk edit [ARGS]...\n\n{all-args}\n\n{after-help}",
         after_long_help = EDIT_SUBCOMMAND_LONG_HELP
     )]

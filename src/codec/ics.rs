@@ -5,7 +5,8 @@
 //! Mapping per VTODO: SUMMARY = task text (`\n`-escaped for multi-line),
 //! DUE (date value) = due date, STATUS:COMPLETED = done, PRIORITY 1–4 =
 //! the priority flag (written as 1), UID `rusk-<id>@rusk` pins the rusk id
-//! (foreign UIDs get the lowest free id on load). Other components
+//! (foreign UIDs get the lowest free id on load), RELATED-TO with a rusk
+//! UID = a `--after` dependency (foreign relations are ignored). Other components
 //! (VEVENT, VALARM) and properties are ignored and not preserved — rusk
 //! owns the file.
 
@@ -84,6 +85,9 @@ pub fn encode(tasks: &[Task]) -> String {
         if task.priority {
             fold_into(&mut out, "PRIORITY:1");
         }
+        for dep in &task.after {
+            fold_into(&mut out, &format!("RELATED-TO:rusk-{dep}@rusk"));
+        }
         fold_into(
             &mut out,
             if task.done {
@@ -148,7 +152,7 @@ pub fn decode(data: &str) -> Result<Vec<Task>> {
                     text: String::new(),
                     date: None,
                     done: false,
-                    priority: false,
+                    priority: false, after: Vec::new(),
                 });
             }
             ("BEGIN", true) => nested += 1,
@@ -174,6 +178,19 @@ pub fn decode(data: &str) -> Result<Vec<Task>> {
                     }
                     "SUMMARY" => task.text = unescape(value),
                     "DUE" => task.date = parse_ics_date(value),
+                    // Dependencies (`--after`) travel as RELATED-TO pointing
+                    // at rusk UIDs; foreign relations are ignored.
+                    "RELATED-TO" => {
+                        if let Some(dep) = value
+                            .trim()
+                            .strip_prefix("rusk-")
+                            .map(|r| r.split('@').next().unwrap_or(r))
+                            .and_then(|n| n.parse::<TaskId>().ok())
+                            && dep != 0
+                        {
+                            task.after.push(dep);
+                        }
+                    }
                     "STATUS" => task.done = value.trim().eq_ignore_ascii_case("COMPLETED"),
                     "PRIORITY" => {
                         task.priority = matches!(value.trim().parse::<u8>(), Ok(1..=4));
@@ -202,7 +219,7 @@ mod tests {
             text: text.to_string(),
             date: None,
             done: false,
-            priority: false,
+            priority: false, after: Vec::new(),
         }
     }
 
@@ -223,7 +240,7 @@ mod tests {
     fn long_lines_are_folded_and_unfold_back() {
         let long = "long task ".repeat(30);
         let t = task(1, long.trim_end());
-        let ics = encode(&[t.clone()]);
+        let ics = encode(std::slice::from_ref(&t));
         assert!(ics.lines().all(|l| l.len() <= 75), "unfolded line left");
         assert_eq!(decode(&ics).unwrap()[0].text, t.text);
     }
@@ -242,6 +259,19 @@ mod tests {
         assert!(tasks[0].done);
         assert!(!tasks[0].priority, "PRIORITY:9 is low, not the flag");
         assert_eq!(tasks[0].id, 1, "foreign UID gets a free id");
+    }
+
+    #[test]
+    fn after_ids_roundtrip_as_related_to() {
+        let mut t = task(3, "blocked");
+        t.after = vec![1, 2];
+        let ics = encode(std::slice::from_ref(&t));
+        assert!(ics.contains("RELATED-TO:rusk-1@rusk"), "{ics}");
+        assert_eq!(decode(&ics).unwrap(), vec![t]);
+
+        // Foreign RELATED-TO values are not dependencies.
+        let foreign = "BEGIN:VCALENDAR\nBEGIN:VTODO\nSUMMARY:x\nRELATED-TO:abc@else\nEND:VTODO\nEND:VCALENDAR\n";
+        assert_eq!(decode(foreign).unwrap()[0].after, Vec::<TaskId>::new());
     }
 
     #[test]

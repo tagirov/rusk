@@ -204,11 +204,11 @@ _rusk_add_has_task_text() {
     for ((i=start; i<COMP_CWORD; i++)); do
         w="${COMP_WORDS[i]}"
         [[ -n "$w" ]] || continue
-        if [[ "$prev" == "-d" || "$prev" == "--date" ]]; then
+        if [[ "$prev" == "-d" || "$prev" == "--date" || "$prev" == "-a" || "$prev" == "--after" ]]; then
             prev="$w"
             continue
         fi
-        if [[ "$w" == "-d" || "$w" == "--date" ]]; then
+        if [[ "$w" == "-d" || "$w" == "--date" || "$w" == "-a" || "$w" == "--after" ]]; then
             prev="$w"
             continue
         fi
@@ -223,8 +223,8 @@ _rusk_add_has_task_text() {
 
 # After -d/--date: offer -h/--help only. Bash may leave the cursor on the -d token (prev=text) or on a new empty word (prev=-d).
 _rusk_add_help_after_date_only() {
-    [[ "$prev" == "-d" || "$prev" == "--date" ]] && return 0
-    if [[ "$cur" == "-d" || "$cur" == "--date" ]] && _rusk_add_has_task_text; then
+    [[ "$prev" == "-d" || "$prev" == "--date" || "$prev" == "-a" || "$prev" == "--after" ]] && return 0
+    if [[ "$cur" == "-d" || "$cur" == "--date" || "$cur" == "-a" || "$cur" == "--after" ]] && _rusk_add_has_task_text; then
         return 0
     fi
     return 1
@@ -249,11 +249,11 @@ _rusk_edit_has_task_id() {
     for ((i=start; i<COMP_CWORD; i++)); do
         w="${COMP_WORDS[i]}"
         [[ -n "$w" ]] || continue
-        if [[ "$prev" == "-d" || "$prev" == "--date" ]]; then
+        if [[ "$prev" == "-d" || "$prev" == "--date" || "$prev" == "-a" || "$prev" == "--after" ]]; then
             prev="$w"
             continue
         fi
-        if [[ "$w" == "-d" || "$w" == "--date" ]]; then
+        if [[ "$w" == "-d" || "$w" == "--date" || "$w" == "-a" || "$w" == "--after" ]]; then
             prev="$w"
             continue
         fi
@@ -270,8 +270,8 @@ _rusk_edit_has_task_id() {
 }
 
 _rusk_edit_help_after_date_only() {
-    [[ "$prev" == "-d" || "$prev" == "--date" ]] && return 0
-    if [[ "$cur" == "-d" || "$cur" == "--date" ]] && _rusk_edit_has_task_id; then
+    [[ "$prev" == "-d" || "$prev" == "--date" || "$prev" == "-a" || "$prev" == "--after" ]] && return 0
+    if [[ "$cur" == "-d" || "$cur" == "--date" || "$cur" == "-a" || "$cur" == "--after" ]] && _rusk_edit_has_task_id; then
         return 0
     fi
     return 1
@@ -282,7 +282,7 @@ _rusk_complete_add_edit_flags() {
     local gcur="$cur"
     [[ "${1:-0}" == 1 ]] && gcur=""
     if _rusk_add_has_task_text; then
-        COMPREPLY=($(compgen -W "-d --date -h --help" -- "$gcur"))
+        COMPREPLY=($(compgen -W "-d --date -a --after -h --help" -- "$gcur"))
     else
         COMPREPLY=($(compgen -W "-h --help" -- "$gcur"))
     fi
@@ -295,6 +295,7 @@ _rusk_complete_edit_flags() {
     [[ "${1:-0}" == 1 ]] && gcur=""
     if _rusk_edit_has_task_id; then
         local have_d=0
+        local have_a=0
         local p=""
         local rusk_i=-1
         local j
@@ -310,21 +311,23 @@ _rusk_complete_edit_flags() {
             for ((j=rusk_i+2; j<COMP_CWORD; j++)); do
                 a="${COMP_WORDS[j]}"
                 [[ -n "$a" ]] || continue
-                if [[ "$p" == "-d" || "$p" == "--date" ]]; then
+                if [[ "$p" == "-d" || "$p" == "--date" || "$p" == "-a" || "$p" == "--after" ]]; then
                     p="$a"
                     continue
                 fi
                 if [[ "$a" == "-d" || "$a" == "--date" ]]; then
                     have_d=1
                 fi
+                if [[ "$a" == "-a" || "$a" == "--after" ]]; then
+                    have_a=1
+                fi
                 p="$a"
             done
         fi
-        if (( have_d == 0 )); then
-            COMPREPLY=($(compgen -W "-d --date -h --help" -- "$gcur"))
-        else
-            COMPREPLY=($(compgen -W "-h --help" -- "$gcur"))
-        fi
+        local flags=""
+        (( have_d == 0 )) && flags="-d --date"
+        (( have_a == 0 )) && flags="$flags -a --after"
+        COMPREPLY=($(compgen -W "$flags -h --help" -- "$gcur"))
     else
         COMPREPLY=($(compgen -W "-h --help" -- "$gcur"))
     fi

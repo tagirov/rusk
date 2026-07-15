@@ -138,6 +138,8 @@ function _rusk_emit_flag_completions {
         $desc = switch ($t) {
             '--date' { 'Set task date' }
             '-d' { 'Set task date' }
+            '--after' { 'Depend on tasks (comma-separated ids)' }
+            '-a' { 'Depend on tasks (comma-separated ids)' }
             '--done' { 'Delete all completed tasks' }
             '--output' { 'Output file path' }
             '-o' { 'Output file path' }
@@ -246,11 +248,11 @@ function _rusk_filter_ids {
     return $ids | Where-Object { $enteredIds -notcontains [int]$_ }
 }
 
-# Check if previous token is a date flag (only check immediate previous token)
+# Check if previous token is a value-taking flag (-d/--date, -a/--after; immediate previous token only)
 function _rusk_is_after_date_flag {
     param($prev, $tokens, $commandAst)
-    # Only return true if the immediate previous token is a date flag
-    if ($prev -eq '--date' -or $prev -eq '-d') {
+    # Only return true if the immediate previous token is a value-taking flag
+    if ($prev -eq '--date' -or $prev -eq '-d' -or $prev -eq '--after' -or $prev -eq '-a') {
         return $true
     }
     return $false
@@ -274,11 +276,11 @@ function _rusk_add_has_prior_task_text {
     for ($i = 2; $i -lt $endIndex; $i++) {
         $w = _rusk_token_text $tokens[$i]
         if ([string]::IsNullOrEmpty($w)) { continue }
-        if ($prev -eq '-d' -or $prev -eq '--date') {
+        if ($prev -eq '-d' -or $prev -eq '--date' -or $prev -eq '-a' -or $prev -eq '--after') {
             $prev = $w
             continue
         }
-        if ($w -eq '-d' -or $w -eq '--date') {
+        if ($w -eq '-d' -or $w -eq '--date' -or $w -eq '-a' -or $w -eq '--after') {
             $prev = $w
             continue
         }
@@ -309,11 +311,11 @@ function _rusk_edit_has_task_id {
     for ($i = 2; $i -lt $endIndex; $i++) {
         $w = _rusk_token_text $tokens[$i]
         if ([string]::IsNullOrEmpty($w)) { continue }
-        if ($prev -eq '-d' -or $prev -eq '--date') {
+        if ($prev -eq '-d' -or $prev -eq '--date' -or $prev -eq '-a' -or $prev -eq '--after') {
             $prev = $w
             continue
         }
-        if ($w -eq '-d' -or $w -eq '--date') {
+        if ($w -eq '-d' -or $w -eq '--date' -or $w -eq '-a' -or $w -eq '--after') {
             $prev = $w
             continue
         }
@@ -432,17 +434,18 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
     # Handle subcommands
     switch ($command) {
         { $_ -in 'add', 'a' } {
-            $lineHasDateFlag = ($wordToComplete -eq '-d' -or $wordToComplete -eq '--date')
-            if (-not $lineHasDateFlag) {
-                for ($i = 2; $i -lt $tokens.Count; $i++) {
-                    $v = _rusk_token_text $tokens[$i]
-                    if ($v -eq '-d' -or $v -eq '--date') {
-                        $lineHasDateFlag = $true
-                        break
-                    }
+            $lineHasDateFlag = ($wordToComplete -in @('-d', '--date'))
+            $lineHasAfterFlag = ($wordToComplete -in @('-a', '--after'))
+            for ($i = 2; $i -lt $tokens.Count; $i++) {
+                $v = _rusk_token_text $tokens[$i]
+                if ($v -eq '-d' -or $v -eq '--date') {
+                    $lineHasDateFlag = $true
+                }
+                if ($v -eq '-a' -or $v -eq '--after') {
+                    $lineHasAfterFlag = $true
                 }
             }
-            if (_rusk_is_after_date_flag $prev $tokens $commandAst -or $lineHasDateFlag) {
+            if (_rusk_is_after_date_flag $prev $tokens $commandAst -or ($lineHasDateFlag -and $lineHasAfterFlag)) {
                 if ([string]::IsNullOrEmpty($cur) -or $cur -like '-*') {
                     return _rusk_emit_flag_completions @('--help', '-h') $wordToComplete $tokens $command $cur
                 }
@@ -451,7 +454,10 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
             if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur) -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
                 $hasText = _rusk_add_has_prior_task_text $tokens $wordToComplete
                 $flags = if ($hasText) {
-                    @('--date', '-d', '--help', '-h')
+                    $f = @()
+                    if (-not $lineHasDateFlag) { $f += @('--date', '-d') }
+                    if (-not $lineHasAfterFlag) { $f += @('--after', '-a') }
+                    $f + @('--help', '-h')
                 } else {
                     @('--help', '-h')
                 }
@@ -482,19 +488,23 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
             }
 
             if ([string]::IsNullOrEmpty($cur) -or $cur -like '-*' -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
-                $lineHasDateFlag = ($wordToComplete -eq '-d' -or $wordToComplete -eq '--date')
-                if (-not $lineHasDateFlag) {
-                    for ($i = 2; $i -lt $tokens.Count; $i++) {
-                        $v = _rusk_token_text $tokens[$i]
-                        if ($v -eq '-d' -or $v -eq '--date') {
-                            $lineHasDateFlag = $true
-                            break
-                        }
+                $lineHasDateFlag = ($wordToComplete -in @('-d', '--date'))
+                $lineHasAfterFlag = ($wordToComplete -in @('-a', '--after'))
+                for ($i = 2; $i -lt $tokens.Count; $i++) {
+                    $v = _rusk_token_text $tokens[$i]
+                    if ($v -eq '-d' -or $v -eq '--date') {
+                        $lineHasDateFlag = $true
+                    }
+                    if ($v -eq '-a' -or $v -eq '--after') {
+                        $lineHasAfterFlag = $true
                     }
                 }
                 $hasId = _rusk_edit_has_task_id $tokens $wordToComplete
-                $flags = if ($hasId -and -not $lineHasDateFlag) {
-                    @('--date', '-d', '--help', '-h')
+                $flags = if ($hasId) {
+                    $f = @()
+                    if (-not $lineHasDateFlag) { $f += @('--date', '-d') }
+                    if (-not $lineHasAfterFlag) { $f += @('--after', '-a') }
+                    $f + @('--help', '-h')
                 } else {
                     @('--help', '-h')
                 }

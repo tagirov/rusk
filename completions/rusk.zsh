@@ -263,11 +263,11 @@ _rusk_add_has_task_text() {
     for ((i=start; i<CURRENT; i++)); do
         w="${words[i]}"
         [[ -n "$w" ]] || continue
-        if [[ "$prev" == "-d" || "$prev" == "--date" ]]; then
+        if [[ "$prev" == "-d" || "$prev" == "--date" || "$prev" == "-a" || "$prev" == "--after" ]]; then
             prev="$w"
             continue
         fi
-        if [[ "$w" == "-d" || "$w" == "--date" ]]; then
+        if [[ "$w" == "-d" || "$w" == "--date" || "$w" == "-a" || "$w" == "--after" ]]; then
             prev="$w"
             continue
         fi
@@ -282,8 +282,8 @@ _rusk_add_has_task_text() {
 
 # After -d/--date: offer -h/--help only (new word after flag, or cursor still on -d/--date).
 _rusk_add_help_after_date_only() {
-    [[ "$prev" == "-d" || "$prev" == "--date" ]] && return 0
-    if [[ "$cur" == "-d" || "$cur" == "--date" ]] && _rusk_add_has_task_text; then
+    [[ "$prev" == "-d" || "$prev" == "--date" || "$prev" == "-a" || "$prev" == "--after" ]] && return 0
+    if [[ "$cur" == "-d" || "$cur" == "--date" || "$cur" == "-a" || "$cur" == "--after" ]] && _rusk_add_has_task_text; then
         return 0
     fi
     return 1
@@ -308,11 +308,11 @@ _rusk_edit_has_task_id() {
     for ((i=start; i<CURRENT; i++)); do
         w="${words[i]}"
         [[ -n "$w" ]] || continue
-        if [[ "$prev_w" == "-d" || "$prev_w" == "--date" ]]; then
+        if [[ "$prev_w" == "-d" || "$prev_w" == "--date" || "$prev_w" == "-a" || "$prev_w" == "--after" ]]; then
             prev_w="$w"
             continue
         fi
-        if [[ "$w" == "-d" || "$w" == "--date" ]]; then
+        if [[ "$w" == "-d" || "$w" == "--date" || "$w" == "-a" || "$w" == "--after" ]]; then
             prev_w="$w"
             continue
         fi
@@ -329,8 +329,8 @@ _rusk_edit_has_task_id() {
 }
 
 _rusk_edit_help_after_date_only() {
-    [[ "$prev" == "-d" || "$prev" == "--date" ]] && return 0
-    if [[ "$cur" == "-d" || "$cur" == "--date" ]] && _rusk_edit_has_task_id; then
+    [[ "$prev" == "-d" || "$prev" == "--date" || "$prev" == "-a" || "$prev" == "--after" ]] && return 0
+    if [[ "$cur" == "-d" || "$cur" == "--date" || "$cur" == "-a" || "$cur" == "--after" ]] && _rusk_edit_has_task_id; then
         return 0
     fi
     return 1
@@ -347,27 +347,32 @@ _rusk_zsh_compadd_edit_flags() {
             fi
         done
         local have_d=0
+        local have_a=0
         local p=""
         if [ $rusk_i -ge 0 ]; then
             local a
             for ((j=rusk_i+2; j<CURRENT; j++)); do
                 a="${words[j]}"
                 [[ -n "$a" ]] || continue
-                if [[ "$p" == "-d" || "$p" == "--date" ]]; then
+                if [[ "$p" == "-d" || "$p" == "--date" || "$p" == "-a" || "$p" == "--after" ]]; then
                     p="$a"
                     continue
                 fi
                 if [[ "$a" == "-d" || "$a" == "--date" ]]; then
                     have_d=1
                 fi
+                if [[ "$a" == "-a" || "$a" == "--after" ]]; then
+                    have_a=1
+                fi
                 p="$a"
             done
         fi
-        if [ "$have_d" -eq 0 ]; then
-            _rusk_zsh_compadd_flags -- -d --date -h --help
-        else
-            _rusk_zsh_compadd_flags -- -h --help
-        fi
+        local -a _rusk_edit_flags
+        _rusk_edit_flags=()
+        [ "$have_d" -eq 0 ] && _rusk_edit_flags+=(-d --date)
+        [ "$have_a" -eq 0 ] && _rusk_edit_flags+=(-a --after)
+        _rusk_edit_flags+=(-h --help)
+        _rusk_zsh_compadd_flags -- "${_rusk_edit_flags[@]}"
     else
         _rusk_zsh_compadd_flags -- -h --help
     fi
@@ -432,7 +437,7 @@ _rusk_main() {
                 fi
             elif [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; }; then
                 if _rusk_add_has_task_text; then
-                    _rusk_zsh_compadd_flags -- -d --date -h --help
+                    _rusk_zsh_compadd_flags -- -d --date -a --after -h --help
                 else
                     _rusk_zsh_compadd_flags -- -h --help
                 fi

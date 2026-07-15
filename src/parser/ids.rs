@@ -34,6 +34,45 @@ pub fn strip_edit_date_flag(
     Ok((out, last_date))
 }
 
+/// `-a` / `--after` on `edit` with no value (a value is required; bare `-a` is not supported).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BareEditAfterFlag;
+
+/// Remove `-a` / `--after` and the following value from `rusk edit` argv
+/// (non-interactive dependency change). Mirrors [`strip_edit_date_flag`]:
+/// returns [`BareEditAfterFlag`] when the flag has no value or the next
+/// token starts with `-`.
+pub fn strip_edit_after_flag(
+    args: Vec<String>,
+) -> Result<(Vec<String>, Option<String>), BareEditAfterFlag> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut i = 0;
+    let mut last_after: Option<String> = None;
+    while i < args.len() {
+        let a = &args[i];
+        if a == "-a" || a == "--after" {
+            if i + 1 < args.len() {
+                let next = &args[i + 1];
+                if !next.starts_with('-') {
+                    last_after = Some(next.clone());
+                    i += 2;
+                    continue;
+                }
+            }
+            return Err(BareEditAfterFlag);
+        }
+        out.push(a.clone());
+        i += 1;
+    }
+    Ok((out, last_after))
+}
+
+/// Parse a `--after` value: comma-separated task ids (e.g. `19,22`).
+/// Invalid parts are dropped; an all-invalid value yields an empty list.
+pub fn parse_after_ids(s: &str) -> Vec<TaskId> {
+    parse_comma_ids(s)
+}
+
 /// Parse comma-separated IDs from a single string segment.
 /// Shared logic used by both `parse_flexible_ids` and `parse_edit_args`.
 fn parse_comma_ids(s: &str) -> Vec<TaskId> {

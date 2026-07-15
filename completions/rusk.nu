@@ -78,6 +78,19 @@ def get-date-flags [] {
   ]
 }
 
+# Dependency flags
+def get-after-flags [] {
+  [
+    {value: "--after", description: "Depend on tasks (comma-separated ids)"}
+    {value: "-a", description: "Depend on tasks (comma-separated ids)"}
+  ]
+}
+
+# True when the token is a flag that takes a value (-d/--date, -a/--after)
+def is-value-flag [token: string] {
+  $token == "-d" or $token == "--date" or $token == "-a" or $token == "--after"
+}
+
 # list subcommand: compact view
 def get-list-flags [] {
   [
@@ -456,16 +469,16 @@ def add-completed-args-after [spans: list<string>] {
   $after
 }
 
-# True if add has at least one task-text token before cursor (skips value after -d/--date)
+# True if add has at least one task-text token before cursor (skips values after -d/--date, -a/--after)
 def add-has-prior-task-text [spans: list<string>] {
   let args = (add-completed-args-after $spans)
   mut prev = ""
   for $arg in $args {
-    if $prev == "-d" or $prev == "--date" {
+    if (is-value-flag $prev) {
       $prev = $arg
       continue
     }
-    if $arg == "-d" or $arg == "--date" {
+    if (is-value-flag $arg) {
       $prev = $arg
       continue
     }
@@ -488,46 +501,52 @@ def edit-has-prior-id [spans: list<string>] {
 
 # Complete add command
 def complete-add [spans: list<string>, cur: string, prev: string] {
-  # After -d/--date: more flags only (-h/--help), including while the flag token is still current
-  if ($prev == "-d" or $prev == "--date") and (($cur == "") or ($cur | str starts-with "-")) {
+  # After -d/--date or -a/--after: more flags only (-h/--help), including while the flag token is still current
+  if (is-value-flag $prev) and (($cur == "") or ($cur | str starts-with "-")) {
     return (complete-flags (get-common-flags) $cur)
   }
-  
-  # Complete flags (-d/--date only after task text)
+
+  # Complete flags (-d/--date, -a/--after only after task text)
   if ($cur == "") or ($cur | str starts-with "-") {
     let has_text = (add-has-prior-task-text $spans)
     let args_done = (add-completed-args-after $spans)
     let has_date_on_line = ($args_done | any {|t| $t == "-d" or $t == "--date"}) or $cur == "-d" or $cur == "--date"
-    let all_flags = if $has_text and not $has_date_on_line {
-      ((get-date-flags) | append (get-common-flags))
+    let has_after_on_line = ($args_done | any {|t| $t == "-a" or $t == "--after"}) or $cur == "-a" or $cur == "--after"
+    let all_flags = if $has_text {
+      (if $has_date_on_line { [] } else { (get-date-flags) })
+      | append (if $has_after_on_line { [] } else { (get-after-flags) })
+      | append (get-common-flags)
     } else {
       (get-common-flags)
     }
     return (complete-flags $all_flags $cur)
   }
-  
+
   []
 }
 
-# Complete edit: optional -d <date> after id(s), else TUI (first line for date)
+# Complete edit: optional -d <date> / -a <ids> after id(s), else TUI (first line for date)
 def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_space: bool, command: string] {
-  if ($prev == "-d" or $prev == "--date") and (($cur == "") or ($cur | str starts-with "-")) {
+  if (is-value-flag $prev) and (($cur == "") or ($cur | str starts-with "-")) {
     return (complete-flags (get-common-flags) $cur)
   }
 
   let entered_ids = (get-entered-ids $spans)
   let args_done = (add-completed-args-after $spans)
   let has_date_on_line = ($args_done | any {|t| $t == "-d" or $t == "--date"}) or $cur == "-d" or $cur == "--date"
+  let has_after_on_line = ($args_done | any {|t| $t == "-a" or $t == "--after"}) or $cur == "-a" or $cur == "--after"
   let has_id = (edit-has-prior-id $spans)
-  
+
   let prev_ends_with_comma = (ends-with-comma $prev)
   let prev_id = (extract-id $prev)
 
-  # Space after single ID: -d/--date and help if no -d on line yet, else -h only
+  # Space after single ID: -d/--date, -a/--after and help if not on line yet, else -h only
   if ($cur == "") and (is-number $prev_id) and not $prev_ends_with_comma {
     if ($entered_ids | length) == 1 {
-      let all_flags = if $has_id and not $has_date_on_line {
-        ((get-date-flags) | append (get-common-flags))
+      let all_flags = if $has_id {
+        (if $has_date_on_line { [] } else { (get-date-flags) })
+        | append (if $has_after_on_line { [] } else { (get-after-flags) })
+        | append (get-common-flags)
       } else {
         (get-common-flags)
       }
@@ -569,14 +588,16 @@ def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_
   }
   
   if ($cur == "") or ($cur | str starts-with "-") {
-    let all_flags = if $has_id and not $has_date_on_line {
-      ((get-date-flags) | append (get-common-flags))
+    let all_flags = if $has_id {
+      (if $has_date_on_line { [] } else { (get-date-flags) })
+      | append (if $has_after_on_line { [] } else { (get-after-flags) })
+      | append (get-common-flags)
     } else {
       (get-common-flags)
     }
     return (complete-flags $all_flags $cur)
   }
-  
+
   []
 }
 

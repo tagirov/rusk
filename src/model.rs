@@ -13,4 +13,9 @@ pub struct Task {
     pub done: bool,
     #[serde(default)]
     pub priority: bool,
+    /// Ids of tasks this one depends on (`--after`): it should not be
+    /// completed before all of them are done. Skipped in JSON when empty so
+    /// existing databases stay byte-identical until the feature is used.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub after: Vec<TaskId>,
 }

@@ -113,7 +113,7 @@ pub fn create_test_task(id: u32, text: &str, done: bool) -> Task {
         text: text.to_string(),
         date: None,
         done,
-        priority: false,
+        priority: false, after: Vec::new(),
     }
 }
 
@@ -124,7 +124,7 @@ pub fn create_test_task_with_date(id: u32, text: &str, done: bool, date: &str) -
         text: text.to_string(),
         date: NaiveDate::parse_from_str(date, "%d-%m-%Y").ok(),
         done,
-        priority: false,
+        priority: false, after: Vec::new(),
     }
 }
 
@@ -136,5 +136,6 @@ pub fn create_test_task_with_priority(id: u32, text: &str, done: bool, priority:
         date: None,
         done,
         priority,
+        after: Vec::new(),
     }
 }

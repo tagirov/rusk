@@ -50,7 +50,9 @@ third line …
                               ^S save · ^G help · Esc cancel    ●
 ```
 
-- Top rows: the editable text, soft-wrapped to fit the terminal width.
+- Top rows: the editable text, soft-wrapped to fit the terminal width. The
+  wrap is word-aware: rows break at spaces so words stay whole; only a word
+  longer than the text column is split mid-word.
 - If the first line starts with a valid due-date token, it is shown in color
   (**green** for today or later, **red** if before today); other rows use
   equivalent-width indent so cursor math stays accurate.

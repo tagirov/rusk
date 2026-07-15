@@ -305,68 +305,6 @@ pub fn ml_word_right(lines: &[String], row: usize, col: usize) -> (usize, usize)
     (row, jump_next_word(&lines[row], col))
 }
 
-pub fn ml_soft_up(
-    lines: &[String],
-    row: usize,
-    col: usize,
-    desired_vis_col: usize,
-    vw: usize,
-) -> (usize, usize) {
-    let line_chars = lines[row].chars().count();
-    let cursor_char = byte_idx_to_char_count(&lines[row], col).min(line_chars);
-    let cur_vis_row = cursor_char / vw.max(1);
-    if cur_vis_row > 0 {
-        let new_vis_row = cur_vis_row - 1;
-        let row_end = ((new_vis_row + 1) * vw).min(line_chars);
-        let target = (new_vis_row * vw + desired_vis_col).min(row_end);
-        (row, ml_char_to_byte(&lines[row], target))
-    } else if row > 0 {
-        let prev = row - 1;
-        let prev_chars = lines[prev].chars().count();
-        let last_vis_row = if prev_chars == 0 {
-            0
-        } else {
-            prev_chars.saturating_sub(1) / vw.max(1)
-        };
-        let row_end = ((last_vis_row + 1) * vw).min(prev_chars);
-        let target = (last_vis_row * vw + desired_vis_col).min(row_end);
-        (prev, ml_char_to_byte(&lines[prev], target))
-    } else {
-        (row, col)
-    }
-}
-
-pub fn ml_soft_down(
-    lines: &[String],
-    row: usize,
-    col: usize,
-    desired_vis_col: usize,
-    vw: usize,
-) -> (usize, usize) {
-    let line_chars = lines[row].chars().count();
-    let cursor_char = byte_idx_to_char_count(&lines[row], col).min(line_chars);
-    let cur_vis_row = cursor_char / vw.max(1);
-    let last_vis_row = if line_chars == 0 {
-        0
-    } else {
-        line_chars.saturating_sub(1) / vw.max(1)
-    };
-    if cur_vis_row < last_vis_row {
-        let new_vis_row = cur_vis_row + 1;
-        let row_end = ((new_vis_row + 1) * vw).min(line_chars);
-        let target = (new_vis_row * vw + desired_vis_col).min(row_end);
-        (row, ml_char_to_byte(&lines[row], target))
-    } else if row + 1 < lines.len() {
-        let next = row + 1;
-        let next_chars = lines[next].chars().count();
-        let row_end = vw.min(next_chars);
-        let target = desired_vis_col.min(row_end);
-        (next, ml_char_to_byte(&lines[next], target))
-    } else {
-        (row, col)
-    }
-}
-
 // ── Editing primitives ──────────────────────────────────────────────────────
 
 /// Merge the current line into the previous one (any backward delete at

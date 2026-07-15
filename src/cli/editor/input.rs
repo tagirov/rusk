@@ -245,7 +245,6 @@ fn screen_to_buffer_pos(
     mouse::ScreenToBuffer {
         lines: &state.lines,
         visuals: &visuals,
-        vw,
         screen_x: column,
         screen_y: mrow,
         editor_row: ctx.editor_row,

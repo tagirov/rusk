@@ -6,6 +6,7 @@
 
 use super::history::Snapshot;
 use super::text_ops;
+use super::view;
 
 pub(super) struct EditorState {
     pub lines: Vec<String>,
@@ -30,7 +31,7 @@ impl EditorState {
             let c = lines[r].len();
             (r, c)
         };
-        let desired_col_char = text_ops::byte_idx_to_char_count(&lines[row], col) % vw.max(1);
+        let desired_col_char = view::visual_col(&lines, vw.max(1), row, col);
         Self {
             lines,
             row,
@@ -117,8 +118,7 @@ impl EditorState {
     }
 
     pub fn recompute_desired(&mut self, vw: usize) {
-        self.desired_col_char =
-            text_ops::byte_idx_to_char_count(&self.lines[self.row], self.col) % vw.max(1);
+        self.desired_col_char = view::visual_col(&self.lines, vw.max(1), self.row, self.col);
     }
 
     // ── Movement ────────────────────────────────────────────────────────────
@@ -152,40 +152,48 @@ impl EditorState {
     }
 
     pub fn soft_up(&mut self, vw: usize) {
-        let (r, c) =
-            text_ops::ml_soft_up(&self.lines, self.row, self.col, self.desired_col_char, vw);
+        let (r, c) = view::soft_vertical_move(
+            &self.lines,
+            vw,
+            self.row,
+            self.col,
+            self.desired_col_char,
+            true,
+        );
         self.row = r;
         self.col = c;
     }
 
     pub fn soft_down(&mut self, vw: usize) {
-        let (r, c) =
-            text_ops::ml_soft_down(&self.lines, self.row, self.col, self.desired_col_char, vw);
+        let (r, c) = view::soft_vertical_move(
+            &self.lines,
+            vw,
+            self.row,
+            self.col,
+            self.desired_col_char,
+            false,
+        );
         self.row = r;
         self.col = c;
     }
 
     pub fn soft_up_n(&mut self, n: usize, vw: usize) {
         for _ in 0..n {
-            let (r, c) =
-                text_ops::ml_soft_up(&self.lines, self.row, self.col, self.desired_col_char, vw);
-            if (r, c) == (self.row, self.col) {
+            let before = (self.row, self.col);
+            self.soft_up(vw);
+            if (self.row, self.col) == before {
                 break;
             }
-            self.row = r;
-            self.col = c;
         }
     }
 
     pub fn soft_down_n(&mut self, n: usize, vw: usize) {
         for _ in 0..n {
-            let (r, c) =
-                text_ops::ml_soft_down(&self.lines, self.row, self.col, self.desired_col_char, vw);
-            if (r, c) == (self.row, self.col) {
+            let before = (self.row, self.col);
+            self.soft_down(vw);
+            if (self.row, self.col) == before {
                 break;
             }
-            self.row = r;
-            self.col = c;
         }
     }
 

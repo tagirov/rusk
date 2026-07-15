@@ -159,6 +159,10 @@ pub(super) fn editor_text_layout(term_cols: usize, prompt_width: usize) -> (usiz
 
 /// Split buffer lines into soft-wrapped visual rows. Each tuple is
 /// `(buffer_idx, byte_range_in_buffer_line, start_char_offset_in_buffer_line)`.
+/// Wrapping is word-aware: a row breaks after the last whitespace that fits,
+/// so words move to the next row whole; a single word longer than `vw` is
+/// hard-broken. Chunks always partition the line exactly (every char belongs
+/// to one row), which the cursor and mouse mapping rely on.
 /// `vw` must be at least 1 (guaranteed by `editor_text_layout`).
 pub(super) fn compute_visuals(
     lines: &[String],
@@ -170,21 +174,106 @@ pub(super) fn compute_visuals(
             out.push((buf_idx, 0..0, 0));
             continue;
         }
-        let mut chunk_start_byte = 0usize;
-        let mut chunk_start_char = 0usize;
-        let mut chars_in_chunk = 0usize;
-        for (byte_idx, _) in line.char_indices() {
-            if chars_in_chunk == vw {
-                out.push((buf_idx, chunk_start_byte..byte_idx, chunk_start_char));
-                chunk_start_char += chars_in_chunk;
-                chunk_start_byte = byte_idx;
-                chars_in_chunk = 0;
-            }
-            chars_in_chunk += 1;
+        // (byte offset, char) pairs so break positions map back to bytes.
+        let chars: Vec<(usize, char)> = line.char_indices().collect();
+        let total = chars.len();
+        let mut start = 0usize; // char index of the current row start
+        while total - start > vw {
+            // The first char that does not fit decides the break: if it is
+            // whitespace the full window ends on a word boundary; otherwise
+            // break after the last whitespace inside the window.
+            let brk = if chars[start + vw].1.is_whitespace() {
+                vw
+            } else {
+                (0..vw)
+                    .rev()
+                    .find(|i| chars[start + *i].1.is_whitespace())
+                    .map(|i| i + 1)
+                    .unwrap_or(vw) // one long word: hard break
+            };
+            let end = start + brk;
+            out.push((buf_idx, chars[start].0..chars[end].0, start));
+            start = end;
         }
-        out.push((buf_idx, chunk_start_byte..line.len(), chunk_start_char));
+        out.push((buf_idx, chars[start].0..line.len(), start));
     }
     out
+}
+
+/// Visual `(row index in visuals, column in chars)` of a buffer position.
+/// A position on a row boundary belongs to the next visual row (the cursor
+/// shows at its start), except at the end of the buffer line where it stays
+/// on the last row of that line.
+pub(super) fn visual_pos(
+    visuals: &[(usize, std::ops::Range<usize>, usize)],
+    lines: &[String],
+    row: usize,
+    char_col: usize,
+) -> (usize, usize) {
+    let mut last_of_row: Option<(usize, usize)> = None;
+    for (vi, (buf_idx, range, start_char)) in visuals.iter().enumerate() {
+        if *buf_idx != row {
+            continue;
+        }
+        let chunk_len = lines[row][range.clone()].chars().count();
+        if char_col >= *start_char && char_col < start_char + chunk_len {
+            return (vi, char_col - start_char);
+        }
+        last_of_row = Some((vi, *start_char));
+    }
+    match last_of_row {
+        Some((vi, start_char)) => (vi, char_col.saturating_sub(start_char)),
+        None => (0, 0),
+    }
+}
+
+/// Visual column of a buffer position under the current wrap (the value
+/// preserved as the desired column for vertical movement).
+pub(super) fn visual_col(lines: &[String], vw: usize, row: usize, col_byte: usize) -> usize {
+    let visuals = compute_visuals(lines, vw);
+    let char_col = text_ops::byte_idx_to_char_count(&lines[row], col_byte);
+    visual_pos(&visuals, lines, row, char_col).1
+}
+
+/// One visual row up (`up == true`) or down, keeping `desired_vis_col` when
+/// the target row is long enough. Returns the position unchanged at the
+/// buffer edges.
+pub(super) fn soft_vertical_move(
+    lines: &[String],
+    vw: usize,
+    row: usize,
+    col_byte: usize,
+    desired_vis_col: usize,
+    up: bool,
+) -> (usize, usize) {
+    let visuals = compute_visuals(lines, vw);
+    let char_col = text_ops::byte_idx_to_char_count(&lines[row], col_byte);
+    let (vi, _) = visual_pos(&visuals, lines, row, char_col);
+    let target = if up {
+        vi.checked_sub(1)
+    } else if vi + 1 < visuals.len() {
+        Some(vi + 1)
+    } else {
+        None
+    };
+    let Some(ti) = target else {
+        return (row, col_byte);
+    };
+    let (buf_idx, range, start_char) = &visuals[ti];
+    let chunk_len = lines[*buf_idx][range.clone()].chars().count();
+    // On the last row of a line the cursor may sit past the final char;
+    // on wrapped rows it must stay before the boundary (the boundary
+    // position renders on the following row).
+    let is_last_of_line = visuals
+        .get(ti + 1)
+        .is_none_or(|(next_buf, _, _)| next_buf != buf_idx);
+    let max_col = if is_last_of_line {
+        chunk_len
+    } else {
+        chunk_len.saturating_sub(1)
+    };
+    let target_char = start_char + desired_vis_col.min(max_col);
+    (*buf_idx, text_ops::ml_char_to_byte(&lines[*buf_idx], target_char))
 }
 
 /// Print one visual chunk with selection + optional validation colors and
@@ -412,15 +501,8 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
 
     let cursor_char_in_line =
         text_ops::byte_idx_to_char_count(&r.lines[r.cursor_row], r.cursor_col);
-    let mut visual_start_of_cursor_line: usize = 0;
-    for (vi, (bi, _, start_char)) in visuals.iter().enumerate() {
-        if *bi == r.cursor_row && *start_char == 0 {
-            visual_start_of_cursor_line = vi;
-            break;
-        }
-    }
-    let cursor_vis_row = visual_start_of_cursor_line + (cursor_char_in_line / visible_width);
-    let cursor_vis_col = cursor_char_in_line % visible_width;
+    let (cursor_vis_row, cursor_vis_col) =
+        visual_pos(&visuals, r.lines, r.cursor_row, cursor_char_in_line);
 
     if cursor_vis_row < *r.view_top {
         *r.view_top = cursor_vis_row;
@@ -528,4 +610,103 @@ pub(super) fn layout_metrics_for_buffer(
     let (vw, _) = editor_text_layout(cols as usize, prompt_width);
     let vlen = compute_visuals(lines, vw).len();
     (vw, av, vlen)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lines(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Rendered text of every visual row.
+    fn rows(lines: &[String], vw: usize) -> Vec<String> {
+        compute_visuals(lines, vw)
+            .into_iter()
+            .map(|(bi, range, _)| lines[bi][range].to_string())
+            .collect()
+    }
+
+    #[test]
+    fn wraps_at_word_boundaries() {
+        let l = lines(&["hello brave new world"]);
+        assert_eq!(rows(&l, 12), vec!["hello brave ", "new world"]);
+        assert_eq!(rows(&l, 6), vec!["hello ", "brave ", "new ", "world"]);
+    }
+
+    #[test]
+    fn word_ending_exactly_at_the_boundary_is_kept_whole() {
+        // "aaa bbbb" is exactly 8 chars; the following space breaks the row.
+        let l = lines(&["aaa bbbb x"]);
+        assert_eq!(rows(&l, 8), vec!["aaa bbbb", " x"]);
+    }
+
+    #[test]
+    fn long_words_are_hard_broken() {
+        let l = lines(&["abcdefghij end"]);
+        assert_eq!(rows(&l, 4), vec!["abcd", "efgh", "ij ", "end"]);
+    }
+
+    #[test]
+    fn chunks_partition_every_line_exactly() {
+        let l = lines(&["a few words here", "", "loooooooooongword and more"]);
+        for vw in 1..=30 {
+            let visuals = compute_visuals(&l, vw);
+            let mut expected_start = vec![0usize; l.len()];
+            for (bi, range, start_char) in &visuals {
+                assert_eq!(range.start, expected_start[*bi], "vw={vw}");
+                assert!(
+                    l[*bi][range.clone()].chars().count() <= vw.max(1),
+                    "vw={vw}: row wider than the limit"
+                );
+                let _ = start_char;
+                expected_start[*bi] = range.end;
+            }
+            for (bi, line) in l.iter().enumerate() {
+                assert_eq!(expected_start[bi], line.len(), "vw={vw}: line {bi} not fully covered");
+            }
+        }
+    }
+
+    #[test]
+    fn empty_lines_get_one_empty_row() {
+        assert_eq!(rows(&lines(&["", "x"]), 10), vec!["", "x"]);
+    }
+
+    #[test]
+    fn visual_pos_maps_cursor_into_wrapped_rows() {
+        let l = lines(&["hello brave new world"]);
+        let visuals = compute_visuals(&l, 12); // "hello brave " + "new world"
+        assert_eq!(visual_pos(&visuals, &l, 0, 0), (0, 0));
+        assert_eq!(visual_pos(&visuals, &l, 0, 11), (0, 11));
+        // The row boundary belongs to the next visual row.
+        assert_eq!(visual_pos(&visuals, &l, 0, 12), (1, 0));
+        // End of line stays on the last row, one past its final char.
+        assert_eq!(visual_pos(&visuals, &l, 0, 21), (1, 9));
+    }
+
+    #[test]
+    fn soft_vertical_move_walks_wrapped_rows_and_lines() {
+        let l = lines(&["hello brave new world", "tail"]);
+        // vw=12: rows are "hello brave " / "new world" / "tail".
+        // Down from the first row keeps the desired column.
+        assert_eq!(soft_vertical_move(&l, 12, 0, 3, 3, false), (0, 15));
+        // Down from the wrapped row crosses into the next buffer line.
+        assert_eq!(soft_vertical_move(&l, 12, 0, 15, 3, false), (1, 3));
+        // Up from the second buffer line lands on the last wrapped row.
+        assert_eq!(soft_vertical_move(&l, 12, 1, 3, 3, true), (0, 15));
+        // Edges stay put.
+        assert_eq!(soft_vertical_move(&l, 12, 0, 3, 3, true), (0, 3));
+        assert_eq!(soft_vertical_move(&l, 12, 1, 3, 3, false), (1, 3));
+        // A desired column past the target row clamps inside it.
+        assert_eq!(soft_vertical_move(&l, 12, 0, 15, 11, true), (0, 11));
+    }
+
+    #[test]
+    fn visual_col_is_relative_to_the_wrapped_row() {
+        let l = lines(&["hello brave new world"]);
+        assert_eq!(visual_col(&l, 12, 0, 3), 3);
+        assert_eq!(visual_col(&l, 12, 0, 15), 3); // "new" starts the second row
+    }
 }

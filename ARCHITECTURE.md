@@ -41,7 +41,7 @@ src/
 │   └── editor/          # Interactive full-screen editor (crossterm): task text + first-line date
 │       ├── mod.rs       # Session loop: setup → poll → dispatch → render; save/cancel exits
 │       ├── state.rs     # EditorState: buffer, cursor, selection, snapshots
-│       ├── view.rs      # Layout, soft wrap, date highlighting, footer
+│       ├── view.rs      # Layout, word-aware soft wrap, date highlighting, footer
 │       ├── input.rs     # Key / mouse / paste dispatch into Actions
 │       ├── terminal.rs  # Alt screen, raw mode, help overlay, discard confirm
 │       ├── history.rs   # Undo/redo stacks with single-char coalescing

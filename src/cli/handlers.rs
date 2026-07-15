@@ -12,7 +12,7 @@ use super::editor::EditorExtras;
 
 impl HandlerCLI {
     /// `(19,22)` suffix for a task with dependencies; appended after the
-    /// task text everywhere the task is shown.
+    /// task text everywhere the task is shown. Ids are bold, parens are not.
     fn after_suffix(task: &Task) -> Option<String> {
         if task.after.is_empty() {
             return None;
@@ -23,7 +23,7 @@ impl HandlerCLI {
             .map(|id| id.to_string())
             .collect::<Vec<_>>()
             .join(",");
-        Some(format!("({ids})"))
+        Some(format!("({})", ids.bold()))
     }
 
     fn print_added_task(task: &Task) {
@@ -33,11 +33,12 @@ impl HandlerCLI {
         } else {
             format!("{} {}:", theme().success.paint("Added task:"), task.id)
         };
-        let text = match Self::after_suffix(task) {
-            Some(suffix) => format!("{} {}", task.text, suffix),
-            None => task.text.clone(),
-        };
-        Self::print_task_text_with_wrapping(&prefix, &text.bold().to_string());
+        let suffix = Self::after_suffix(task).map(|s| format!(" {s}"));
+        Self::print_task_text_with_wrapping_suffixed(
+            &prefix,
+            &task.text.bold().to_string(),
+            suffix.as_deref(),
+        );
     }
 
     /// If a draft stored under `draft_key` exists and differs from `base_prefill`,
@@ -379,11 +380,12 @@ impl HandlerCLI {
                     theme().success.paint(&format!("Marked task as {status}:")),
                     id
                 );
-                let text = match Self::after_suffix(task) {
-                    Some(suffix) => format!("{} {}", task.text, suffix),
-                    None => task.text.clone(),
-                };
-                Self::print_task_text_with_wrapping(&prefix, &text.bold().to_string());
+                let suffix = Self::after_suffix(task).map(|s| format!(" {s}"));
+                Self::print_task_text_with_wrapping_suffixed(
+                    &prefix,
+                    &task.text.bold().to_string(),
+                    suffix.as_deref(),
+                );
             }
         }
 
@@ -621,9 +623,10 @@ impl HandlerCLI {
                 theme().task_id
             };
 
-            // Dependencies land in bold right after the text: on the single
-            // shown line in compact mode, otherwise after the last line.
-            let after_note = Self::after_suffix(task).map(|s| format!(" {}", s.bold()));
+            // Dependencies land right after the text (ids bold, parens not):
+            // on the single shown line in compact mode, otherwise after the
+            // last line.
+            let after_note = Self::after_suffix(task).map(|s| format!(" {s}"));
             let last_line_idx = if compact { 0 } else { wrapped_lines.len().saturating_sub(1) };
 
             if !first_line.is_empty() || !wrapped_lines.is_empty() {

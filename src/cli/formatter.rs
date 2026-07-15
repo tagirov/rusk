@@ -56,6 +56,13 @@ impl HandlerCLI {
     }
 
     pub(crate) fn print_task_text_with_wrapping(prefix: &str, text: &str) {
+        Self::print_task_text_with_wrapping_suffixed(prefix, text, None);
+    }
+
+    /// Like `print_task_text_with_wrapping`, but appends `suffix` verbatim
+    /// after the last wrapped line. The suffix keeps its own ANSI styling
+    /// (wrapping strips inner codes from `text`, so it can't live there).
+    pub(crate) fn print_task_text_with_wrapping_suffixed(prefix: &str, text: &str, suffix: Option<&str>) {
         let max_line_width = Self::get_max_line_width();
         const LEFT_MARGIN: usize = 4;
         const RIGHT_MARGIN: usize = 4;
@@ -70,8 +77,10 @@ impl HandlerCLI {
         println!("{}", prefix);
 
         let left_indent = " ".repeat(LEFT_MARGIN);
-        for line in wrapped_lines_plain.iter() {
-            println!("{}{}{}{}", left_indent, ansi_prefix, line, ansi_suffix);
+        let last = wrapped_lines_plain.len().saturating_sub(1);
+        for (i, line) in wrapped_lines_plain.iter().enumerate() {
+            let tail = if i == last { suffix.unwrap_or("") } else { "" };
+            println!("{}{}{}{}{}", left_indent, ansi_prefix, line, ansi_suffix, tail);
         }
     }
 

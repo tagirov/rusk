@@ -337,6 +337,37 @@ impl HandlerCLI {
         }
     }
 
+    /// Colors standalone keyword tokens from the config (`keywords`, default
+    /// `TEMP INFO`) with the `keyword` theme color. Whitespace-delimited,
+    /// exact match — "TEMPO" stays untouched.
+    #[doc(hidden)]
+    pub fn highlight_keywords(line: &str) -> std::borrow::Cow<'_, str> {
+        let keywords = &crate::config::config().keywords;
+        if !keywords.iter().any(|keyword| line.contains(keyword.as_str())) {
+            return std::borrow::Cow::Borrowed(line);
+        }
+        let mut out = String::with_capacity(line.len());
+        let mut token = String::new();
+        let flush = |out: &mut String, token: &mut String| {
+            if keywords.iter().any(|keyword| keyword == token) {
+                out.push_str(&theme().keyword.paint(token.as_str()).to_string());
+            } else {
+                out.push_str(token);
+            }
+            token.clear();
+        };
+        for c in line.chars() {
+            if c.is_whitespace() {
+                flush(&mut out, &mut token);
+                out.push(c);
+            } else {
+                token.push(c);
+            }
+        }
+        flush(&mut out, &mut token);
+        std::borrow::Cow::Owned(out)
+    }
+
     pub(crate) fn print_not_found_ids(not_found: &[crate::model::TaskId]) {
         if !not_found.is_empty() {
             let list = not_found

@@ -157,6 +157,7 @@ theme_keys! {
     priority_marker => ColorValue::Rgb(255, 165, 0),
     task_id => ColorValue::Default,           // bold only
     search_match => ColorValue::Named(3),     // yellow `rusk search` highlight
+    keyword => ColorValue::Named(6),          // cyan TEMP / INFO tokens
     date_overdue => ColorValue::Named(1),     // red
     date_upcoming => ColorValue::Named(6),    // cyan
     date_today => ColorValue::Named(6),       // cyan (same as upcoming by default)
@@ -181,6 +182,8 @@ pub struct Config {
     pub web_token: Option<String>,
     pub sync_remote: Option<String>,
     pub sync_token: Option<String>,
+    /// Task-text keyword tokens highlighted in the list (`keyword` theme color).
+    pub keywords: Vec<String>,
     pub theme: Theme,
 }
 
@@ -198,6 +201,7 @@ impl Default for Config {
             web_token: None,
             sync_remote: None,
             sync_token: None,
+            keywords: vec!["TEMP".to_string(), "INFO".to_string()],
             theme: Theme::default(),
         }
     }
@@ -216,6 +220,7 @@ const SETTINGS: &[&str] = &[
     "web_token",
     "sync_remote",
     "sync_token",
+    "keywords",
 ];
 
 fn is_setting(key: &str) -> bool {
@@ -319,6 +324,20 @@ fn apply_setting(
         "web_token" => config.web_token = Some(value.to_string()),
         "sync_remote" => config.sync_remote = Some(value.to_string()),
         "sync_token" => config.sync_token = Some(value.to_string()),
+        // Space- or comma-separated tokens; `_` disables highlighting
+        // (empty values are skipped by the parser before this point).
+        "keywords" => {
+            config.keywords = if value == "_" {
+                Vec::new()
+            } else {
+                value
+                    .split([',', ' '])
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(String::from)
+                    .collect()
+            };
+        }
         theme_key => match ColorValue::parse(value) {
             Ok(color) => config.theme.set(theme_key, color),
             // A color value may also reference another theme key
@@ -431,6 +450,8 @@ const DEFAULT_CONFIG: &str = "\
 # no_color = false           # disable ANSI colors in terminal output
 # compact = false            # compact `rusk list` view by default
 # backup = true              # keep a .backup copy next to the database on every save
+# keywords = TEMP INFO       # keyword tokens highlighted in task text (space- or
+#                            # comma-separated, case-sensitive; `_` disables)
 
 # --- web: rusk serve / rusk gen ---
 # web_host = 127.0.0.1
@@ -454,6 +475,7 @@ priority_marker = accent
 # list_header = blue
 # done_marker = green
 # task_id = default
+# keyword = cyan
 # date_overdue = red
 # date_upcoming = cyan
 # date_today = cyan
@@ -687,6 +709,16 @@ mod tests {
     }
 
     #[test]
+    fn keywords_default_and_custom_lists() {
+        assert_eq!(Config::default().keywords, vec!["TEMP", "INFO"]);
+        // Space- and comma-separated forms are equivalent.
+        assert_eq!(cfg("keywords = WIP FIXME\n").keywords, vec!["WIP", "FIXME"]);
+        assert_eq!(cfg("keywords = WIP, FIXME\n").keywords, vec!["WIP", "FIXME"]);
+        // `_` disables highlighting (mirrors the `-d _` / `-a _` convention).
+        assert!(cfg("keywords = _\n").keywords.is_empty());
+    }
+
+    #[test]
     fn invalid_color_warns_and_keeps_default() {
         let outcome = parse("error = blu\n");
         assert_eq!(outcome.config.theme.error, ColorValue::Named(1));
@@ -743,6 +775,6 @@ mod tests {
     fn theme_entries_cover_all_keys() {
         let t = Theme::default();
         assert_eq!(t.entries().len(), Theme::KEYS.len());
-        assert_eq!(t.entries().len(), 19);
+        assert_eq!(t.entries().len(), 20);
     }
 }

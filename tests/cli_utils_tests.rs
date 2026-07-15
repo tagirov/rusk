@@ -656,3 +656,19 @@ fn test_highlight_matches_no_match_returns_line_unchanged() {
     let out = HandlerCLI::highlight_matches("foo bar", &needle("baz"));
     assert_eq!(out, "foo bar");
 }
+
+#[test]
+fn test_highlight_keywords_colors_exact_tokens_only() {
+    colored::control::set_override(true);
+    let out = HandlerCLI::highlight_keywords("TEMP buy milk INFO note");
+    colored::control::unset_override();
+    // Both keywords are colored, the rest of the line is untouched.
+    assert_eq!(out.matches("\x1b[").count(), 4);
+    assert_eq!(HandlerCLI::strip_ansi_codes(&out), "TEMP buy milk INFO note");
+
+    // Substrings and other casings are not keywords.
+    colored::control::set_override(true);
+    let out = HandlerCLI::highlight_keywords("TEMPO temp INFOrmation");
+    colored::control::unset_override();
+    assert_eq!(out, "TEMPO temp INFOrmation");
+}

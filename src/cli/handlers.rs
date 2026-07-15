@@ -632,7 +632,7 @@ impl HandlerCLI {
                     status,
                     id_theme.paint(&task.id.to_string()).bold(),
                     date_colored,
-                    Self::maybe_highlight(first_line, highlight),
+                    Self::highlight_keywords(&Self::maybe_highlight(first_line, highlight)),
                     if last_line_idx == 0 {
                         after_note.as_deref().unwrap_or("")
                     } else {
@@ -646,7 +646,7 @@ impl HandlerCLI {
                     println!(
                         "{}{}{}",
                         " ".repeat(prefix_width),
-                        Self::maybe_highlight(line, highlight),
+                        Self::highlight_keywords(&Self::maybe_highlight(line, highlight)),
                         if i == last_line_idx {
                             after_note.as_deref().unwrap_or("")
                         } else {

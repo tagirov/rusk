@@ -63,6 +63,7 @@ Environment variables always win over config values.
 | `web_token` | string | — | — | Access token for `rusk serve`; required for non-loopback hosts |
 | `sync_remote` | string | — | `RUSK_SYNC_REMOTE` | Remote for `rusk sync`: `user@host:/path/tasks.json` (ssh) or `https://host` (serve API) |
 | `sync_token` | string | — | `RUSK_SYNC_TOKEN` | Bearer token for http(s) sync remotes |
+| `keywords` | list | `TEMP INFO` | — | Keyword tokens highlighted in task text (space- or comma-separated, case-sensitive; `_` disables). Color comes from the `keyword` theme key |
 
 ## Theme
 
@@ -86,6 +87,7 @@ render as truecolor.
 | `priority_marker` | `#ffa500` | The `p` in the list |
 | `task_id` | terminal default | Task IDs in the list (always bold) |
 | `search_match` | `yellow` | Matched text in `rusk search` output (always bold) |
+| `keyword` | `cyan` | `TEMP` / `INFO` keyword tokens in task text |
 | `date_overdue` | `red` | Overdue dates on not-done tasks |
 | `date_today` | `cyan` | Dates due today (same as upcoming by default) |
 | `date_upcoming` | `cyan` | All other dates |

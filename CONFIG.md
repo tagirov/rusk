@@ -63,7 +63,7 @@ Environment variables always win over config values.
 | `web_token` | string | — | — | Access token for `rusk serve`; required for non-loopback hosts |
 | `sync_remote` | string | — | `RUSK_SYNC_REMOTE` | Remote for `rusk sync`: `user@host:/path/tasks.json` (ssh) or `https://host` (serve API) |
 | `sync_token` | string | — | `RUSK_SYNC_TOKEN` | Bearer token for http(s) sync remotes |
-| `keywords` | list | `TEMP INFO` | — | Keyword tokens highlighted in task text (space- or comma-separated, case-sensitive; `_` disables). Color comes from the `keyword` theme key |
+| `keywords` | list | `TEMP INFO FIXME WIP` | — | Keywords highlighted when a task text starts with one (only the first word is matched; space- or comma-separated, case-sensitive; `""` disables). Color comes from the `keyword` theme key |
 
 ## Theme
 

@@ -132,9 +132,9 @@ rusk a deploy -a 19,22
 rusk edit 1 --after 19,22
 rusk edit 1 --after _
 
-# Keyword tokens: a standalone TEMP or INFO anywhere in the task text is
-# highlighted in the list. The token set is configurable (`keywords` in the
-# config, default `TEMP INFO`), the color too (`keyword` theme key, cyan)
+# Keywords: a task text starting with TEMP, INFO, FIXME or WIP gets that
+# first word highlighted in the list. The set is configurable (`keywords`
+# in the config; `""` disables), the color too (`keyword` theme key, cyan)
 rusk add TEMP debug flag for the release
 rusk add INFO deploy notes are in the wiki
 

@@ -658,17 +658,27 @@ fn test_highlight_matches_no_match_returns_line_unchanged() {
 }
 
 #[test]
-fn test_highlight_keywords_colors_exact_tokens_only() {
+fn test_highlight_keywords_colors_the_leading_word_only() {
     colored::control::set_override(true);
     let out = HandlerCLI::highlight_keywords("TEMP buy milk INFO note");
     colored::control::unset_override();
-    // Both keywords are colored, the rest of the line is untouched.
-    assert_eq!(out.matches("\x1b[").count(), 4);
+    // Only the leading keyword is colored; a keyword later in the text is not.
+    assert_eq!(out.matches("\x1b[").count(), 2);
+    assert!(out.starts_with("\x1b["), "{out}");
     assert_eq!(HandlerCLI::strip_ansi_codes(&out), "TEMP buy milk INFO note");
 
-    // Substrings and other casings are not keywords.
+    // All default keywords are recognized at the head of the text.
+    for kw in ["TEMP", "INFO", "FIXME", "WIP"] {
+        let text = format!("{kw} something");
+        colored::control::set_override(true);
+        let out = HandlerCLI::highlight_keywords(&text);
+        colored::control::unset_override();
+        assert_eq!(out.matches("\x1b[").count(), 2, "{kw}");
+    }
+
+    // Substrings, other casings and non-leading positions are not keywords.
     colored::control::set_override(true);
-    let out = HandlerCLI::highlight_keywords("TEMPO temp INFOrmation");
+    let out = HandlerCLI::highlight_keywords("TEMPO temp buy TEMP");
     colored::control::unset_override();
-    assert_eq!(out, "TEMPO temp INFOrmation");
+    assert_eq!(out, "TEMPO temp buy TEMP");
 }

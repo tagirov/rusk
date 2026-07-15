@@ -201,7 +201,9 @@ impl Default for Config {
             web_token: None,
             sync_remote: None,
             sync_token: None,
-            keywords: vec!["TEMP".to_string(), "INFO".to_string()],
+            keywords: ["TEMP", "INFO", "FIXME", "WIP"]
+                .map(String::from)
+                .to_vec(),
             theme: Theme::default(),
         }
     }
@@ -304,6 +306,11 @@ fn apply_setting(
     warnings: &mut Vec<String>,
 ) {
     let mut warn = |msg: String| warnings.push(format!("cfg:{line}: {msg}; using default"));
+    // Only `keywords` accepts an (explicitly quoted) empty value.
+    if value.is_empty() && key != "keywords" {
+        warn(format!("empty value for '{key}'"));
+        return;
+    }
     match key {
         "rusk_db" => config.rusk_db = Some(expand_tilde(value)),
         "db_token" => config.db_token = Some(value.to_string()),
@@ -324,19 +331,15 @@ fn apply_setting(
         "web_token" => config.web_token = Some(value.to_string()),
         "sync_remote" => config.sync_remote = Some(value.to_string()),
         "sync_token" => config.sync_token = Some(value.to_string()),
-        // Space- or comma-separated tokens; `_` disables highlighting
-        // (empty values are skipped by the parser before this point).
+        // Space- or comma-separated tokens; `keywords = ""` disables
+        // highlighting (the quoted empty value yields an empty list).
         "keywords" => {
-            config.keywords = if value == "_" {
-                Vec::new()
-            } else {
-                value
-                    .split([',', ' '])
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(String::from)
-                    .collect()
-            };
+            config.keywords = value
+                .split([',', ' '])
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+                .collect();
         }
         theme_key => match ColorValue::parse(value) {
             Ok(color) => config.theme.set(theme_key, color),
@@ -373,7 +376,9 @@ pub fn parse(text: &str) -> LoadOutcome {
             continue;
         }
         let (value, quoted) = parse_value(line[eq + 1..].trim());
-        if value.is_empty() {
+        // A quoted empty value (`keywords = ""`) is an explicit "nothing"
+        // and reaches the setting; a bare empty value is a mistake.
+        if value.is_empty() && !quoted {
             warnings.push(format!("cfg:{line_no}: empty value for '{key}'; line skipped"));
             continue;
         }
@@ -450,8 +455,9 @@ const DEFAULT_CONFIG: &str = "\
 # no_color = false           # disable ANSI colors in terminal output
 # compact = false            # compact `rusk list` view by default
 # backup = true              # keep a .backup copy next to the database on every save
-# keywords = TEMP INFO       # keyword tokens highlighted in task text (space- or
-#                            # comma-separated, case-sensitive; `_` disables)
+# keywords = TEMP INFO FIXME WIP
+#                            # keywords highlighted when a task text starts with one
+#                            # (space- or comma-separated, case-sensitive; \"\" disables)
 
 # --- web: rusk serve / rusk gen ---
 # web_host = 127.0.0.1
@@ -710,12 +716,20 @@ mod tests {
 
     #[test]
     fn keywords_default_and_custom_lists() {
-        assert_eq!(Config::default().keywords, vec!["TEMP", "INFO"]);
+        assert_eq!(
+            Config::default().keywords,
+            vec!["TEMP", "INFO", "FIXME", "WIP"]
+        );
         // Space- and comma-separated forms are equivalent.
-        assert_eq!(cfg("keywords = WIP FIXME\n").keywords, vec!["WIP", "FIXME"]);
-        assert_eq!(cfg("keywords = WIP, FIXME\n").keywords, vec!["WIP", "FIXME"]);
-        // `_` disables highlighting (mirrors the `-d _` / `-a _` convention).
-        assert!(cfg("keywords = _\n").keywords.is_empty());
+        assert_eq!(cfg("keywords = BUG HACK\n").keywords, vec!["BUG", "HACK"]);
+        assert_eq!(cfg("keywords = BUG, HACK\n").keywords, vec!["BUG", "HACK"]);
+        // A quoted empty value disables highlighting; a bare empty value is
+        // still a skipped mistake (and other keys reject `""` too).
+        assert!(cfg("keywords = \"\"\n").keywords.is_empty());
+        assert_eq!(warnings("keywords =\n").len(), 1);
+        let w = warnings("web_token = \"\"\n");
+        assert_eq!(w.len(), 1);
+        assert!(w[0].contains("empty value"));
     }
 
     #[test]

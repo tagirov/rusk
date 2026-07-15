@@ -646,7 +646,7 @@ impl HandlerCLI {
                     println!(
                         "{}{}{}",
                         " ".repeat(prefix_width),
-                        Self::highlight_keywords(&Self::maybe_highlight(line, highlight)),
+                        Self::maybe_highlight(line, highlight),
                         if i == last_line_idx {
                             after_note.as_deref().unwrap_or("")
                         } else {

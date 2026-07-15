@@ -337,35 +337,25 @@ impl HandlerCLI {
         }
     }
 
-    /// Colors standalone keyword tokens from the config (`keywords`, default
-    /// `TEMP INFO`) with the `keyword` theme color. Whitespace-delimited,
-    /// exact match — "TEMPO" stays untouched.
+    /// Colors the leading keyword of a task with the `keyword` theme color.
+    /// Only the first whitespace-delimited word is considered, and only an
+    /// exact match against the config `keywords` list (default
+    /// `TEMP INFO FIXME WIP`) counts — "TEMPO" stays untouched.
     #[doc(hidden)]
     pub fn highlight_keywords(line: &str) -> std::borrow::Cow<'_, str> {
+        let end = line
+            .find(char::is_whitespace)
+            .unwrap_or(line.len());
+        let token = &line[..end];
         let keywords = &crate::config::config().keywords;
-        if !keywords.iter().any(|keyword| line.contains(keyword.as_str())) {
+        if token.is_empty() || !keywords.iter().any(|keyword| keyword == token) {
             return std::borrow::Cow::Borrowed(line);
         }
-        let mut out = String::with_capacity(line.len());
-        let mut token = String::new();
-        let flush = |out: &mut String, token: &mut String| {
-            if keywords.iter().any(|keyword| keyword == token) {
-                out.push_str(&theme().keyword.paint(token.as_str()).to_string());
-            } else {
-                out.push_str(token);
-            }
-            token.clear();
-        };
-        for c in line.chars() {
-            if c.is_whitespace() {
-                flush(&mut out, &mut token);
-                out.push(c);
-            } else {
-                token.push(c);
-            }
-        }
-        flush(&mut out, &mut token);
-        std::borrow::Cow::Owned(out)
+        std::borrow::Cow::Owned(format!(
+            "{}{}",
+            theme().keyword.paint(token),
+            &line[end..]
+        ))
     }
 
     pub(crate) fn print_not_found_ids(not_found: &[crate::model::TaskId]) {

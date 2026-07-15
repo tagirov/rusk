@@ -51,11 +51,12 @@ pub enum Command {
         long_about = "Add a new task. With TEXT: one-shot. Without TEXT: opens the interactive \
 editor (set or clear a due date on the first line). Optional `-d` pre-seeds the first line \
 when there is no TEXT. Optional `-a` lists tasks this one depends on: they are shown after \
-the text, e.g. `text (19,22)`, and the task cannot be marked done before they are.\n\n\
+the text, e.g. `text (19,22)` — the task should be done no earlier than them (an ordering \
+hint for agents and tooling; `rusk mark` itself is never blocked).\n\n\
 Examples:\n  \
 rusk add buy groceries\n  \
 rusk add report -d 31-12-2025\n  \
-rusk add deploy -a 19,22          # done no earlier than tasks 19 and 22\n  \
+rusk add deploy -a 19,22          # depends on tasks 19 and 22\n  \
 rusk add                          # interactive editor\n  \
 rusk add -d 2w                    # editor with the date pre-seeded",
         help_template = "{about-section}\n\nUsage: rusk add [OPTIONS] [TEXT]...\n\n{all-args}\n\n{after-help}",
@@ -79,7 +80,7 @@ rusk add -d 2w                    # editor with the date pre-seeded",
             short = 'a',
             long,
             value_name = "IDS",
-            help = "Tasks this one depends on, comma-separated (e.g. 19,22): shown after the text and block completion until they are done"
+            help = "Tasks this one depends on, comma-separated (e.g. 19,22): shown after the text; an ordering hint for agents, manual marking is not restricted"
         )]
         after: Option<String>,
     },
@@ -136,7 +137,7 @@ rusk e 1                          # interactive editor\n  \
 rusk e 1 -d 2w\n  \
 rusk e 3 new text -d 15-06-2025\n  \
 rusk e 1 -d _                     # clear the due date\n  \
-rusk e 1 -a 19,22                 # done no earlier than tasks 19 and 22\n  \
+rusk e 1 -a 19,22                 # depends on tasks 19 and 22\n  \
 rusk e 1 -a _                     # clear the dependency list",
         help_template = "{about-section}\n\nUsage: rusk edit [ARGS]...\n\n{all-args}\n\n{after-help}",
         after_long_help = EDIT_SUBCOMMAND_LONG_HELP

@@ -123,7 +123,8 @@ rusk mark 1
 rusk mark 1 --priority
 
 # Add a task that depends on other tasks: shown as `deploy (19,22)` in the
-# list and cannot be marked done before tasks 19 and 22 are.
+# list. An ordering hint for agents and tooling (the task should be done no
+# earlier than its dependencies); manual `rusk mark` is never blocked.
 rusk add deploy --after 19,22
 rusk a deploy -a 19,22
 

@@ -423,7 +423,7 @@ fn test_binary_rusk_no_color_empty_does_not_disable() {
 }
 
 #[test]
-fn test_binary_add_with_after_shows_deps_and_blocks_mark() {
+fn test_binary_add_with_after_shows_deps_and_mark_is_not_blocked() {
     let _guard = BIN_TEST_MUTEX.lock().unwrap();
     setup_test_db(
         r#"[{"id":1,"text":"base","date":null,"done":false,"priority":false},
@@ -455,21 +455,8 @@ fn test_binary_add_with_after_shows_deps_and_blocks_mark() {
         "list should show the deps suffix:\n{stdout}"
     );
 
-    // Completing the dependent task is blocked while deps are unfinished.
-    let out = rusk_command()
-        .env("RUSK_NO_COLOR", "1")
-        .args(["mark", "3"])
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        stdout.contains("blocked by unfinished task(s): 1, 2"),
-        "mark must be blocked:\n{stdout}"
-    );
-    assert!(!read_db().contains("\"done\": true"), "task 3 must stay undone");
-
-    // Finish the deps: now the task completes.
-    rusk_command().args(["mark", "1,2"]).output().unwrap();
+    // Dependencies are advisory (an ordering hint for agents/tooling):
+    // manual marking works even while the deps are unfinished.
     let out = rusk_command()
         .env("RUSK_NO_COLOR", "1")
         .args(["mark", "3"])
@@ -478,8 +465,9 @@ fn test_binary_add_with_after_shows_deps_and_blocks_mark() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains("Marked task as done"),
-        "mark should succeed after deps are done:\n{stdout}"
+        "mark must not be blocked by unfinished deps:\n{stdout}"
     );
+    assert!(read_db().contains("\"done\": true"), "task 3 must be done");
 }
 
 #[test]

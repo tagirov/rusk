@@ -358,37 +358,6 @@ impl HandlerCLI {
     }
 
     pub fn handle_mark_tasks(tm: &mut TaskManager, ids: Vec<TaskId>, priority: bool) -> Result<()> {
-        // A task must not be completed before its `--after` dependencies:
-        // report and skip those ids (undoing a done task is always allowed).
-        let ids = if priority {
-            ids
-        } else {
-            let mut allowed = Vec::with_capacity(ids.len());
-            for id in ids {
-                let is_undone = tm
-                    .find_task_by_id(id)
-                    .is_some_and(|idx| !tm.tasks()[idx].done);
-                let blocked_by = tm.unfinished_deps(id);
-                if is_undone && !blocked_by.is_empty() {
-                    let list = blocked_by
-                        .iter()
-                        .map(|dep| dep.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    println!(
-                        "{} {} {} {}",
-                        theme().warning.paint("Task"),
-                        theme().emphasis.paint(&id.to_string()),
-                        theme().warning.paint("is blocked by unfinished task(s):"),
-                        theme().emphasis.paint(&list)
-                    );
-                } else {
-                    allowed.push(id);
-                }
-            }
-            allowed
-        };
-
         let (marked, not_found) = if priority {
             tm.mark_priority_tasks(ids)?
         } else {

@@ -210,8 +210,9 @@ formats stay interchangeable and `rusk sync` hashes content canonically
 
 Task ids are `u32` (`TaskId` in `model.rs`): the smallest free id is reused.
 A task may list other task ids in `after` (`--after`): the dependencies are
-shown after the text as `(19,22)`, block `rusk mark` until they are done,
-and are stripped automatically when the referenced tasks are deleted.
+shown after the text as `(19,22)` and are stripped automatically when the
+referenced tasks are deleted. The ordering is advisory — a hint for agents
+and tooling (`TaskManager::unfinished_deps`); `rusk mark` is never blocked.
 
 ## Configuration
 

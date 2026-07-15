@@ -230,7 +230,7 @@ impl TaskManager {
         }
         if let Some(own) = own_id {
             // Walk the dependency graph from the new deps; reaching the task
-            // itself would deadlock completion for the whole loop.
+            // itself would make the ordering unsatisfiable.
             let mut stack: Vec<TaskId> = clean.clone();
             let mut seen: std::collections::HashSet<TaskId> = std::collections::HashSet::new();
             while let Some(cur) = stack.pop() {

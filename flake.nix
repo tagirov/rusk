@@ -1,21 +1,21 @@
 {
-  # Краткое описание флейка — видно в выводе `nix flake show` и `nix flake metadata`
+  # Short flake description, shown by `nix flake show` and `nix flake metadata`
   description = "rusk — minimal cross-platform terminal task manager";
 
-  # inputs — внешние зависимости флейка.
-  # Nix скачает их и зафиксирует точные ревизии в flake.lock,
-  # поэтому сборка воспроизводима: у всех одинаковый nixpkgs.
+  # inputs — external dependencies of the flake.
+  # Nix fetches them and pins exact revisions in flake.lock,
+  # so the build is reproducible: everyone gets the same nixpkgs.
   inputs = {
-    # nixpkgs-unstable нужен из-за edition 2024 — требуется rustc >= 1.85
+    # nixpkgs-unstable is required because of edition 2024 (needs rustc >= 1.85)
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
   };
 
-  # outputs — функция, которая из inputs строит всё, что флейк предоставляет:
-  # пакеты, dev-окружения, приложения и т.д.
+  # outputs — a function that builds everything the flake provides from inputs:
+  # packages, dev environments, apps, etc.
   outputs =
     { self, nixpkgs }:
     let
-      # Список систем, для которых объявляем выходы
+      # Systems we declare outputs for
       systems = [
         "x86_64-linux"
         "aarch64-linux"
@@ -23,36 +23,36 @@
         "aarch64-darwin"
       ];
 
-      # Хелпер: применяет функцию f к каждой системе и собирает
-      # атрибут-сет вида { x86_64-linux = ...; aarch64-linux = ...; ... }
+      # Helper: applies f to every system and collects an attribute set
+      # of the form { x86_64-linux = ...; aarch64-linux = ...; ... }
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
     in
     {
-      # `nix build` / `nix profile install` берут пакеты отсюда
+      # `nix build` / `nix profile install` take packages from here
       packages = forAllSystems (pkgs: {
         default = pkgs.rustPlatform.buildRustPackage {
           pname = "rusk";
-          # Версию читаем прямо из Cargo.toml, чтобы не дублировать её руками
+          # Read the version straight from Cargo.toml to avoid duplicating it by hand
           version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
 
-          # Исходники — сам репозиторий флейка.
-          # cleanSource отбрасывает мусор вроде target/ и .git,
-          # чтобы правки там не вызывали пересборку
+          # Sources are the flake repository itself.
+          # cleanSource drops junk like target/ and .git,
+          # so changes there do not trigger a rebuild
           src = pkgs.lib.cleanSource ./.;
 
-          # Вместо хеша вендоренных зависимостей используем Cargo.lock:
-          # Nix сам скачает все крейты по зафиксированным в нём версиям
+          # Use Cargo.lock instead of a vendored dependencies hash:
+          # Nix fetches all crates at the versions pinned there
           cargoLock.lockFile = ./Cargo.lock;
 
-          # installShellCompletion кладёт готовые файлы автодополнения
-          # в правильные места внутри $out
+          # installShellCompletion places the prebuilt completion files
+          # into the right locations inside $out
           nativeBuildInputs = [ pkgs.installShellFiles ];
 
-          # Тесты git-бэкенда зовут бинарник git, которого нет в песочнице сборки
+          # Git backend tests call the git binary, which is absent in the build sandbox
           nativeCheckInputs = [ pkgs.git ];
 
-          # postInstall выполняется после `cargo install`:
-          # докладываем комплиты рядом с бинарником
+          # postInstall runs after `cargo install`:
+          # ship the completions next to the binary
           postInstall = ''
             installShellCompletion \
               --bash completions/rusk.bash \
@@ -64,12 +64,12 @@
             description = "Minimal cross-platform terminal task manager";
             homepage = "https://github.com/tagirov/rusk";
             license = pkgs.lib.licenses.gpl3Only;
-            mainProgram = "rusk"; # что запускать при `nix run`
+            mainProgram = "rusk"; # what `nix run` executes
           };
         };
       });
 
-      # `nix develop` — dev-окружение с тулчейном для работы над проектом
+      # `nix develop` — dev environment with the toolchain for working on the project
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           packages = with pkgs; [

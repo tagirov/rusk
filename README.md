@@ -7,6 +7,10 @@
   <a href="https://aur.archlinux.org/packages/rusk"><img src="https://img.shields.io/aur/version/rusk?logo=archlinux" alt="AUR Version"></a>
 </p>
 
+<p align="center">
+  <img src="rusk.gif" alt="rusk demo" width="860">
+</p>
+
 <br />
 
 

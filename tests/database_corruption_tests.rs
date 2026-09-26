@@ -34,6 +34,11 @@ fn test_corrupted_database_error_message() {
     assert!(error_msg.contains("Delete the corrupted file"));
 }
 
+/// REVIEW №17: an empty file is not corruption but it is not an empty
+/// database either — every format and both transports answer the same way
+/// now: zero tasks, plus a warning on stderr that the next save replaces
+/// whatever is in the file (the `.backup` sibling still holds the last
+/// good copy).
 #[test]
 fn test_empty_database_file() {
     let temp_dir = tempdir().unwrap();
@@ -42,11 +47,10 @@ fn test_empty_database_file() {
     // Create empty file
     fs::write(&db_path, "").unwrap();
 
-    let result = TaskManager::load_tasks_from_path(&db_path);
+    let tasks = TaskManager::load_tasks_from_path(&db_path)
+        .expect("an empty file reads as an empty task list");
 
-    assert!(result.is_err());
-    let error_msg = result.unwrap_err().to_string();
-    assert!(error_msg.contains("Failed to parse the database file"));
+    assert!(tasks.is_empty());
 }
 
 #[test]

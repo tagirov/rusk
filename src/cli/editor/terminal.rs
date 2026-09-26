@@ -18,6 +18,7 @@ use crossterm::{
     },
 };
 use std::io::{self, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 struct ShowCursorOnDrop;
 impl Drop for ShowCursorOnDrop {
@@ -26,27 +27,204 @@ impl Drop for ShowCursorOnDrop {
     }
 }
 
-/// Enter the alternate screen + raw mode with mouse capture and no line wrap.
-pub(super) fn enter(stdout: &mut io::Stdout) -> Result<()> {
-    enable_raw_mode().context("Failed to enable raw mode")?;
-    stdout.queue(EnterAlternateScreen)?;
-    stdout.queue(EnableBracketedPaste)?;
-    stdout.queue(EnableMouseCapture)?;
-    stdout.queue(DisableLineWrap)?;
-    stdout.queue(Clear(ClearType::All))?;
-    stdout.flush().ok();
-    Ok(())
-}
+/// Whether the terminal is currently the editor's: raw mode on, alternate
+/// screen up, mouse reported. Read by the panic hook, which has no other
+/// way to know, and cleared by whoever puts the terminal back.
+static IN_EDITOR: AtomicBool = AtomicBool::new(false);
 
-/// Leave the alternate screen and restore normal terminal state.
-pub(super) fn finish(stdout: &mut io::Stdout) -> Result<()> {
+/// Puts the terminal back the way it was found. Safe to call when it
+/// already is: the flag says whether there is anything to undo, so a second
+/// call (a panic during teardown, a Drop after an explicit `finish`) writes
+/// nothing.
+fn restore(stdout: &mut io::Stdout) {
+    if !IN_EDITOR.swap(false, Ordering::SeqCst) {
+        return;
+    }
     stdout.queue(EnableLineWrap).ok();
     stdout.queue(DisableMouseCapture).ok();
     stdout.queue(DisableBracketedPaste).ok();
-    stdout.queue(LeaveAlternateScreen)?;
+    stdout.queue(LeaveAlternateScreen).ok();
+    stdout.queue(Show).ok();
     stdout.flush().ok();
     disable_raw_mode().ok();
-    Ok(())
+}
+
+/// The terminal, for as long as the editor has it.
+///
+/// Teardown is not a line at the end of the happy path. A `?` on a render,
+/// a panic on a cursor that landed inside a character, a SIGTERM from the
+/// window that was closed — each of them used to leave the shell the user
+/// comes back to in raw mode, inside the alternate screen, reporting mouse
+/// clicks as garbage. The guard owns all three answers: `Drop` for the
+/// error paths, a panic hook for the panics (it has to run *before* the
+/// message is printed, or the message is printed onto the screen that is
+/// about to be torn down), and, on unix, a signal handler that turns a
+/// SIGTERM into one more pass through the editor's own loop.
+pub(super) struct TerminalGuard {
+    #[cfg(unix)]
+    signals: signals::Restore,
+}
+
+impl TerminalGuard {
+    /// Enter the alternate screen + raw mode with mouse capture and no line wrap.
+    pub(super) fn enter(stdout: &mut io::Stdout) -> Result<Self> {
+        install_panic_hook();
+        #[cfg(unix)]
+        let signals = signals::watch();
+        enable_raw_mode().context("Failed to enable raw mode")?;
+        IN_EDITOR.store(true, Ordering::SeqCst);
+        let guard = Self {
+            #[cfg(unix)]
+            signals,
+        };
+        stdout.queue(EnterAlternateScreen)?;
+        stdout.queue(EnableBracketedPaste)?;
+        stdout.queue(EnableMouseCapture)?;
+        stdout.queue(DisableLineWrap)?;
+        stdout.queue(Clear(ClearType::All))?;
+        stdout.flush().ok();
+        Ok(guard)
+    }
+
+    /// Leave the alternate screen and restore normal terminal state. The
+    /// guard has nothing left to do afterwards.
+    pub(super) fn finish(&mut self, stdout: &mut io::Stdout) {
+        restore(stdout);
+        #[cfg(unix)]
+        self.signals.undo();
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        self.finish(&mut io::stdout());
+    }
+}
+
+/// Chains a hook in front of the one already there, once per process. It
+/// only acts while [`IN_EDITOR`] says the terminal is the editor's, so it
+/// costs nothing to leave installed for the rest of the run.
+fn install_panic_hook() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            restore(&mut io::stdout());
+            previous(info);
+        }));
+    });
+}
+
+/// A signal that asked the editor to stop, if one arrived. Taken, not
+/// peeked: the caller is the one that acts on it.
+#[cfg(unix)]
+pub(super) fn caught_signal() -> Option<i32> {
+    signals::taken()
+}
+
+#[cfg(not(unix))]
+pub(super) fn caught_signal() -> Option<i32> {
+    None
+}
+
+/// Whether such a signal is waiting, without taking it.
+#[cfg(unix)]
+fn signal_pending() -> bool {
+    signals::pending()
+}
+
+#[cfg(not(unix))]
+fn signal_pending() -> bool {
+    false
+}
+
+/// The next event — but never past a terminating signal. The editor's own
+/// loop is the one place that acts on those (it has the buffer to write
+/// out), so an overlay that would otherwise sit in `read()` forever hands
+/// control back to it instead. `None` means "a signal is waiting".
+///
+/// Without this the overlays were worse than before the guard existed: the
+/// handler had already replaced the default disposition, so a SIGTERM with
+/// the help screen up set a flag nobody read and the process could no
+/// longer be killed by anything but SIGKILL.
+fn read_event() -> Result<Option<Event>> {
+    loop {
+        if signal_pending() {
+            return Ok(None);
+        }
+        if crossterm::event::poll(std::time::Duration::from_millis(200))? {
+            return Ok(Some(read()?));
+        }
+    }
+}
+
+/// The exit a terminating signal asks for, once the editor has put the
+/// terminal back and saved what it could.
+pub(super) fn exit_after_signal(signum: i32, note: Option<&str>) -> ! {
+    if let Some(note) = note {
+        eprintln!("{note}");
+    }
+    std::process::exit(128 + signum)
+}
+
+/// SIGTERM, SIGHUP and SIGQUIT, caught only while the editor is running.
+///
+/// The handler does one relaxed store and nothing else — everything that
+/// matters (putting the terminal back, writing the draft) needs allocation
+/// and locks, which no signal handler may take. The editor's loop wakes up
+/// at least twice a second, so it notices within half a second.
+#[cfg(unix)]
+mod signals {
+    use std::sync::atomic::{AtomicI32, Ordering};
+
+    static CAUGHT: AtomicI32 = AtomicI32::new(0);
+
+    const WATCHED: [libc::c_int; 3] = [libc::SIGTERM, libc::SIGHUP, libc::SIGQUIT];
+
+    extern "C" fn catch(signum: libc::c_int) {
+        CAUGHT.store(signum, Ordering::Relaxed);
+    }
+
+    /// What was in place before the editor took over.
+    pub(super) struct Restore([libc::sighandler_t; WATCHED.len()]);
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            self.undo();
+        }
+    }
+
+    impl Restore {
+        pub(super) fn undo(&mut self) {
+            for (signum, previous) in WATCHED.iter().zip(self.0) {
+                // SAFETY: putting back exactly what `signal` handed out.
+                unsafe { libc::signal(*signum, previous) };
+            }
+            CAUGHT.store(0, Ordering::Relaxed);
+        }
+    }
+
+    pub(super) fn watch() -> Restore {
+        CAUGHT.store(0, Ordering::Relaxed);
+        let handler = catch as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        let mut previous = [libc::SIG_DFL; WATCHED.len()];
+        for (slot, signum) in previous.iter_mut().zip(WATCHED) {
+            // SAFETY: the handler only stores into a static atomic.
+            *slot = unsafe { libc::signal(signum, handler) };
+        }
+        Restore(previous)
+    }
+
+    pub(super) fn taken() -> Option<i32> {
+        match CAUGHT.swap(0, Ordering::Relaxed) {
+            0 => None,
+            signum => Some(signum),
+        }
+    }
+
+    pub(super) fn pending() -> bool {
+        CAUGHT.load(Ordering::Relaxed) != 0
+    }
 }
 
 /// A single row in the help overlay body.
@@ -260,7 +438,10 @@ pub(super) fn show_help(stdout: &mut io::Stdout) -> Result<()> {
         let (max_body, visible_body, max_scroll) = help_scroll_geometry(term_rows, body.len());
         let page_step = visible_body.max(1);
 
-        match read()? {
+        let Some(event) = read_event()? else {
+            break;
+        };
+        match event {
             Event::Resize(_, _) => {
                 body_scroll = body_scroll.min(max_scroll);
                 paint(stdout, &mut body_scroll)?;
@@ -314,12 +495,21 @@ pub(super) fn show_help(stdout: &mut io::Stdout) -> Result<()> {
     Ok(())
 }
 
+/// What the "Discard changes?" overlay came back with.
+#[derive(PartialEq)]
+pub(super) enum Discard {
+    Yes,
+    No,
+    /// Ctrl+C: the same abort as in the editor itself, and it takes the
+    /// same way out — the buffer is kept as a draft, the terminal is put
+    /// back by the guard.
+    Abort,
+}
+
 /// Overlay "Discard changes? [y/N]". When `dialog_row` is `Some(r)`, the prompt is on row `r`
 /// (in the space between the footer and the window bottom). When `None`, it is shown on the last
 /// row, replacing the footer.
-/// Returns `Ok(true)` if the user confirmed with `y`, `Ok(false)` otherwise.
-/// A Ctrl+C aborts by returning `AppError::UserAbort`.
-pub(super) fn confirm_discard(stdout: &mut io::Stdout, dialog_row: Option<u16>) -> Result<bool> {
+pub(super) fn confirm_discard(stdout: &mut io::Stdout, dialog_row: Option<u16>) -> Result<Discard> {
     let _show_cursor = ShowCursorOnDrop;
     stdout.queue(Hide)?;
     stdout.flush().ok();
@@ -337,23 +527,25 @@ pub(super) fn confirm_discard(stdout: &mut io::Stdout, dialog_row: Option<u16>) 
     stdout.queue(Print("[y/N] ".dimmed()))?;
     stdout.flush().ok();
     loop {
+        let Some(event) = read_event()? else {
+            // A terminating signal: do not answer for the user. The loop
+            // takes it over on the next pass and keeps the buffer.
+            return Ok(Discard::No);
+        };
         if let Event::Key(KeyEvent {
             code,
             kind,
             modifiers,
             ..
-        }) = read()?
+        }) = event
         {
             if kind != KeyEventKind::Press {
                 continue;
             }
             match (code, modifiers) {
-                (KeyCode::Char('y') | KeyCode::Char('Y'), _) => return Ok(true),
-                (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                    finish(stdout).ok();
-                    return Err(crate::error::AppError::UserAbort.into());
-                }
-                _ => return Ok(false),
+                (KeyCode::Char('y') | KeyCode::Char('Y'), _) => return Ok(Discard::Yes),
+                (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Ok(Discard::Abort),
+                _ => return Ok(Discard::No),
             }
         }
     }

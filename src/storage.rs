@@ -1,7 +1,7 @@
 use anyhow::Result;
 use colored::*;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use crate::backend::Backend;
 use crate::model::{Task, TaskId};
@@ -10,10 +10,169 @@ use crate::parser::date::is_cli_date_clear_value;
 
 pub type MarkResult = (Vec<(TaskId, bool)>, Vec<TaskId>);
 
-/// Manages task operations and persistence
+/// Manages task operations and persistence.
+///
+/// Every operation that changes tasks goes through [`update`]: the change
+/// is applied to the current state of the database and stored as one step,
+/// so commands running at the same time (another terminal, `rusk serve`, a
+/// cron job) all take effect instead of the last one overwriting the rest.
+///
+/// [`update`]: Self::update
 pub struct TaskManager {
     pub tasks: Vec<Task>,
     backend: Backend,
+    /// The list as the database holds it as far as this manager knows:
+    /// what was loaded, or written last. `tasks` differing from it means
+    /// edits that are in memory only.
+    synced: Mutex<Vec<Task>>,
+}
+
+/// An interactive edit was refused: the task is no longer what the editor
+/// was opened with. Nothing was saved.
+#[derive(Debug, PartialEq, Eq)]
+pub struct TaskChanged {
+    pub id: TaskId,
+    /// The task is gone altogether.
+    pub deleted: bool,
+}
+
+impl std::fmt::Display for TaskChanged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let what = if self.deleted { "deleted" } else { "changed" };
+        write!(
+            f,
+            "task {} was {what} by another process while it was being edited; nothing was saved",
+            self.id
+        )
+    }
+}
+
+impl std::error::Error for TaskChanged {}
+
+/// What became of a deletion the user confirmed task by task.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ConfirmedDeletion {
+    pub deleted: Vec<TaskId>,
+    /// Still there, but no longer the task that was confirmed (another
+    /// process changed it, or reused the id): left alone.
+    pub changed: Vec<TaskId>,
+    /// Already deleted by another process.
+    pub gone: Vec<TaskId>,
+}
+
+/// Position of the task with this id.
+pub fn position_of(tasks: &[Task], id: TaskId) -> Option<usize> {
+    tasks.iter().position(|t| t.id == id)
+}
+
+/// The lowest id no task uses. A list that was read has unique nonzero ids
+/// (see [`crate::model::normalize`]); one put together in memory might not,
+/// and a repeated id or a 0 must not stop the search early.
+pub fn next_free_id(tasks: &[Task]) -> Result<TaskId> {
+    let mut used: Vec<TaskId> = tasks.iter().map(|t| t.id).collect();
+    used.sort_unstable();
+
+    let mut id: TaskId = 1;
+    for &used_id in &used {
+        if used_id > id {
+            break;
+        }
+        if used_id == id {
+            id = id
+                .checked_add(1)
+                .ok_or_else(|| anyhow::anyhow!("Maximum number of tasks reached"))?;
+        }
+    }
+
+    Ok(id)
+}
+
+/// Validates a `--after` dependency list against `tasks`: every id must
+/// exist, self-references and cycles are rejected. Returns the list
+/// deduplicated in input order. `own_id` is the task being edited (`None`
+/// when adding: a new task cannot be in a cycle).
+pub fn validate_after(
+    tasks: &[Task],
+    own_id: Option<TaskId>,
+    after: &[TaskId],
+) -> Result<Vec<TaskId>> {
+    let mut clean: Vec<TaskId> = Vec::new();
+    let mut missing: Vec<TaskId> = Vec::new();
+    for &dep in after {
+        if own_id == Some(dep) {
+            anyhow::bail!("Task {dep} cannot depend on itself");
+        }
+        if clean.contains(&dep) || missing.contains(&dep) {
+            continue;
+        }
+        if position_of(tasks, dep).is_some() {
+            clean.push(dep);
+        } else {
+            missing.push(dep);
+        }
+    }
+    if !missing.is_empty() {
+        let list = missing
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        anyhow::bail!("Cannot depend on missing task(s): {list}");
+    }
+    if let Some(own) = own_id {
+        // Walk the dependency graph from the new deps; reaching the task
+        // itself would make the ordering unsatisfiable.
+        let mut stack: Vec<TaskId> = clean.clone();
+        let mut seen: std::collections::HashSet<TaskId> = std::collections::HashSet::new();
+        while let Some(cur) = stack.pop() {
+            if cur == own {
+                anyhow::bail!(
+                    "Dependency cycle: task {own} would (transitively) depend on itself"
+                );
+            }
+            if !seen.insert(cur) {
+                continue;
+            }
+            if let Some(idx) = position_of(tasks, cur) {
+                stack.extend(tasks[idx].after.iter().copied());
+            }
+        }
+    }
+    Ok(clean)
+}
+
+/// Removes the given ids from every task's `after` list (deleted tasks
+/// must not linger as dependencies: their ids get reused).
+fn strip_deps(tasks: &mut [Task], removed: &[TaskId]) {
+    for task in tasks {
+        task.after.retain(|dep| !removed.contains(dep));
+    }
+}
+
+/// Deletes the tasks with these ids, along with every dependency on them.
+/// Returns the ids no task had.
+pub fn remove_tasks(tasks: &mut Vec<Task>, ids: &[TaskId]) -> Vec<TaskId> {
+    let mut deleted = Vec::new();
+    let mut not_found = Vec::new();
+    for &id in ids {
+        if let Some(idx) = position_of(tasks, id) {
+            tasks.remove(idx);
+            deleted.push(id);
+        } else {
+            not_found.push(id);
+        }
+    }
+    strip_deps(tasks, &deleted);
+    not_found
+}
+
+/// Deletes every done task, along with every dependency on them. Returns
+/// how many there were.
+pub fn remove_done(tasks: &mut Vec<Task>) -> usize {
+    let done_ids: Vec<TaskId> = tasks.iter().filter(|t| t.done).map(|t| t.id).collect();
+    tasks.retain(|t| !t.done);
+    strip_deps(tasks, &done_ids);
+    done_ids.len()
 }
 
 fn eprint_db_location(location: &str) {
@@ -71,19 +230,33 @@ impl TaskManager {
         ]
     }
 
+    /// `tasks` as just loaded from (or about to be the content of) `backend`.
+    fn with(tasks: Vec<Task>, backend: Backend) -> Self {
+        Self {
+            synced: Mutex::new(tasks.clone()),
+            tasks,
+            backend,
+        }
+    }
+
     pub fn new() -> Result<Self> {
         let backend = Backend::resolve()?;
-        let mut tasks = backend.load()?;
+        let tasks = backend.load()?;
         Self::maybe_log_db_location(&backend.describe());
+        let mut tm = Self::with(tasks, backend);
 
-        if cfg!(debug_assertions) && !Self::is_test_mode() && tasks.is_empty() {
-            tasks = Self::create_sample_tasks();
-            let tm = Self { tasks, backend };
-            tm.save()?;
-            return Ok(tm);
+        if cfg!(debug_assertions) && !Self::is_test_mode() && tm.tasks.is_empty() {
+            // Through `update`: debug runs starting at the same time all
+            // find the database empty, and only the first one seeds it.
+            tm.update(|tasks| {
+                if tasks.is_empty() {
+                    *tasks = Self::create_sample_tasks();
+                }
+                Ok(())
+            })?;
         }
 
-        Ok(Self { tasks, backend })
+        Ok(tm)
     }
 
     /// Fresh manager without the debug sample-task seeding: used where the
@@ -91,25 +264,33 @@ impl TaskManager {
     pub fn open() -> Result<Self> {
         let backend = Backend::resolve()?;
         let tasks = backend.load()?;
-        Ok(Self { tasks, backend })
+        Ok(Self::with(tasks, backend))
     }
 
     pub fn new_for_restore() -> Result<Self> {
         let backend = Backend::resolve()?;
         Self::maybe_log_db_location(&backend.describe());
-        Ok(Self {
-            tasks: Vec::new(),
-            backend,
-        })
+        Ok(Self::with(Vec::new(), backend))
     }
 
     pub fn new_empty() -> Result<Self> {
+        // One path per call: tests run in parallel threads of one process
+        // and must not share a database file.
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let db_path = std::env::temp_dir()
             .join("rusk_test")
-            .join(std::process::id().to_string())
+            .join(format!("{}-{seq}", std::process::id()))
             .join("tasks.json");
         Self::maybe_log_db_location(&db_path.display().to_string());
         Ok(Self::new_empty_with_path(db_path))
+    }
+
+    /// Manager over the local database at `path`, loaded (tests and tools).
+    pub fn open_at(path: PathBuf) -> Result<Self> {
+        let backend = Backend::from_local_path(path)?;
+        let tasks = backend.load()?;
+        Ok(Self::with(tasks, backend))
     }
 
     /// Empty manager over a local database at `path` (tests and tools).
@@ -118,10 +299,7 @@ impl TaskManager {
     pub fn new_empty_with_path(path: PathBuf) -> Self {
         let backend =
             Backend::from_local_path(path).expect("unsupported database path in this build");
-        Self {
-            tasks: Vec::new(),
-            backend,
-        }
+        Self::with(Vec::new(), backend)
     }
 
     pub fn tasks(&self) -> &[Task] {
@@ -175,7 +353,9 @@ impl TaskManager {
         self.add_task_full(text, date, Vec::new())
     }
 
-    /// The full add: already-parsed date plus a dependency list.
+    /// The full add: already-parsed date plus a dependency list. The id is
+    /// picked, and the dependencies are validated, against the database as
+    /// it is at the moment of the save.
     pub fn add_task_full(
         &mut self,
         text: String,
@@ -185,69 +365,25 @@ impl TaskManager {
         if text.trim().is_empty() {
             anyhow::bail!("Task text cannot be empty");
         }
-        let after = self.validate_after(None, &after)?;
-        let id = self.generate_next_id()?;
-        let task = Task {
-            id,
-            text: text.clone(),
-            date,
-            done: false,
-            priority: false,
-            after,
-        };
-        self.tasks.push(task);
-        self.save()?;
-        Ok(())
+        self.update(|tasks| {
+            let after = validate_after(tasks, None, &after)?;
+            let id = next_free_id(tasks)?;
+            tasks.push(Task {
+                id,
+                text: text.clone(),
+                date,
+                done: false,
+                priority: false,
+                after,
+            });
+            Ok(())
+        })
     }
 
-    /// Validates a `--after` dependency list against the current database:
-    /// every id must exist, self-references and cycles are rejected.
-    /// Returns the list deduplicated in input order. `own_id` is the task
-    /// being edited (`None` when adding: a new task cannot be in a cycle).
+    /// Validates a `--after` dependency list against the tasks in memory,
+    /// see [`validate_after`].
     pub fn validate_after(&self, own_id: Option<TaskId>, after: &[TaskId]) -> Result<Vec<TaskId>> {
-        let mut clean: Vec<TaskId> = Vec::new();
-        let mut missing: Vec<TaskId> = Vec::new();
-        for &dep in after {
-            if own_id == Some(dep) {
-                anyhow::bail!("Task {dep} cannot depend on itself");
-            }
-            if clean.contains(&dep) || missing.contains(&dep) {
-                continue;
-            }
-            if self.find_task_by_id(dep).is_some() {
-                clean.push(dep);
-            } else {
-                missing.push(dep);
-            }
-        }
-        if !missing.is_empty() {
-            let list = missing
-                .iter()
-                .map(|id| id.to_string())
-                .collect::<Vec<_>>()
-                .join(", ");
-            anyhow::bail!("Cannot depend on missing task(s): {list}");
-        }
-        if let Some(own) = own_id {
-            // Walk the dependency graph from the new deps; reaching the task
-            // itself would make the ordering unsatisfiable.
-            let mut stack: Vec<TaskId> = clean.clone();
-            let mut seen: std::collections::HashSet<TaskId> = std::collections::HashSet::new();
-            while let Some(cur) = stack.pop() {
-                if cur == own {
-                    anyhow::bail!(
-                        "Dependency cycle: task {own} would (transitively) depend on itself"
-                    );
-                }
-                if !seen.insert(cur) {
-                    continue;
-                }
-                if let Some(idx) = self.find_task_by_id(cur) {
-                    stack.extend(self.tasks[idx].after.iter().copied());
-                }
-            }
-        }
-        Ok(clean)
+        validate_after(&self.tasks, own_id, after)
     }
 
     /// Dependencies of the task that still exist and are not done yet
@@ -267,53 +403,42 @@ impl TaskManager {
             .collect()
     }
 
-    /// Removes the given ids from every task's `after` list (deleted tasks
-    /// must not linger as dependencies: their ids get reused).
-    fn strip_deps(&mut self, removed: &[TaskId]) {
-        for task in &mut self.tasks {
-            task.after.retain(|dep| !removed.contains(dep));
-        }
-    }
-
     pub fn delete_tasks(&mut self, ids: Vec<TaskId>) -> Result<Vec<TaskId>> {
-        let mut deleted = Vec::new();
-        let mut not_found = Vec::new();
-
         let mut sorted_ids = ids;
         sorted_ids.sort_unstable_by(|a, b| b.cmp(a));
 
-        for id in sorted_ids {
-            if let Some(idx) = self.find_task_by_id(id) {
-                self.tasks.remove(idx);
-                deleted.push(id);
-            } else {
-                not_found.push(id);
+        self.update(|tasks| Ok(remove_tasks(tasks, &sorted_ids)))
+    }
+
+    /// Deletes the tasks the user confirmed one by one — `confirmed` holds
+    /// them as they were shown — as far as they still are those tasks:
+    /// `same_task(shown, now)` decides. While a prompt waits, another
+    /// process may change a task or delete it and hand its id to a new
+    /// one; such a task is reported instead of deleted.
+    pub fn delete_confirmed(
+        &mut self,
+        confirmed: &[Task],
+        same_task: impl Fn(&Task, &Task) -> bool,
+    ) -> Result<ConfirmedDeletion> {
+        self.update(|tasks| {
+            let mut outcome = ConfirmedDeletion::default();
+            for shown in confirmed {
+                match position_of(tasks, shown.id) {
+                    Some(idx) if same_task(shown, &tasks[idx]) => {
+                        tasks.remove(idx);
+                        outcome.deleted.push(shown.id);
+                    }
+                    Some(_) => outcome.changed.push(shown.id),
+                    None => outcome.gone.push(shown.id),
+                }
             }
-        }
-
-        if !deleted.is_empty() {
-            self.strip_deps(&deleted);
-            self.save()?;
-        }
-
-        Ok(not_found)
+            strip_deps(tasks, &outcome.deleted);
+            Ok(outcome)
+        })
     }
 
     pub fn delete_all_done(&mut self) -> Result<usize> {
-        let done_ids: Vec<TaskId> = self
-            .tasks
-            .iter()
-            .filter(|t| t.done)
-            .map(|t| t.id)
-            .collect();
-        if done_ids.is_empty() {
-            Ok(0)
-        } else {
-            self.tasks.retain(|t| !t.done);
-            self.strip_deps(&done_ids);
-            self.save()?;
-            Ok(done_ids.len())
-        }
+        self.update(|tasks| Ok(remove_done(tasks)))
     }
 
     pub fn mark_tasks(&mut self, ids: Vec<TaskId>) -> Result<MarkResult> {
@@ -333,29 +458,23 @@ impl TaskManager {
     }
 
     /// Shared toggle loop: `toggle` flips one flag on the task and returns its new state.
-    /// Saves only when at least one task was found.
     fn toggle_tasks(
         &mut self,
         ids: Vec<TaskId>,
         toggle: impl Fn(&mut Task) -> bool,
     ) -> Result<MarkResult> {
-        let mut not_found = Vec::new();
-        let mut marked = Vec::new();
-        let ids_len = ids.len();
-
-        for id in ids {
-            if let Some(idx) = self.find_task_by_id(id) {
-                marked.push((id, toggle(&mut self.tasks[idx])));
-            } else {
-                not_found.push(id);
+        self.update(|tasks| {
+            let mut not_found = Vec::new();
+            let mut marked = Vec::new();
+            for &id in &ids {
+                if let Some(idx) = position_of(tasks, id) {
+                    marked.push((id, toggle(&mut tasks[idx])));
+                } else {
+                    not_found.push(id);
+                }
             }
-        }
-
-        if not_found.len() < ids_len {
-            self.save()?;
-        }
-
-        Ok((marked, not_found))
+            Ok((marked, not_found))
+        })
     }
 
     pub fn edit_tasks(
@@ -376,31 +495,40 @@ impl TaskManager {
         date: Option<String>,
         after: Option<Vec<TaskId>>,
     ) -> Result<(Vec<TaskId>, Vec<TaskId>, Vec<TaskId>)> {
-        let mut not_found = Vec::new();
-        let mut edited = Vec::new();
-        let mut unchanged = Vec::new();
+        let text = text.map(|words| words.join(" "));
+        // The same rule as for a new task (`rusk edit 1 "$EMPTY"`).
+        if text.as_deref().is_some_and(|t| t.trim().is_empty()) {
+            anyhow::bail!("Task text cannot be empty");
+        }
 
-        for id in ids {
-            if let Some(idx) = self.find_task_by_id(id) {
+        self.update(|tasks| {
+            let mut not_found = Vec::new();
+            let mut edited = Vec::new();
+            let mut unchanged = Vec::new();
+
+            for &id in &ids {
+                let Some(idx) = position_of(tasks, id) else {
+                    not_found.push(id);
+                    continue;
+                };
                 // Cycle detection depends on the task being edited, so the
                 // list is validated per id before the task is borrowed.
                 let new_after = match &after {
-                    Some(list) => Some(self.validate_after(Some(id), list)?),
+                    Some(list) => Some(validate_after(tasks, Some(id), list)?),
                     None => None,
                 };
 
-                let task = &mut self.tasks[idx];
+                let task = &mut tasks[idx];
                 let mut was_changed = false;
 
-                if let Some(words) = &text {
-                    let joined = words.join(" ");
-                    if task.text != joined {
-                        task.text = joined;
-                        was_changed = true;
-                    }
+                if let Some(new_text) = &text
+                    && task.text != *new_text
+                {
+                    task.text = new_text.clone();
+                    was_changed = true;
                 }
 
-                if let Some(ref new_date) = date {
+                if let Some(new_date) = &date {
                     if is_cli_date_clear_value(new_date) {
                         if task.date.is_some() {
                             task.date = None;
@@ -427,42 +555,87 @@ impl TaskManager {
                 } else {
                     unchanged.push(id);
                 }
-            } else {
-                not_found.push(id);
             }
-        }
 
-        if !edited.is_empty() {
-            self.save()?;
-        }
+            Ok((edited, unchanged, not_found))
+        })
+    }
 
-        Ok((edited, unchanged, not_found))
+    /// Stores what an editor session made of a task, provided the task
+    /// still has the text and date the editor was opened with
+    /// ([`TaskChanged`] otherwise). Everything else about the task, and
+    /// every other task, is taken as the database has it now.
+    pub fn edit_task_as_seen(
+        &mut self,
+        id: TaskId,
+        seen: (&str, Option<chrono::NaiveDate>),
+        new: (&str, Option<chrono::NaiveDate>),
+    ) -> Result<()> {
+        self.update(|tasks| {
+            let Some(idx) = position_of(tasks, id) else {
+                return Err(TaskChanged { id, deleted: true }.into());
+            };
+            let task = &mut tasks[idx];
+            if (task.text.as_str(), task.date) != seen {
+                return Err(TaskChanged { id, deleted: false }.into());
+            }
+            task.text = new.0.to_string();
+            task.date = new.1;
+            Ok(())
+        })
     }
 
     pub fn find_task_by_id(&self, id: TaskId) -> Option<usize> {
-        self.tasks.iter().position(|t| t.id == id)
+        position_of(&self.tasks, id)
     }
 
     pub fn generate_next_id(&self) -> Result<TaskId> {
-        let mut used: Vec<TaskId> = self.tasks.iter().map(|t| t.id).collect();
-        used.sort_unstable();
-
-        let mut id: TaskId = 1;
-        for &used_id in &used {
-            if id == used_id {
-                id = id
-                    .checked_add(1)
-                    .ok_or_else(|| anyhow::anyhow!("Maximum number of tasks reached"))?;
-            } else {
-                break;
-            }
-        }
-
-        Ok(id)
+        next_free_id(&self.tasks)
     }
 
+    /// Applies `change` to the task list and saves the result as one step.
+    ///
+    /// The change runs on the tasks in memory while the database still is
+    /// what they were loaded from. If another process has written since,
+    /// the database is read again and the change runs on that instead —
+    /// so look tasks up by id inside `change`, never by an index taken
+    /// before. It may run more than once and must have no effects of its
+    /// own. On success `tasks` is the list that was saved.
+    ///
+    /// Nothing is written when `change` fails or changes nothing. Tasks
+    /// edited in memory without a [`save`] cannot be carried over to a
+    /// fresh read: if the database changed meanwhile, that is a
+    /// [`StaleDatabase`](crate::StaleDatabase) error.
+    ///
+    /// [`save`]: Self::save
+    pub fn update<T>(
+        &mut self,
+        mut change: impl FnMut(&mut Vec<Task>) -> Result<T>,
+    ) -> Result<T> {
+        let clean = self.tasks == *self.synced();
+        let updated = self.backend.update(&self.tasks, clean, &mut change)?;
+        // Edits that were in memory only, and still are because the change
+        // gave no reason to write, must not pass for saved ones.
+        if updated.stored {
+            *self.synced() = updated.tasks.clone();
+        }
+        self.tasks = updated.tasks;
+        Ok(updated.value)
+    }
+
+    fn synced(&self) -> std::sync::MutexGuard<'_, Vec<Task>> {
+        self.synced.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Replaces the whole database with the tasks in memory. Refused with
+    /// a [`StaleDatabase`](crate::StaleDatabase) error when another process
+    /// changed the database after this manager loaded it; prefer
+    /// [`update`](Self::update), which applies the change to the current
+    /// state instead.
     pub fn save(&self) -> Result<()> {
-        self.backend.save(&self.tasks)
+        self.backend.save(&self.tasks)?;
+        *self.synced() = self.tasks.clone();
+        Ok(())
     }
 
     /// The local database file path this build would use, ignoring remote
@@ -484,12 +657,20 @@ impl TaskManager {
         }
     }
 
+    /// Whether the database is a file on this machine, so that whatever
+    /// rusk keeps beside it (the editor's drafts) has a directory of the
+    /// user's own to go in rather than a shared temp one.
+    pub fn db_is_local() -> bool {
+        Backend::resolve().is_ok_and(|b| b.local_path().is_some())
+    }
+
     pub fn load_tasks_from_path(path: &Path) -> Result<Vec<Task>> {
         Backend::from_local_path(path.to_path_buf())?.load()
     }
 
     pub fn restore_from_backup(&mut self) -> Result<()> {
         self.tasks = self.backend.restore_from_backup()?;
+        *self.synced() = self.tasks.clone();
         Ok(())
     }
 }
@@ -511,14 +692,34 @@ mod tests {
     }
 
     fn tm_with_tasks(n: u32) -> TaskManager {
-        let dir = std::env::temp_dir()
-            .join("rusk_after_tests")
-            .join(format!("{}-{n}", std::process::id()));
-        let mut tm = TaskManager::new_empty_with_path(dir.join("tasks.json"));
+        // A path of its own: tests run in parallel, and a manager applies
+        // its changes to whatever another writer left in a shared file.
+        let mut tm = TaskManager::new_empty().unwrap();
         for i in 1..=n {
             tm.add_task(vec![format!("task {i}")], None).unwrap();
         }
         tm
+    }
+
+    #[test]
+    fn the_next_free_id_is_free_even_in_a_list_with_repeats() {
+        let with_ids = |ids: &[TaskId]| -> Vec<crate::model::Task> {
+            ids.iter()
+                .map(|&id| crate::model::Task {
+                    id,
+                    text: "t".into(),
+                    date: None,
+                    done: false,
+                    priority: false,
+                    after: Vec::new(),
+                })
+                .collect()
+        };
+        assert_eq!(super::next_free_id(&with_ids(&[])).unwrap(), 1);
+        assert_eq!(super::next_free_id(&with_ids(&[2, 1, 4])).unwrap(), 3);
+        // REVIEW №14: a repeated id or a 0 ended the search on a taken id.
+        assert_eq!(super::next_free_id(&with_ids(&[1, 1, 2])).unwrap(), 3);
+        assert_eq!(super::next_free_id(&with_ids(&[0, 1])).unwrap(), 2);
     }
 
     #[test]

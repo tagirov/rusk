@@ -65,16 +65,17 @@ impl HandlerCLI {
 
         let prompt_plain = "[y/N]: ";
         let prompt_with_space = format!(" {}", prompt_plain);
-        let prompt_width = prompt_with_space.chars().count();
+        let prompt_width = crate::width::width(&prompt_with_space);
         let prompt_painted = format!(" {}", Self::yn_hint());
 
         let available_width_for_text = max_line_width
             .saturating_sub(LEFT_MARGIN)
             .saturating_sub(RIGHT_MARGIN);
 
-        let wrapped_lines = Self::wrap_text_by_words(task_text, available_width_for_text);
+        let wrapped_lines =
+            Self::wrap_text_by_words(&crate::printable::escape(task_text), available_width_for_text);
 
-        let last_line_width = wrapped_lines.last().map_or(0, |l| l.chars().count());
+        let last_line_width = wrapped_lines.last().map_or(0, |l| crate::width::width(l));
         let prompt_fits_on_last_line =
             last_line_width + prompt_width <= available_width_for_text;
 

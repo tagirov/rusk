@@ -2,7 +2,14 @@
 # This is the critical test for the reported issue
 
 . $PSScriptRoot/helpers.ps1
-. /home/alex/.config/powershell/rusk-completions.ps1
+. $PSScriptRoot/../../../completions/rusk.ps1
+
+# Deterministic stub (as in the other shells' tests): the real one runs the
+# installed `rusk` against the user's own database
+function _rusk_get_task_text {
+    param([string]$taskId)
+    return "dummy task text"
+}
 
 $allTestsPassed = $true
 

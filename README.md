@@ -152,6 +152,12 @@ rusk edit 1 --date 2w
 # Relative with leading +: add that offset to the task's current due date (today if it had none)
 rusk edit 1 --date +2w
 
+# Everything after `--` is text, word for word: words that start with a
+# dash (before `--` they are options, and `-h` prints the help), or a text
+# made of numbers only
+rusk edit 1 -- -x means exclude
+rusk edit 1 -- 42
+
 # Delete a task
 rusk del 1
 
@@ -170,7 +176,13 @@ rusk add --date --help
 
 ## Working with Multiple Tasks
 
-Multiple task IDs must be comma-separated (no spaces allowed between IDs)
+Multiple task IDs are one comma-separated list (`1,2,3`; `1, 2, 3` is read the
+same way). Anything that is not an id in the list is an error, and a repeated
+id counts once. For `mark` and `del` a second word after the list is an error
+(`rusk mark 1 2`); for `edit` the first word that is not glued to the list by
+a comma starts the new text (`rusk edit 3 1,000 units` edits task 3 only),
+unless everything after the list is numbers: `rusk edit 1,2 3 -d 2w` changes
+nothing and says so (a text of numbers goes after `--`).
 
 ```bash
 # Mark multiple tasks as done
@@ -235,9 +247,41 @@ rusk sync pull --force # discard local changes in favor of the remote
 
 ## Data Safety & Backup
 #### Automatic Backups
-- Every save operation creates a `.json.backup` file
-- Backups are stored in the same directory as your database
-- Atomic writes prevent data corruption during saves
+- Every save first copies the previous state to a `.backup` sibling
+  (`tasks.json.backup`), as private as the database itself (`backup = false`
+  turns this off)
+- Backups are stored in the same directory as your database — including an
+  ssh database or sync remote, where the copy is made on the other side
+  (`rusk restore` cannot reach it, and says where it is)
+- Every file is replaced atomically: written to a uniquely named temp file,
+  fsynced and renamed into place. A crash, a full disk or a parallel `rusk`
+  leaves the old content or the new one, never a truncated file; the file
+  mode (e.g. `0600`) and a symlinked database path survive the save
+- An empty (zero-byte) database file is never copied over an existing backup
+- A database that cannot be read is never taken for an empty one: no
+  permission, a directory in its place, a symlink whose target is gone,
+  content that is not UTF-8 — the command stops instead of starting from
+  zero tasks and saving that over your data. The same over SSH. Only a file that is not there at all is a database yet to be
+  created, and a file that holds nothing loads as zero tasks with a warning
+  (the formats that write an empty database as an empty file — Markdown,
+  todo.txt, NDJSON — excepted). A UTF-8 BOM in front of the file, as a
+  Windows editor saves it, is not corruption
+
+#### Concurrent Writers
+- Commands running at the same time — two terminals, a cron job, `rusk serve`
+  — all take effect: every change is applied to the database as it is at the
+  moment of the save, never to the copy the command loaded when it started.
+  Saves of a file database take turns on a writer lock, `tasks.json.lock`
+  (an empty file that stays next to the database)
+- A command that changes nothing writes nothing (no backup rotation either)
+- `rusk edit` in the editor saves each task as soon as you press Ctrl+S. If
+  another process changed or deleted that task while the editor was open,
+  nothing is overwritten: the command stops and your text is kept as a
+  draft, offered again by the next `rusk edit <id>`
+- `rusk del` deletes what you confirmed: a task that was changed, or deleted
+  and its id reused, while the prompt was waiting is reported instead
+- Anything else that writes the file (an editor, a sync tool) is noticed as
+  well, but without the lock there is a window of a few milliseconds
 
 #### Manual Restore
 ```bash
@@ -245,10 +289,16 @@ rusk sync pull --force # discard local changes in favor of the remote
 rusk restore
 
 # This will:
-# 1. Validate the backup file
-# 2. Create a safety backup of current database (if valid)
-# 3. Restore tasks from backup
+# 1. Validate the backup file (an empty file, or one that is not a task
+#    list, is refused)
+# 2. Copy the current database, byte for byte, to `.before_restore` — or to
+#    `.before_restore.1`, `.2`, … so an earlier copy is never overwritten
+#    (a SQLite database that opens is copied by SQLite, WAL included)
+# 3. Put the backup in place of the database: atomically and byte for byte
+#    (with `git_backend` as a commit of its own); SQLite inside a transaction
 ```
+`restore` shows when the backup was saved, and warns when it is much older
+than the database (`backup = false`, or the file was edited by hand).
 
 
 ## Aliases
@@ -314,8 +364,8 @@ It provides autocomplete for commands and task text during editing by pressing `
 
 **Features**
 - Command completion: `add`, `edit`, `mark`, `del`, `completions`, etc. and their aliases
-- Task text completion: `rusk edit <id><tab>` appends the task text for that ID. If the text contains shell-special characters  (``| ; & > < ( ) [ ] { } $ " ' \` * ? ~ # @ ! % ^ = + - / : ,``), it is automatically wrapped in single quotes (double quotes if the text has `'`)
-- Flag completion: Autocomplete `--date` (add), `--done`, etc.; `edit` offers help flags only
+- Task text completion: `rusk edit <id><tab>` appends the task text for that ID, quoted so that running the line stores exactly that text: when it contains shell-special characters (``| ; & > < ( ) [ ] { } $ " ' \` * ? ~ # @ ! % ^ = + - / : ,``), line breaks, tabs, runs of spaces or spaces at either end, it is wrapped in single quotes (in nu a raw string `r#'…'#` if the text has `'`); a text that starts with `-` is put after `--`, so it is not read as options. In fish the id completes first and the next `<tab>` inserts the text, escaped by fish itself (see [completions/README.md](completions/README.md#fish))
+- Flag completion: Autocomplete `--date` / `--after` (add, edit after an id), `--done`, etc.
 
 **Windows Support**
 - Git Bash: Works with `bash` completions (uses Unix-style paths)
@@ -359,7 +409,7 @@ In debug mode, the `RUSK_DB` environment variable is ignored, and the database p
 
 ### Database Formats
 
-The format is chosen by the database file extension (JSON by default):
+The format is chosen by the last extension of the database file name (JSON by default; `notes.txt.json` is JSON):
 
 ```bash
 export RUSK_DB="$HOME/tasks/tasks.csv"    # or rusk_db = ~/tasks/tasks.csv in the config
@@ -368,12 +418,22 @@ export RUSK_DB="$HOME/tasks/tasks.csv"    # or rusk_db = ~/tasks/tasks.csv in th
 | Extension | Format | Interop | Feature |
 |---|---|---|---|
 | `.json` (or anything else) | pretty JSON | the default | built-in |
-| `.csv` | RFC 4180, `id,text,date,done,priority` schema | LibreOffice / Excel / Google Sheets | built-in |
+| `.csv` | RFC 4180, `id,text,date,done,priority,after` schema | LibreOffice / Excel / Google Sheets | built-in |
 | `.md` / `.markdown` | GitHub-style task list | GitHub, Obsidian, any editor | `fmt-markdown` |
 | `.txt` | [todo.txt](http://todotxt.org) | todo.sh, Simpletask, … | `fmt-todotxt` |
 | `.ndjson` / `.jsonl` | one JSON task per line | git diffs, `grep`, `jq` | `fmt-ndjson` |
 | `.ics` | iCalendar VTODO | Thunderbird, Nextcloud Tasks, Apple Reminders | `fmt-ics` |
 | `.db` / `.sqlite` / `.sqlite3` | SQLite | concurrent writers, SQL tooling | `backend-sqlite` |
+
+With SQLite, concurrent commands serialize on the database's own write lock:
+each one re-reads the table inside its transaction when another process wrote
+after it loaded, and applies its change to that (see
+[Concurrent Writers](#concurrent-writers)). Reading never changes the file
+(a write-protected database is listed fine); a database of an older rusk is
+brought up to date by the first save. A SQLite file of another program — one
+with tables but no `tasks` table — is refused rather than written to. Deleted
+tasks are overwritten in the file (`secure_delete`), and a save that frees
+much of it compacts it.
 
 All features except `backend-sqlite` (which bundles a C library) are enabled
 by default; distro builds can trim them (`--no-default-features --features …`).
@@ -381,19 +441,47 @@ by default; distro builds can trim them (`--no-default-features --features …`)
 Notes on the text formats:
 
 - **CSV**: multiline task text, commas and quotes are handled; dates are ISO
-  `YYYY-MM-DD`. LibreOffice/Excel edit the file in place; Google Sheets can
-  import it, but edits made in Sheets have to be exported back manually.
+  `YYYY-MM-DD`; the `after` cell takes ids separated by spaces or commas.
+  LibreOffice/Excel edit the file in place; Google Sheets can import it, but
+  edits made in Sheets have to be exported back manually. A row typed in
+  with an empty id cell is a new task; rows of empty cells are skipped.
 - **Markdown**: `- [x] text @2026-07-15 <!-- id:3 -->`, a leading `!` marks
   priority, continuation lines are indented by two spaces. Items added by
   hand without the id comment get the lowest free id on the next run. rusk
   owns the file: headers and prose around the list are dropped on save.
 - **todo.txt**: `x (A) text due:2026-07-15 id:3`; projects/contexts stay in
-  the task text; newlines are stored as a literal `\n`.
+  the task text; newlines are stored as a literal `\n`. A word of the text
+  that would read as metadata — `x`, `(B)` or a date first, a `due:`/`id:`/
+  `after:` tag anywhere — is written with a `\` in front (`\x marks the
+  spot`), so the text comes back as it was.
 - **iCalendar**: one VTODO per task; foreign components (VEVENT, VALARM) are
   ignored and not preserved.
 
+Every format can be edited by hand or by another tool; whatever rusk reads is
+held to the same rules before anything uses it:
+
+- A task needs a text. An item with neither text nor id — an empty `- [ ]`,
+  a todo.txt line of metadata only, a VTODO without SUMMARY — is no task: it
+  is skipped with a warning, and the next save leaves it out. A task that
+  has an id but no text (`{"id": 2, "text": ""}`) keeps its date, flags and
+  dependents and shows as `(no text)`, with a warning, so that `rusk edit 2`
+  or `rusk del 2` can take care of it.
+- Every task has an id of its own. One without an id (or with id 0) gets the
+  lowest free id; one that repeats the id of an earlier task gets a new id,
+  and a warning names it. `rusk list` shows the ids the next save writes.
+- A dependency on a task that does not exist is dropped with a warning — so
+  it can never come to mean the next task that gets that id; for the same
+  reason `after` can only name ids the file already gives (an item added
+  without an id has none until the next save). A dependency on the task
+  itself, or one listed twice, is dropped too.
+- In JSON only `text` is required: any other field may be left out or `null`.
+
+The file itself changes only with the next save, and the `.backup` keeps what
+that save replaced.
+
 Backups and atomic writes work the same in every file format
-(`tasks.csv.backup`); SQLite gets the same `.backup` copy per save.
+(`tasks.csv.backup`); SQLite gets the same `.backup` copy per save, made by
+SQLite itself (so it holds what a WAL holds too).
 
 ### Remote and git-backed Databases
 
@@ -411,13 +499,22 @@ git_backend = true                      # commit every save of a local file data
 ```
 
 - **http(s)** is a thin client: there is no local copy at all, every command
-  reads and writes through the server, so concurrent writers (another
-  machine, the web UI, cron scripts) never diverge. Requires the network and
-  the server to be up; for offline-first use `rusk sync` instead.
+  reads and writes through the server. The list comes with a revision
+  (`ETag`) and is saved back with `If-Match`, so a command never overwrites
+  what another machine, the web UI or a cron script stored in the meantime:
+  it fetches the list again and applies its change to that (both sides need
+  a rusk with this feature; an older server is written unconditionally).
+  Requires the network and the server to be up; for offline-first use
+  `rusk sync` instead.
 - **ssh** reads/writes the remote file over the system `ssh` (keys, agent
-  and `~/.ssh/config` apply); the remote extension picks the format, writes
+  and `~/.ssh/config` apply); the location is `[user@]host:path` as `scp`
+  reads it (`~/` is the remote home directory, IPv6 goes in brackets:
+  `user@[::1]:/srv/tasks.json`); the remote extension picks the format
+  (SQLite is local only), writes
   are atomic (temp + `mv`). Note this loads/saves per command — on flaky
-  links prefer `rusk sync`.
+  links prefer `rusk sync`. There is no lock on the remote side: after an
+  editor or a prompt the file is read again and compared before it is
+  replaced, which leaves a window of one round trip.
 - **git_backend** gives full history (`git log`, `git revert`) beyond the
   single `.backup` copy. An existing enclosing repository is used as-is;
   otherwise a repo is initialized in the database directory with a

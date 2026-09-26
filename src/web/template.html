@@ -37,6 +37,9 @@
   }
 }
 * { box-sizing: border-box; }
+/* The UA rule for [hidden] loses to any id/class rule that sets display
+   (#banner, #daterow); keep the attribute authoritative. */
+[hidden] { display: none !important; }
 html, body { height: 100%; }
 body {
   margin: 0;
@@ -78,6 +81,8 @@ main { max-width: 640px; margin: 0 auto; padding: 4px 8px 0; }
   border-bottom: 1px solid var(--border);
 }
 .task.done .text { opacity: .45; }
+/* A change to this task is under way; taps wait for the re-render. */
+.task.busy { opacity: .55; }
 .status, .editbtn {
   flex: 0 0 44px;
   height: 44px;
@@ -138,6 +143,7 @@ input[type="text"], input[type="date"], textarea {
 }
 .btn.primary { background: var(--rusk-accent); border-color: var(--rusk-accent); color: #14140a; }
 .btn.danger { color: var(--rusk-date-overdue); }
+.btn:disabled { opacity: .5; cursor: default; }
 dialog {
   border: 1px solid var(--border);
   background: var(--card);
@@ -161,6 +167,14 @@ dialog::backdrop { background: rgba(0, 0, 0, .55); }
   color: var(--rusk-priority-marker);
   border-color: var(--rusk-priority-marker);
   font-weight: 700;
+}
+/* Errors of the dialog show inside it: a modal dialog covers the banner. */
+#edit-error {
+  margin: 0 0 10px;
+  color: var(--rusk-date-overdue);
+  font-size: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .editactions { display: flex; gap: 8px; }
 .editactions .spacer { flex: 1; }
@@ -202,7 +216,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .55); }
     <div id="mainrow">
       <button type="button" class="btn" id="date-toggle" aria-label="Toggle due date">🗓</button>
       <input type="text" id="task-input" placeholder="New task…" aria-label="New task">
-      <button type="submit" class="btn primary" aria-label="Add task">+</button>
+      <button type="submit" class="btn primary" id="add-submit" aria-label="Add task">+</button>
     </div>
   </div>
 </form>
@@ -216,6 +230,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .55); }
       <input type="checkbox" id="edit-prio">
       <label for="edit-prio">priority</label>
     </div>
+    <p id="edit-error" role="alert" hidden></p>
     <div class="editactions">
       <button type="button" class="btn danger" id="edit-delete">Delete</button>
       <span class="spacer"></span>
@@ -225,9 +240,9 @@ dialog::backdrop { background: rgba(0, 0, 0, .55); }
   </form>
 </dialog>
 
-<div id="banner" hidden>
+<div id="banner" role="alert" hidden>
   <span class="msg"></span>
-  <button type="button" id="retry">Retry</button>
+  <button type="button" id="reload">Reload</button>
 </div>
 
 <script>
@@ -239,9 +254,26 @@ const RUSK = {
 };
 
 const live = RUSK.mode === "live";
-const state = { tasks: Array.isArray(RUSK.tasks) ? RUSK.tasks : [] };
 const $ = (id) => document.getElementById(id);
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+// A task as the API sends it. Anything else (a proxy's error page, a captive
+// portal answering for the server) must not get as far as render().
+function isTask(t) {
+  return t !== null && typeof t === "object"
+    && Number.isInteger(t.id) && typeof t.text === "string"
+    && typeof t.done === "boolean" && typeof t.priority === "boolean"
+    && (t.date == null || typeof t.date === "string");
+}
+
+function isTaskList(v) {
+  return Array.isArray(v) && v.every(isTask);
+}
+
+const state = { tasks: isTaskList(RUSK.tasks) ? RUSK.tasks : [] };
+// Ids of tasks with a change under way: their rows show a state that is
+// about to be replaced, so further taps on them wait for the re-render.
+const busy = new Set();
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -255,24 +287,39 @@ function todayIso() {
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 }
 
+// "YYYY-MM-DD" as the API writes it; years outside 0..9999 come signed
+// ("+12345-01-01", "-0001-05-20").
+function dateParts(iso) {
+  const m = /^([+-]?\d+)-(\d\d)-(\d\d)$/.exec(iso);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
 function fmtDate(iso) {
-  const [y, m, d] = iso.split("-").map(Number);
-  const now = new Date();
-  return d + " " + MONTHS[m - 1] + (y === now.getFullYear() ? "" : " " + y);
+  const p = dateParts(iso);
+  if (!p) return iso;
+  const [y, m, d] = p;
+  return d + " " + (MONTHS[m - 1] || m) + (y === new Date().getFullYear() ? "" : " " + y);
+}
+
+// Negative, zero or positive, by value: compared as strings, a signed year
+// sorts on its sign. NaN (neither before, nor after, nor equal) when either
+// is not a date.
+function cmpDate(a, b) {
+  const pa = dateParts(a), pb = dateParts(b);
+  if (!pa || !pb) return NaN;
+  return pa[0] - pb[0] || pa[1] - pb[1] || pa[2] - pb[2];
 }
 
 function dateClass(t) {
-  if (!t.date) return "";
-  const today = todayIso();
   // Mirrors the CLI rule: overdue only when not done; done tasks keep the
   // regular date color.
-  if (t.date < today && !t.done) return "overdue";
-  if (t.date === today && !t.done) return "today";
-  return "";
+  if (!t.date || t.done) return "";
+  const c = cmpDate(t.date, todayIso());
+  return c < 0 ? "overdue" : (c === 0 ? "today" : "");
 }
 
 function row(t) {
-  const r = el("div", "task" + (t.done ? " done" : ""));
+  const r = el("div", "task" + (t.done ? " done" : "") + (busy.has(t.id) ? " busy" : ""));
   r.dataset.id = t.id;
   const glyph = t.done ? "✔" : (t.priority ? "p" : "•");
   const stCls = "status" + (t.done ? " st-done" : (t.priority ? " st-prio" : ""));
@@ -304,69 +351,456 @@ function render() {
   $("count").textContent = state.tasks.length ? open + " open · " + done + " done" : "";
 }
 
-function showBanner(msg) {
+function markRow(id, on) {
+  const r = $("list").querySelector('.task[data-id="' + id + '"]');
+  if (r) r.classList.toggle("busy", on);
+}
+
+/* ---------- talking to the server ---------- */
+
+// A failed request, in words for the user. `status` is the HTTP status the
+// server turned the request down with; 0 when there was no usable answer at
+// all (no connection, or something else answering in the server's place).
+class ApiError extends Error {
+  constructor(message, status) {
+    super(message);
+    this.status = status || 0;
+  }
+}
+
+function isOffline(e) {
+  return e instanceof ApiError && e.status === 0;
+}
+
+// An exception that is not an ApiError is a bug of this page, not news from
+// the server; it is labelled as such instead of posing as one.
+function explain(e) {
+  if (e instanceof ApiError) return e.message;
+  return "Unexpected error in the page: " + ((e && e.message) || e);
+}
+
+// Counts the banners shown, see mutate().
+let bannerSeq = 0;
+// The banner up now reports a 401: its button reloads the page (the sign-in
+// form) rather than the list. It goes by what the banner says, not by the
+// last answer seen - under "Cannot reach the server" a page reload would
+// only lose what is typed.
+let bannerSignIn = false;
+
+// `kind.offline`: only a failed connection turns the dot red; a request the
+// server turned down came through a working one.
+function showBanner(msg, kind = {}) {
+  bannerSeq++;
+  bannerSignIn = !!kind.signIn;
   $("banner").hidden = false;
   $("banner").querySelector(".msg").textContent = msg;
-  $("dot").classList.add("off");
+  $("dot").classList.toggle("off", !!kind.offline);
 }
 
 function hideBanner() {
+  bannerSignIn = false;
   $("banner").hidden = true;
   $("dot").classList.remove("off");
 }
 
-async function api(path, opts = {}) {
-  const res = await fetch(path, Object.assign({ headers: { "Content-Type": "application/json" } }, opts));
-  if (res.status === 401) { location.reload(); throw new Error("Unauthorized"); }
-  if (!res.ok) {
-    let msg = "HTTP " + res.status;
-    try { msg = (await res.json()).error || msg; } catch (e) {}
-    throw new Error(msg);
+const STALE = "This task was changed elsewhere. The list is up to date now - please repeat your change.";
+
+// `e.reread`: the 412 came, but the look at the current list failed in turn.
+function bannerFor(e, prefix) {
+  let msg = explain(e);
+  if (e.status === 412) {
+    msg = e.reread
+      ? "This task was changed elsewhere, and the current list could not be loaded (" + explain(e.reread) + "). Reload, then repeat your change."
+      : STALE;
   }
-  return res.status === 204 ? null : res.json();
+  showBanner((prefix || "") + msg, { offline: isOffline(e), signIn: e.status === 401 });
 }
 
+// Text that a reload of the page would drop.
+function hasUnsavedText() {
+  return $("task-input").value.trim() !== "" || $("editor").open;
+}
+
+// At most one automatic reload in 10 s: where the page is served without
+// the token but the API is not (a proxy in between), reloading would go
+// round in circles.
+function mayAutoReload() {
+  try {
+    const last = Number(sessionStorage.getItem("rusk-auto-reload")) || 0;
+    if (Date.now() - last < 10000) return false;
+    sessionStorage.setItem("rusk-auto-reload", String(Date.now()));
+  } catch (e) {}
+  return true;
+}
+
+// Revision of a task as this page was served it: FNV-1a 64 of its compact
+// JSON, the very tag the server computes (`revision::task_revision`; the
+// objects come from the server's own JSON, so re-stringifying them gives
+// its bytes back). A change to a task sends it as If-Match: ids are reused,
+// so the row that was tapped may name a different task by now, and a form
+// filled a while ago may be about to overwrite an edit made elsewhere.
+function taskTag(t) {
+  let h = 0xcbf29ce484222325n;
+  for (const b of new TextEncoder().encode(JSON.stringify(t))) {
+    h = ((h ^ BigInt(b)) * 0x100000001b3n) & 0xffffffffffffffffn;
+  }
+  return h.toString(16).padStart(16, "0");
+}
+
+// How long the server gets to answer: longer than it may itself wait for
+// the database (10 s for the writer lock); the CLI gives curl the same.
+// (`RUSK.timeoutMs` is for tests.)
+const timeoutMs = () => RUSK.timeoutMs || 30000;
+const TIMED_OUT = "The server did not answer in time. If you were changing something, it may still "
+  + "have gone through - check the list before repeating it.";
+
+// One request. `opts.expect` says what the answer has to look like: a 200
+// from something else than rusk (a captive portal) is not a success.
+async function api(path, opts = {}) {
+  const headers = { "Content-Type": "application/json" };
+  if (opts.ifMatch) headers["If-Match"] = '"' + opts.ifMatch + '"';
+  // Without a time limit one request that is never answered (the server
+  // machine asleep, a dead connection) would hold up every change queued
+  // behind it, without a word. The limit does not depend on the request
+  // letting go when it is aborted.
+  const ctl = new AbortController();
+  let timer;
+  const timeUp = new Promise((resolve, reject) => {
+    timer = setTimeout(() => {
+      // In this order: aborting rejects the request too, and the race is
+      // to be won by the reason, not by the browser's "aborted".
+      reject(new ApiError(TIMED_OUT));
+      ctl.abort();
+    }, timeoutMs());
+  });
+  const inTime = (promise) => {
+    promise.catch(() => {});
+    return Promise.race([promise, timeUp]);
+  };
+  try {
+    let res;
+    try {
+      res = await inTime(fetch(path, { method: opts.method || "GET", body: opts.body, headers: headers, signal: ctl.signal }));
+    } catch (e) {
+      // The browser's own wording ("Failed to fetch", "Load failed") says
+      // nothing to the user.
+      throw e instanceof ApiError ? e : new ApiError("Cannot reach the server");
+    }
+    if (res.status === 401) {
+      // The token changed or the cookie is gone. A reload shows the sign-in
+      // form - and drops what is typed, so with unsaved text on the page
+      // the moment is the user's to choose.
+      if (!hasUnsavedText() && mayAutoReload()) location.reload();
+      throw new ApiError("Signed out: the access token is not accepted any more. Sign in again in "
+        + "another tab and repeat your change - or reload this page to sign in here, which drops "
+        + "what you typed.", 401);
+    }
+    if (!res.ok) {
+      let msg = "The server answered HTTP " + res.status;
+      try {
+        const body = await inTime(res.json());
+        if (body && typeof body.error === "string" && body.error) msg = body.error;
+      } catch (e) {}
+      throw new ApiError(msg, res.status);
+    }
+    let value = null;
+    if (res.status !== 204) {
+      try {
+        value = await inTime(res.json());
+      } catch (e) {
+        throw e instanceof ApiError ? e : new ApiError("Bad response from the server");
+      }
+    }
+    if (opts.expect && !opts.expect(value)) throw new ApiError("Bad response from the server");
+    return value;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const isNothing = (v) => v === null;
+
 async function refresh() {
-  state.tasks = await api("/api/tasks");
+  // Checked before it replaces the list on screen.
+  state.tasks = await api("/api/tasks", { expect: isTaskList });
   render();
 }
 
-// Non-optimistic: apply the change on the server, then re-render from its
-// state. Removes all rollback logic; latency on LAN is negligible.
-async function mutate(fn) {
-  try {
-    await fn();
-    await refresh();
-    hideBanner();
-  } catch (e) {
-    showBanner(e.message || "Connection lost");
+// The one way this page changes anything. Non-optimistic: the change is
+// applied on the server, then the list is re-read and rendered from its
+// state, so there is nothing to roll back; latency on a LAN is negligible.
+// Changes run one after another, in the order they were made.
+//
+//   run        sends the request(s) of the change
+//   opts.id    the task it is about: its row is busy meanwhile
+//   opts.done  called once the server has taken the change (close the
+//              dialog, clear the input) - not before, so a failure never
+//              costs what was typed
+//   opts.fail  shows the error where the user is looking; the banner by
+//              default
+//
+// Resolves to whether the change went through; never rejects.
+let pending = Promise.resolve();
+
+function mutate(run, opts = {}) {
+  const id = opts.id;
+  // The banner the user was looking at when making this change, if any.
+  const seen = bannerSeq;
+  if (id != null) {
+    busy.add(id);
+    markRow(id, true);
   }
+  const outcome = pending.then(async () => {
+    let applied = false;
+    try {
+      await run();
+      applied = true;
+      if (opts.done) opts.done();
+      await refresh();
+      // Success clears the banner - but only the one that was up when this
+      // change was made. A failure reported since (of a change queued
+      // before this one) is news the user has not seen, and this success
+      // says nothing about it.
+      if (bannerSeq === seen) hideBanner();
+    } catch (e) {
+      if (applied) {
+        // The change is on the server, only the look at the result failed.
+        // Said so, or the user would make the change once more.
+        bannerFor(e, "Saved, but the list could not be re-read: ");
+      } else {
+        if (e.status === 412) {
+          // What the page showed was out of date and nothing was changed:
+          // show the current list, whoever reports the refusal.
+          try { await refresh(); } catch (e2) { e.reread = e2; }
+        }
+        if (opts.fail) opts.fail(e); else bannerFor(e);
+      }
+    } finally {
+      if (id != null) {
+        busy.delete(id);
+        markRow(id, false);
+      }
+    }
+    return applied;
+  }).catch((e) => {
+    // A bug in a callback above must not stop the queue for good.
+    console.error(e);
+    return false;
+  });
+  pending = outcome;
+  return outcome;
+}
+
+// Re-reads the list: a change that changes nothing.
+function reload() {
+  return mutate(async () => {});
 }
 
 function findTask(id) {
   return state.tasks.find((t) => t.id === id);
 }
 
-/* ---------- live wiring ---------- */
+/* ---------- the edit dialog ---------- */
 
-let editId = null;
-let deleteArmedAt = 0;
+// Which task the dialog was filled from, and what it showed then.
+const edit = {
+  // Counts openings and closings: the answer to a request made from one
+  // dialog must not touch the next one.
+  session: 0,
+  id: null,
+  // The task the form was filled from, and its revision: the condition of
+  // Save and Delete. A refresh of the list while the dialog is open does
+  // not move them - the form would still hold the older values.
+  task: null,
+  tag: null,
+  // What the form controls made of that task, see asShown().
+  shown: null,
+  // The clear button was pressed: for a date the date input cannot show
+  // there is no other way to say "remove it".
+  dateCleared: false,
+  saving: false,
+  // A refusal has just been reported, see editorConflict().
+  cooling: false,
+  // The task was deleted elsewhere: nothing left to save to.
+  gone: false,
+};
 
-function openEditor(id) {
-  const t = findTask(id);
-  if (!t) return;
-  editId = id;
-  $("edit-text").value = t.text;
-  $("edit-date").value = t.date || "";
-  $("edit-prio").checked = t.priority;
-  disarmDelete();
-  $("editor").showModal();
+const FORM = {
+  text: { get: () => $("edit-text").value, set: (v) => { $("edit-text").value = v; } },
+  date: { get: () => $("edit-date").value, set: (v) => { $("edit-date").value = v; } },
+  priority: { get: () => $("edit-prio").checked, set: (v) => { $("edit-prio").checked = v; } },
+};
+
+// What the form controls make of a task: a textarea turns CRLF into LF, a
+// date input shows nothing for a date it cannot represent ("+12345-01-01").
+// The form is compared with this, not with the task, so a field that was
+// only looked at is never sent back changed.
+function asShown(t) {
+  const text = document.createElement("textarea");
+  text.value = t.text;
+  const date = document.createElement("input");
+  date.type = "date";
+  date.value = t.date || "";
+  return { text: text.value, date: date.value, priority: t.priority };
+}
+
+// Whether the user has changed the field since the form was filled.
+function touched(k) {
+  return FORM[k].get() !== edit.shown[k] || (k === "date" && edit.dateCleared);
+}
+
+// Fills the form from `t`. With `keepTyped` (the task was changed elsewhere
+// while the dialog was open) the fields the user has changed stay as they
+// are, and only the rest follows the task.
+function fillEditor(t, keepTyped) {
+  const shown = asShown(t);
+  for (const k in FORM) {
+    if (!(keepTyped && touched(k))) FORM[k].set(shown[k]);
+  }
+  edit.task = t;
+  edit.tag = taskTag(t);
+  edit.shown = shown;
+}
+
+// The PATCH body: only what the user changed. Anything else may have been
+// changed elsewhere since, and must not be reset to what this form shows.
+function changes() {
+  const patch = {};
+  if (touched("text")) patch.text = FORM.text.get();
+  if (touched("date")) {
+    const date = FORM.date.get() || null;
+    if (date !== (edit.task.date || null)) patch.date = date;
+  }
+  if (touched("priority")) patch.priority = FORM.priority.get();
+  return patch;
+}
+
+function editorError(msg) {
+  $("edit-error").textContent = msg;
+  $("edit-error").hidden = !msg;
+}
+
+// While a Save or Delete is under way the form is locked, Cancel included
+// (and Esc, see the `cancel` listener): closing the dialog now would lose
+// what was typed if the request then fails. api() answers within timeoutMs().
+function syncEditorControls() {
+  $("edit-text").readOnly = edit.saving;
+  for (const id of ["edit-date", "edit-date-clear", "edit-prio", "edit-cancel"]) $(id).disabled = edit.saving;
+  for (const id of ["edit-save", "edit-delete"]) $(id).disabled = edit.saving || edit.cooling || edit.gone;
+}
+
+// Delete asks twice; the second tap has 3 s.
+let disarmTimer = null;
+
+function armDelete() {
+  $("edit-delete").textContent = "Tap again to delete";
+  disarmTimer = setTimeout(disarmDelete, 3000);
 }
 
 function disarmDelete() {
-  deleteArmedAt = 0;
+  clearTimeout(disarmTimer);
+  disarmTimer = null;
   $("edit-delete").textContent = "Delete";
 }
+
+function openEditor(id) {
+  const t = findTask(id);
+  // An open dialog is never filled anew over what is typed in it (the list
+  // behind a modal dialog is inert anyway).
+  if (!t || busy.has(id) || $("editor").open) return;
+  edit.session++;
+  edit.id = id;
+  edit.dateCleared = false;
+  edit.saving = false;
+  edit.cooling = false;
+  edit.gone = false;
+  fillEditor(t, false);
+  editorError("");
+  disarmDelete();
+  syncEditorControls();
+  $("editor").showModal();
+}
+
+function closeEditor() {
+  $("editor").close();
+}
+
+function clip(text) {
+  const line = text.trim().replace(/\s+/g, " ");
+  return line.length > 80 ? line.slice(0, 80) + "…" : line;
+}
+
+// For the conflict note: what is different about the task now. Its text
+// above all - ids are reused, so this may be another task altogether.
+function whatChanged(was, now) {
+  const parts = [];
+  if (now.text !== was.text) parts.push('text: "' + clip(now.text) + '"');
+  if ((now.date || null) !== (was.date || null)) parts.push(now.date ? "date: " + fmtDate(now.date) : "date removed");
+  if (now.priority !== was.priority) parts.push(now.priority ? "priority set" : "priority removed");
+  if (now.done !== was.done) parts.push(now.done ? "marked done" : "marked not done");
+  return parts.join("; ") || "in details this form does not show";
+}
+
+// Save or Delete was refused (412): the task is no longer what the form was
+// filled from. The list has been re-read by now. What was typed stays; the
+// form moves on to the task as it is, so that repeating the action is a
+// decision made in view of the other change, not an accident.
+function editorConflict(e) {
+  disarmDelete();
+  if (e.reread) {
+    // Nothing to compare with: the form stays on the revision it has, and
+    // the next Save asks again.
+    editorError("This task was changed elsewhere, but the current list could not be loaded ("
+      + explain(e.reread) + "). Nothing was saved and what you typed is still here - try again.");
+    return;
+  }
+  const now = findTask(edit.id);
+  if (!now) {
+    edit.gone = true;
+    syncEditorControls();
+    editorError("This task was deleted elsewhere. What you typed is still here: copy what you need, then close.");
+    return;
+  }
+  const what = whatChanged(edit.task, now);
+  fillEditor(now, true);
+  editorError("This task was changed elsewhere (" + what + "). What you typed was kept: "
+    + "Save or Delete again to apply it to the task as it is now, or Cancel.");
+  // Time to see the note: the rest of a burst of taps that was under way
+  // must not land on Save or Delete as they come back.
+  const session = edit.session;
+  edit.cooling = true;
+  syncEditorControls();
+  setTimeout(() => {
+    if (session !== edit.session) return;
+    edit.cooling = false;
+    syncEditorControls();
+  }, 1500);
+}
+
+// Save and Delete. The dialog stays open, with what was typed, until the
+// server has taken the change; a refusal or a failure shows inside it (the
+// banner is covered by a modal dialog).
+function submitFromEditor(run) {
+  const session = edit.session;
+  edit.saving = true;
+  editorError("");
+  syncEditorControls();
+  mutate(run, {
+    id: edit.id,
+    done: () => { if (session === edit.session) closeEditor(); },
+    fail: (e) => {
+      // Closed by the user in the meantime: the banner is all there is.
+      if (session !== edit.session) { bannerFor(e); return; }
+      if (e.status === 412) editorConflict(e); else editorError(explain(e));
+    },
+  }).then(() => {
+    if (session !== edit.session) return;
+    edit.saving = false;
+    syncEditorControls();
+  });
+}
+
+/* ---------- live wiring ---------- */
 
 function initLive() {
   $("addbar").hidden = false;
@@ -378,28 +812,46 @@ function initLive() {
     const id = Number(r.dataset.id);
     if (e.target.closest(".status")) {
       const t = findTask(id);
-      if (t) mutate(() => api("/api/tasks/" + id, { method: "PATCH", body: JSON.stringify({ done: !t.done }) }));
+      if (!t || busy.has(id)) return;
+      // What the row shows now decides both the change and its condition.
+      const tag = taskTag(t), body = JSON.stringify({ done: !t.done });
+      mutate(() => api("/api/tasks/" + id, { method: "PATCH", ifMatch: tag, body: body, expect: isTask }), { id: id });
     } else if (e.target.closest(".editbtn")) {
       openEditor(id);
     }
   });
 
+  // One POST at a time: on a slow connection every further Enter would add
+  // the task once more.
+  let adding = false;
   $("addbar").addEventListener("submit", (e) => {
     e.preventDefault();
     const text = $("task-input").value.trim();
-    if (!text) return;
+    if (!text || adding) return;
     const date = $("add-date").value || null;
-    mutate(async () => {
-      await api("/api/tasks", { method: "POST", body: JSON.stringify({ text: text, date: date }) });
-      $("task-input").value = "";
-      $("add-date").value = "";
-      $("daterow").hidden = true;
+    adding = true;
+    $("add-submit").disabled = true;
+    mutate(() => api("/api/tasks", { method: "POST", body: JSON.stringify({ text: text, date: date }), expect: isTask }), {
+      done: () => {
+        // Only what was sent; anything typed or picked since is for the
+        // next task.
+        if ($("task-input").value.trim() === text) $("task-input").value = "";
+        if (($("add-date").value || null) === date) {
+          $("add-date").value = "";
+          $("daterow").hidden = true;
+        }
+      },
+    }).then(() => {
+      adding = false;
+      $("add-submit").disabled = false;
     });
   });
 
   $("date-toggle").addEventListener("click", () => {
     $("daterow").hidden = !$("daterow").hidden;
-    if (!$("daterow").hidden) $("add-date").focus();
+    // A date in a row that is not shown would go out with the next task
+    // unseen.
+    if ($("daterow").hidden) $("add-date").value = ""; else $("add-date").focus();
   });
   $("add-date-clear").addEventListener("click", () => {
     $("add-date").value = "";
@@ -408,39 +860,50 @@ function initLive() {
 
   $("edit-form").addEventListener("submit", (e) => {
     e.preventDefault();
-    const id = editId;
-    const text = $("edit-text").value;
-    if (!text.trim()) { showBanner("Task text cannot be empty"); return; }
-    const patch = {
-      text: text,
-      date: $("edit-date").value || null,
-      priority: $("edit-prio").checked,
-    };
-    $("editor").close();
-    mutate(() => api("/api/tasks/" + id, { method: "PATCH", body: JSON.stringify(patch) }));
+    if (edit.saving || edit.cooling || edit.gone) return;
+    const patch = changes();
+    if ("text" in patch && !patch.text.trim()) { editorError("Task text cannot be empty"); return; }
+    // Nothing to send, nothing to write.
+    if (Object.keys(patch).length === 0) { closeEditor(); return; }
+    const id = edit.id, tag = edit.tag;
+    submitFromEditor(() => api("/api/tasks/" + id, { method: "PATCH", ifMatch: tag, body: JSON.stringify(patch), expect: isTask }));
   });
-  $("edit-cancel").addEventListener("click", () => $("editor").close());
-  $("edit-date-clear").addEventListener("click", () => { $("edit-date").value = ""; });
+  $("edit-cancel").addEventListener("click", closeEditor);
+  $("edit-date").addEventListener("input", () => { edit.dateCleared = false; });
+  $("edit-date-clear").addEventListener("click", () => {
+    $("edit-date").value = "";
+    // Only a date that is there can be cleared: on a task without one this
+    // must not count as a change (and later remove a date set elsewhere).
+    edit.dateCleared = edit.task.date != null;
+  });
   $("edit-delete").addEventListener("click", () => {
-    const now = Date.now();
-    if (now - deleteArmedAt < 3000) {
-      const id = editId;
-      $("editor").close();
-      mutate(() => api("/api/tasks/" + id, { method: "DELETE" }));
-    } else {
-      deleteArmedAt = now;
-      $("edit-delete").textContent = "Tap again to delete";
-      setTimeout(disarmDelete, 3000);
-    }
+    if (edit.saving || edit.cooling || edit.gone) return;
+    if (!disarmTimer) { armDelete(); return; }
+    disarmDelete();
+    const id = edit.id, tag = edit.tag;
+    submitFromEditor(() => api("/api/tasks/" + id, { method: "DELETE", ifMatch: tag, expect: isNothing }));
+  });
+  // Esc (and the back gesture) while a Save or Delete is under way: see
+  // syncEditorControls().
+  $("editor").addEventListener("cancel", (e) => {
+    if (edit.saving) e.preventDefault();
+  });
+  // However it was closed (Save, Cancel, Esc): answers still on their way
+  // belong to a dialog that is gone.
+  $("editor").addEventListener("close", () => {
+    edit.session++;
+    disarmDelete();
   });
 
-  $("retry").addEventListener("click", () => mutate(async () => {}));
+  $("reload").addEventListener("click", () => {
+    if (bannerSignIn) location.reload(); else reload();
+  });
 
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) mutate(async () => {});
+    if (!document.hidden) reload();
   });
 
-  refresh().catch((e) => showBanner(e.message || "Connection lost"));
+  reload();
 }
 
 function initStatic() {

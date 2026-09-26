@@ -2,7 +2,11 @@
 //!
 //! The server holds no task state: every request re-reads the database file,
 //! so CLI and web edits always see each other (the atomic writes in
-//! `TaskManager::save` guarantee a reader never observes partial data).
+//! `TaskManager::save` guarantee a reader never observes partial data), and
+//! every change goes through `TaskManager::update`, so a request and a CLI
+//! command saving at the same moment both take effect. Clients that send
+//! back the `ETag` of the list or of a task as `If-Match` are told (412)
+//! when what they are changing is no longer what they have seen.
 //! Auth is a token from the config, entered once in a login form and kept in
 //! an HttpOnly cookie; `Authorization: Bearer` works for scripting.
 
@@ -62,7 +66,12 @@ impl Reply {
             status: res.status,
             content_type: "application/json; charset=utf-8",
             body: res.body,
-            headers: Vec::new(),
+            // Quoted, as an entity tag has to be.
+            headers: res
+                .etag
+                .map(|etag| ("ETag".to_string(), format!("\"{etag}\"")))
+                .into_iter()
+                .collect(),
         }
     }
 
@@ -201,7 +210,7 @@ fn route(request: &mut Request, opts: &ServeOptions) -> Reply {
         if method == Method::Post && path == "/auth" {
             let body = match read_body(request) {
                 Ok(b) => b,
-                Err(e) => return Reply::json_error(400, &e.to_string()),
+                Err(e) => return Reply::json_error(400, &format!("{e:#}")),
             };
             return match form_value(&body, "token") {
                 Some(t) if token_eq(&t, token) => {
@@ -231,30 +240,45 @@ fn route(request: &mut Request, opts: &ServeOptions) -> Reply {
         return Reply::json_error(415, "Content-Type must be application/json");
     }
 
+    let if_match = header_value(request, "If-Match").map(str::to_string);
+
     match (method, path) {
         (Method::Get, "/") => match open_tm().and_then(|tm| super::render_live_page(tm.tasks())) {
             Ok(html) => Reply::html(200, html),
-            Err(e) => Reply::json_error(500, &e.to_string()),
+            Err(e) => Reply::json_error(500, &format!("{e:#}")),
         },
         (Method::Get, "/api/tasks") => match open_tm() {
             Ok(tm) => Reply::from_api(api::list_tasks(&tm)),
-            Err(e) => Reply::json_error(500, &e.to_string()),
+            Err(e) => Reply::json_error(500, &format!("{e:#}")),
         },
-        (Method::Post, "/api/tasks") => with_body_and_tm(request, api::create_task),
-        (Method::Put, "/api/tasks") => with_body_and_tm(request, api::replace_tasks),
+        (Method::Post, "/api/tasks") => with_body_and_tm(request, |tm, body| {
+            api::create_task(tm, body, if_match.as_deref())
+        }),
+        (Method::Put, "/api/tasks") => with_body_and_tm(request, |tm, body| {
+            api::replace_tasks(tm, body, if_match.as_deref())
+        }),
         (Method::Delete, "/api/tasks/done") => match open_tm() {
-            Ok(mut tm) => Reply::from_api(api::delete_done(&mut tm)),
-            Err(e) => Reply::json_error(500, &e.to_string()),
+            Ok(mut tm) => Reply::from_api(api::delete_done(&mut tm, if_match.as_deref())),
+            Err(e) => Reply::json_error(500, &format!("{e:#}")),
         },
+        (Method::Get, p) if task_id_from_path(p).is_some() => {
+            let id = task_id_from_path(p).unwrap();
+            match open_tm() {
+                Ok(tm) => Reply::from_api(api::get_task(&tm, id)),
+                Err(e) => Reply::json_error(500, &format!("{e:#}")),
+            }
+        }
         (Method::Patch, p) if task_id_from_path(p).is_some() => {
             let id = task_id_from_path(p).unwrap();
-            with_body_and_tm(request, move |tm, body| api::update_task(tm, id, body))
+            with_body_and_tm(request, |tm, body| {
+                api::update_task(tm, id, body, if_match.as_deref())
+            })
         }
         (Method::Delete, p) if task_id_from_path(p).is_some() => {
             let id = task_id_from_path(p).unwrap();
             match open_tm() {
-                Ok(mut tm) => Reply::from_api(api::delete_task(&mut tm, id)),
-                Err(e) => Reply::json_error(500, &e.to_string()),
+                Ok(mut tm) => Reply::from_api(api::delete_task(&mut tm, id, if_match.as_deref())),
+                Err(e) => Reply::json_error(500, &format!("{e:#}")),
             }
         }
         (_, p) if p == "/api/tasks" || p == "/api/tasks/done" || task_id_from_path(p).is_some() => {
@@ -271,11 +295,11 @@ fn with_body_and_tm(
 ) -> Reply {
     let body = match read_body(request) {
         Ok(b) => b,
-        Err(e) => return Reply::json_error(400, &e.to_string()),
+        Err(e) => return Reply::json_error(400, &format!("{e:#}")),
     };
     match open_tm() {
         Ok(mut tm) => Reply::from_api(handler(&mut tm, &body)),
-        Err(e) => Reply::json_error(500, &e.to_string()),
+        Err(e) => Reply::json_error(500, &format!("{e:#}")),
     }
 }
 
@@ -324,7 +348,7 @@ pub fn run(opts: ServeOptions) -> Result<()> {
         "Database: {}",
         crate::backend::Backend::resolve()
             .map(|b| b.describe())
-            .unwrap_or_else(|e| format!("unavailable ({e})"))
+            .unwrap_or_else(|e| format!("unavailable ({e:#})"))
     );
     println!(
         "Auth: {}",

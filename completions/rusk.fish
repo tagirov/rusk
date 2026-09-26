@@ -12,64 +12,6 @@
 #      Completions will be automatically loaded by Fish shell
 
 # ============================================================================
-# Tab Completion Wrapper (removes backslash escaping for rusk edit)
-# ============================================================================
-
-# Custom Tab handler: normalize fish escapes after completion, then quote task text
-# with single quotes when it contains shell metacharacters (spaces alone do not trigger quoting).
-function __rusk_complete_and_unescape
-    set -l cmd_before (commandline)
-    commandline -f complete
-    set -l cmd_after (commandline)
-
-    if test "$cmd_before" = "$cmd_after"
-        return
-    end
-
-    # This also matches commands prefixed by env vars (e.g. RUSK_DB=... rusk edit 7)
-    if not string match -qr 'rusk\s+(e|edit)\s+\d+' -- "$cmd_after"
-        return
-    end
-
-    # Best-effort normalization: unescape fish escapes and always collapse `\ ` to plain space.
-    set -l normalized (string unescape -- "$cmd_after")
-    if test $status -ne 0 -o -z "$normalized"
-        set normalized "$cmd_after"
-    end
-    set normalized (string replace -a '\ ' ' ' -- "$normalized")
-
-    # Split prefix (through task id) and trailing text; quote trailing part if needed (not for flags).
-    set -l match_result (string match -r '(.*\brusk\s+(e|edit)\s+\d+)\s+(.*)' -- "$normalized")
-    if test (count $match_result) -ge 4
-        set -l prefix "$match_result[2] "
-        set -l text_after_id $match_result[4]
-        set text_after_id (string replace -a '\ ' ' ' -- "$text_after_id")
-
-        if not string match -qr '^-' -- "$text_after_id"
-            set text_after_id (string replace -a '\\"' '"' -- "$text_after_id")
-            set text_after_id (string replace -a "\\'" "'" -- "$text_after_id")
-            if string match -qr '^".*"$' -- "$text_after_id"
-                set text_after_id (string replace -r '^"(.*)"$' '$1' -- "$text_after_id")
-            else
-                set -l fc (string sub -s 1 -l 1 -- "$text_after_id")
-                set -l lc (string sub -s -1 -l 1 -- "$text_after_id")
-                if test "$fc" = "'" -a "$lc" = "'"
-                    set text_after_id (string sub -s 2 -e -2 -- "$text_after_id")
-                end
-            end
-            set text_after_id (string trim -- "$text_after_id")
-            set -l quoted (__rusk_quote_text "$text_after_id" | string collect | string trim)
-            set normalized "$prefix$quoted"
-        end
-    end
-
-    commandline -r -- "$normalized"
-end
-
-# Bind Tab to our custom function (only in rusk context, falls back to default otherwise)
-bind \t __rusk_complete_and_unescape
-
-# ============================================================================
 # Utility Functions
 # ============================================================================
 
@@ -81,27 +23,6 @@ end
 # Get command line arguments
 function __rusk_get_cmdline
     commandline -opc
-end
-
-# Get command line arguments including current word under cursor.
-# Fish's `commandline -opc` excludes the current token, which breaks cases like:
-#   rusk edit 22<tab>
-function __rusk_get_cmdline_with_current
-    set -l cmdline (__rusk_get_cmdline)
-    set -l current_word (__rusk_get_current_word)
-    if test -n "$current_word"
-        if test (count $cmdline) -eq 0
-            set -a cmdline "$current_word"
-        else
-            set -l last_token $cmdline[-1]
-            if test "$last_token" != "$current_word"
-                set -a cmdline "$current_word"
-            end
-        end
-    end
-    for arg in $cmdline
-        echo $arg
-    end
 end
 
 # Get current word being typed
@@ -161,51 +82,19 @@ function __rusk_get_task_ids
     end
 end
 
-# Get task text by ID (supports multi-line tasks via rusk list --for-completion)
-function __rusk_get_task_text
-    set -l task_id $argv[1]
+# The text of task $argv[1] from `rusk list --for-completion-lines`, printed as it
+# is (a trailing newline included). Each task is one line, `<id><TAB><text>`,
+# with `\\`, `\n`, `\r` and `\t` escaped in the text: `printf %b` gives it back.
+function __rusk_get_task_text -a task_id
     set -l rusk_cmd (__rusk_cmd)
-    set -l output ($rusk_cmd list --for-completion 2>/dev/null)
-    set -l text ""
-    set -l collecting false
-    for line in $output
-        if string match -qr "^\d+\t" -- "$line"
-            set -l id (echo $line | cut -f1)
-            if test "$id" = "$task_id"
-                set text (echo $line | cut -f2-)
-                set collecting true
-            else
-                set collecting false
-            end
-        else if test "$collecting" = true
-            set text "$text\n$line"
+    for line in ($rusk_cmd list --for-completion-lines 2>/dev/null)
+        set -l fields (string split -m 1 \t -- $line)
+        if test "$fields[1]" = "$task_id"
+            printf '%b' "$fields[2]"
+            return 0
         end
     end
-    if test -n "$text"
-        printf '%s\n' "$text"
-    end
-end
-
-# True (status 0) if text contains shell metacharacters that require quoting.
-# Space alone does not count (newlines do); see __rusk_quote_text.
-function __rusk_has_shell_metachar -a text
-    string match -qr '[\n|;\&><\(\)\[\]\{\}\$"\'`\\\*\?\~\#\@\!\%\^\=\+\-\/\:\,]' -- "$text"
-end
-
-# Quote text only for shell metacharacters (not spaces alone). Otherwise raw text.
-# Always uses fish-native single quotes: inside them only backslash and single
-# quote are special, so escaping exactly those two round-trips any input.
-function __rusk_quote_text
-    set -l text $argv[1]
-    if not __rusk_has_shell_metachar "$text"
-        printf '%s\n' "$text"
-        return
-    end
-    # Escape backslash first, then single quote; `string collect` keeps
-    # embedded newlines intact across the command substitutions.
-    set -l escaped (string replace -a '\\' '\\\\' -- "$text" | string collect)
-    set escaped (string replace -a "'" "\\'" -- "$escaped" | string collect)
-    printf "'%s'\n" "$escaped"
+    return 1
 end
 
 # ============================================================================
@@ -462,6 +351,12 @@ end
 # Check if we should complete flags for edit command
 function __rusk_should_complete_edit_flags
     __rusk_is_command edit e; or return 1
+    # After `--` all is text. Next to the id the text comes first:
+    # __rusk_complete_edit_text offers the flags when there is none.
+    contains -- -- (__rusk_get_cmdline); and return 1
+    set -l slot (__rusk_edit_text_slot)
+    and contains -- $slot[1] text dashes typed-dashes
+    and return 1
     if __rusk_is_after_date_flag
         set -l current_word (__rusk_get_current_word)
         if __rusk_is_flag "$current_word"
@@ -491,92 +386,101 @@ end
 # Edit Command Text Completion
 # ============================================================================
 
-# Complete task text after ID
-function __rusk_complete_edit_text
-    set -l cmdline (__rusk_get_cmdline_with_current)
-    if test (count $cmdline) -lt 3
-        return
-    end
-    
-    # Find rusk command index (skip environment variables)
-    set -l rusk_idx -1
-    for i in (seq 1 (count $cmdline))
-        if test "$cmdline[$i]" = "rusk"
-            set rusk_idx $i
-            break
-        end
-    end
-    
-    if test $rusk_idx -lt 1
-        return
-    end
-    
-    # Get command after rusk (should be "edit" or "e")
+# `rusk edit <id><TAB>` puts the text of the task on the command line. fish
+# escapes whatever it inserts and inserts one token per Tab, so the text is a
+# candidate of its own, as it is, and fish quotes it: `rusk edit 3<TAB>`
+# completes the id, the next Tab the text. Nothing rebinds Tab for this.
+
+# Where the cursor is in `rusk edit` next to its one id: prints `id <n>` while
+# the id itself is typed, `text <n>` on the token after it, `dashes <n>` on
+# the token after `<n> --`, and `typed-dashes <n>` while that `--` is still
+# the token under the cursor (fish adds no space after a word ending in `-`);
+# fails anywhere else. The values of -d/--date/-a/--after are not ids, and
+# after `--` there are none.
+function __rusk_edit_text_slot
+    __rusk_is_command edit e; or return 1
+    set -l words (__rusk_get_cmdline)
+    set -l current (__rusk_get_current_word)
+    # Skip env assignments (RUSK_DB=... rusk edit 7), `rusk` and the command
+    set -l rusk_idx (contains -i -- rusk $words); or return 1
     set -l cmd_idx (math $rusk_idx + 1)
-    if test $cmd_idx -gt (count $cmdline)
-        return
-    end
-    
-    set -l cmd $cmdline[$cmd_idx]
-    if test "$cmd" != "edit" -a "$cmd" != "e"
-        return
-    end
-    
-    # Get arguments after edit/e command
-    set -l args_start_idx (math $cmd_idx + 1)
-    if test $args_start_idx -gt (count $cmdline)
-        return
-    end
-    
-    set -l args $cmdline[$args_start_idx..-1]
-    if test (count $args) -lt 1
-        return
-    end
-    
-    # Count how many IDs have been entered
-    set -l id_count 0
-    for arg in $args
-        if __rusk_is_number "$arg"
-            set id_count (math $id_count + 1)
+    contains -- "$words[$cmd_idx]" edit e; or return 1
+    set -l args $words[(math $cmd_idx + 1)..-1]
+    set -l ids
+    set -l value_next 0
+    set -l dashes_at 0
+    set -l n 0
+    for w in $args
+        set n (math $n + 1)
+        if test $dashes_at -gt 0
+            continue
+        else if test $value_next -eq 1
+            set value_next 0
+        else if contains -- $w -d --date -a --after
+            set value_next 1
+        else if test "$w" = --
+            set dashes_at $n
+        else if __rusk_is_number "$w"
+            set -a ids $w
         end
     end
-    
-    # Only suggest task text if there's exactly one ID
-    if test $id_count -eq 1
-        set -l last_arg $args[-1]
-        if __rusk_is_number "$last_arg"
-            set -l task_text (__rusk_get_task_text $last_arg)
-            if test -n "$task_text"
-                # When completing without a space after ID (e.g. "rusk edit 22<tab>"),
-                # fish filters candidates by current token ("22").
-                # Emit "<id> <text>" so candidate matches and expands in place.
-                set -l current_word (__rusk_get_current_word)
-                if test "$current_word" = "$last_arg"
-                    printf '%s %s\n' "$last_arg" (string join -- \n $task_text)
-                else
-                    # Output raw text; wrapper will add proper quoting after insert
-                    printf '%s\n' (string join -- \n $task_text)
-                end
+    test $value_next -eq 0; or return 1
+    if test $dashes_at -eq 0
+        if __rusk_is_number "$current"
+            test (count $ids) -eq 0; or return 1
+            printf '%s\n' id $current
+        else if test (count $ids) -eq 1; and test "$args[-1]" = "$ids[1]"
+            if test -z "$current"
+                printf '%s\n' text $ids[1]
+            else if test "$current" = --
+                printf '%s\n' typed-dashes $ids[1]
+            else
+                return 1
             end
+        else
+            return 1
         end
+    else if test -z "$current"; and test (count $ids) -eq 1; and test $dashes_at -eq $n
+        and test "$args[-2]" = "$ids[1]"
+        printf '%s\n' dashes $ids[1]
+    else
+        return 1
     end
 end
 
-# Check if we should complete task text after ID
-function __rusk_should_complete_edit_text
-    __rusk_is_command edit e; or return 1
-    set -l cmdline (__rusk_get_cmdline_with_current)
-    test (count $cmdline) -ge 3; or return 1
-    
-    set -l args $cmdline[3..-1]
-    test (count $args) -ge 1; or return 1
-    
-    set -l last_arg $args[-1]
-    __rusk_is_number "$last_arg"; or return 1
-    
-    set -l current_word (__rusk_get_current_word)
-    # Only when ID is immediately followed by <tab> (no space).
-    test "$current_word" = "$last_arg"
+# The candidates for the slot __rusk_edit_text_slot names, each ended by a NUL
+# (a text may hold line breaks): on the id, the id with the start of its text
+# to tell it by; next to it the text — or `--` first, when the text starts
+# with `-` and would be read as options (fish adds no space after a word
+# that ends in `-`: offered `--` once more, it does). Two texts fish cannot
+# insert as they are, and so are not offered: one with a tab (fish takes the
+# first tab of a candidate for the start of its description) and one that
+# starts with `~` (fish leaves that unescaped, to be expanded to a home
+# directory). Where there is no text to offer, next to the id, the flags are.
+function __rusk_complete_edit_text
+    set -l slot (__rusk_edit_text_slot); or return
+    set -l text (__rusk_get_task_text $slot[2] | string collect -N)
+    set -l offered 1
+    if test -z "$text"; or string match -qr '\t|^~' -- $text
+        set offered 0
+    end
+    switch $slot[1]
+        case id
+            test -n "$text"; or return
+            set -l first (string split -m 1 \n -- $text)[1]
+            printf '%s\t%s\0' $slot[2] (string replace -ra '[[:cntrl:]]' ' ' -- $first)
+        case text typed-dashes
+            if test $offered -eq 1; and string match -q -- '-*' $text
+                printf '%s\t%s\0' -- 'Task text follows (it starts with -)'
+            else if test $offered -eq 1; and test $slot[1] = text
+                printf '%s\t%s\0' $text 'Task text'
+            else
+                set -l flags (__rusk_complete_edit_flags)
+                test (count $flags) -gt 0; and printf '%s\0' $flags
+            end
+        case dashes
+            test $offered -eq 1; and printf '%s\t%s\0' $text 'Task text'
+    end
 end
 
 # Check if we should complete edit ID
@@ -613,7 +517,12 @@ function __rusk_complete_mark_del_flags
     test (count $cmdline) -ge 2; or return
     set -l sub "$cmdline[2]"
     if contains -- $sub del d
-        __rusk_complete_flags --done -h --help
+        # `--done` takes no ids: offered only before any
+        if test (count $cmdline) -ge 3; and string match -qr '^[0-9,]+$' -- $cmdline[3..-1]
+            __rusk_complete_flags -h --help
+        else
+            __rusk_complete_flags --done -h --help
+        end
     else
         __rusk_complete_flags -p --priority -h --help
     end
@@ -923,12 +832,10 @@ complete -c rusk -f -n '__rusk_should_complete_add_flags' -a '(__rusk_complete_a
 # Flag completions
 complete -c rusk -f -n '__rusk_should_complete_edit_flags' -a '(__rusk_complete_edit_flags)'
 
-# Task text completion (before ID completion for priority)
-# Task text after ID: wrapper normalizes escapes and wraps metacharacters in fish-native single quotes.
+# The id, then the task text (see __rusk_complete_edit_text)
 complete -c rusk -f \
-    -n '__rusk_should_complete_edit_text' \
-    -a '(__rusk_complete_edit_text)' \
-    -d 'Task text'
+    -n '__rusk_edit_text_slot >/dev/null' \
+    -a '(__rusk_complete_edit_text | string split0)'
 
 # Task ID completion
 complete -c rusk -f -n '__rusk_should_complete_edit_id' -a '(__rusk_get_task_ids)' -d 'Task ID'

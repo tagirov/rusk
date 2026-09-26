@@ -147,15 +147,47 @@ pub fn word_bounds(line: &str, byte_idx: usize) -> (usize, usize) {
 
 // ── Prefill / date header ───────────────────────────────────────────────────
 
+/// What the Tab key inserts, and what a tab already in the text becomes when
+/// it reaches the editor.
+pub const TAB_AS_SPACES: &str = "    ";
+
+/// Text as the buffer may hold it. Tabs become spaces: the editor measures
+/// and positions everything in terminal cells, and a tab has no width of its
+/// own - it jumps to the next tab stop, which differs between terminals and
+/// moves as the text around it is edited. Other control characters (ESC,
+/// NUL, C1, ...) are dropped: the buffer is printed as it stands, and a
+/// pasted or stored `ESC [ 31 m` would otherwise repaint the screen. Line
+/// breaks (`\n`, `\r`) are left to the callers that split lines. Text
+/// entering the buffer - opened, restored, pasted - is cleaned once, so what
+/// the editor draws, counts and saves is the same string.
+pub fn clean_input(s: &str) -> std::borrow::Cow<'_, str> {
+    let dropped = |c: char| crate::printable::is_control(c) && c != '\t' && c != '\r';
+    if !s.contains('\t') && !s.chars().any(dropped) {
+        return std::borrow::Cow::Borrowed(s);
+    }
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\t' => out.push_str(TAB_AS_SPACES),
+            c if dropped(c) => {}
+            c => out.push(c),
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 pub fn split_multi_line_prefill(prefill: &str) -> Vec<String> {
     if prefill.is_empty() {
         return Vec::new();
     }
     let normalized = prefill.replace("\r\n", "\n").replace('\r', "\n");
-    normalized.split('\n').map(|s| s.to_string()).collect()
+    normalized
+        .split('\n')
+        .map(|s| clean_input(s).into_owned())
+        .collect()
 }
 
-/// Leading date prefix on the first logical line: `(char length of the token, parsed date)`.
+/// Leading date prefix on the first logical line: `(byte length of the token, parsed date)`.
 /// Returns `None` if the leading whitespace-delimited token is not a valid CLI date.
 /// `relative_edit_base` is the task due date before edit (`+`-prefixed relative tokens).
 pub fn leading_date(
@@ -168,7 +200,7 @@ pub fn leading_date(
     }
     crate::parse_cli_date_for_edit(&token, relative_edit_base)
         .ok()
-        .map(|d| (token.chars().count(), d))
+        .map(|d| (token.len(), d))
 }
 
 // ── Position / selection helpers ────────────────────────────────────────────
@@ -380,6 +412,19 @@ pub fn ml_kill_to_bol(lines: &mut [String], row: usize, col: &mut usize) {
     }
 }
 
+/// A byte offset into `line` that is safe to insert or delete at: never
+/// past the end, and never inside a character. Whoever moves the cursor to
+/// a line it was not measured against goes through here — a column that
+/// counted bytes of `привет` and landed on another line would otherwise
+/// reach `String::insert` and take the process down with it.
+pub fn clamp_col(line: &str, col: usize) -> usize {
+    let mut col = col.min(line.len());
+    while !line.is_char_boundary(col) {
+        col -= 1;
+    }
+    col
+}
+
 pub fn ml_delete_line(lines: &mut Vec<String>, row: &mut usize, col: &mut usize) {
     if lines.len() == 1 {
         lines[0].clear();
@@ -390,7 +435,7 @@ pub fn ml_delete_line(lines: &mut Vec<String>, row: &mut usize, col: &mut usize)
     if *row >= lines.len() {
         *row = lines.len().saturating_sub(1);
     }
-    *col = (*col).min(lines[*row].len());
+    *col = clamp_col(&lines[*row], *col);
 }
 
 #[cfg(test)]
@@ -474,6 +519,18 @@ mod tests {
             vec!["tA".to_string(), "B".to_string(), "Cail".to_string()]
         );
         assert_eq!((r, c), (2, 1));
+    }
+
+    /// REVIEW №39: a paste or a stored text with ESC/NUL/C1 put them into
+    /// the buffer, which is printed raw on every frame.
+    #[test]
+    fn clean_input_drops_controls_and_expands_tabs() {
+        assert!(matches!(clean_input("plain text"), std::borrow::Cow::Borrowed(_)));
+        assert_eq!(clean_input("foo\x1b[31m bar\tbaz"), "foo[31m bar    baz");
+        assert_eq!(clean_input("a\0b\x7fc\u{9b}d\x07"), "abcd");
+        // Line breaks are the line splitters' business.
+        assert_eq!(clean_input("a\r\nb\nc"), "a\r\nb\nc");
+        assert_eq!(split_multi_line_prefill("x\x1b]0;t\x07\r\n\ty"), vec!["x]0;t", "    y"]);
     }
 
     #[test]

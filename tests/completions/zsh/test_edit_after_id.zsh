@@ -24,7 +24,7 @@ _rusk_get_task_text() {
 }
 
 _rusk_get_task_text_raw() {
-    echo "dummy task text"
+    REPLY="dummy task text"
 }
 
 reset_counters
@@ -47,7 +47,8 @@ fi
 # Test 2: rusk e 1<tab> (without space) - should append task text, not dates
 print_test "rusk e 1<tab> (without space)" "rusk e 1" "Should append task text (NOT dates) to the typed ID"
 if (( $+functions[_rusk] )) && (( $+functions[_rusk_get_task_text_raw] )); then
-    RAW_TEXT=$(_rusk_get_task_text_raw "1" 2>/dev/null)
+    _rusk_get_task_text_raw "1" 2>/dev/null
+    RAW_TEXT="$REPLY"
     if [[ -n "$RAW_TEXT" ]]; then
         EXPECTED_COMPLETION="1 ${RAW_TEXT}"
         BUFFER="rusk e 1"

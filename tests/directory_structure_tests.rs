@@ -1,6 +1,5 @@
 use anyhow::Result;
 use rusk::TaskManager;
-use std::env;
 use std::fs;
 use tempfile::TempDir;
 
@@ -9,11 +8,8 @@ use common::create_test_task;
 
 #[test]
 fn test_default_directory_structure() -> Result<()> {
-    // Remove RUSK_DB to ensure we're testing default behavior
-    unsafe {
-        env::remove_var("RUSK_DB");
-    }
-
+    // Test mode pins the path regardless of RUSK_DB, so the process
+    // environment is left alone (mutating it races with parallel tests).
     let db_path = TaskManager::resolve_db_path();
 
     // In test mode, should use /tmp/rusk_debug/tasks.json (same as debug mode)
@@ -150,25 +146,29 @@ fn test_restore_files_in_custom_directory() -> Result<()> {
 
 #[test]
 fn test_get_db_dir_function() -> Result<()> {
-    let temp_dir = TempDir::new()?;
-
-    // In test mode, RUSK_DB is ignored, so it should always use /tmp/rusk_debug/tasks.json
-    // Even if RUSK_DB is set, it will be ignored
-    unsafe {
-        let custom_file = temp_dir.path().join("subdir").join("tasks.json");
-        env::set_var("RUSK_DB", custom_file.to_str().unwrap());
-    }
-
+    // In test mode the database always lives under <tmp>/rusk_debug.
     let db_dir = TaskManager::get_db_dir();
     let expected_dir = std::env::temp_dir().join("rusk_debug");
-
     assert_eq!(db_dir, expected_dir);
+    Ok(())
+}
 
-    // Cleanup
-    unsafe {
-        env::remove_var("RUSK_DB");
-    }
+/// RUSK_DB is ignored in test mode. Checked on a child process so the
+/// environment of this (multi-threaded) test process is never mutated.
+#[test]
+fn test_rusk_db_is_ignored_in_test_mode() -> Result<()> {
+    let sb = common::Sandbox::new();
+    let custom_file = sb.path().join("subdir").join("tasks.json");
 
+    let out = sb
+        .cmd()
+        .env("RUSK_DB", &custom_file)
+        .args(["add", "pinned", "location"])
+        .output()?;
+    assert!(out.status.success(), "stderr={}", String::from_utf8_lossy(&out.stderr));
+
+    assert!(!custom_file.exists(), "RUSK_DB must be ignored in test mode");
+    assert!(sb.read_db().contains("pinned location"));
     Ok(())
 }
 

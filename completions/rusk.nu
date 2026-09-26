@@ -217,7 +217,9 @@ def get-task-ids [spans: list<string>] {
   }
 }
 
-# Get task text by ID (supports multi-line tasks via rusk list --for-completion)
+# The text of a task from `rusk list --for-completion-lines`. Each task is one line,
+# `<id><TAB><text>`, with backslash, line feed, carriage return and tab
+# escaped in the text as \\, \n, \r and \t
 def get-task-text [task_id: int, spans: list<string>] {
   try {
     let rusk_cmd = (get-rusk-cmd)
@@ -225,37 +227,38 @@ def get-task-text [task_id: int, spans: list<string>] {
     let rusk_db = (get-rusk-db-from-env $spans)
     
     let output = if ($rusk_db != null) {
-      with-env {RUSK_DB: $rusk_db} { ^$rusk_cmd list --for-completion | complete }
+      with-env {RUSK_DB: $rusk_db} { ^$rusk_cmd list --for-completion-lines | complete }
     } else {
-      ^$rusk_cmd list --for-completion | complete
+      ^$rusk_cmd list --for-completion-lines | complete
     }
     
     if ($output.exit_code == 0) {
-      mut text = ""
-      mut collecting = false
-      for line in ($output.stdout | lines) {
-        let parts = ($line | split row (char tab) -n 2)
-        if ($parts | length) >= 2 {
-          let id = $parts.0
-          let rest = $parts.1
-          if $id == $task_id_str {
-            $text = $rest
-            $collecting = true
-          } else {
-            $collecting = false
-          }
-        } else if $collecting {
-          $text = $text + (char newline) + $line
-        }
-      }
-      let trimmed = ($text | str trim)
-      if $trimmed != "" { $trimmed } else { null }
+      let prefix = $task_id_str + (char tab)
+      let line = ($output.stdout | split row (char newline) | where {|l| $l | str starts-with $prefix } | get 0?)
+      if ($line == null) { return null }
+      let text = (decode-listed-text ($line | split row -n 2 (char tab) | get 1))
+      if $text != "" { $text } else { null }
     } else {
       null
     }
   } catch {
     null
   }
+}
+
+# The escapes of a `--for-completion-lines` text undone. Every backslash of the text
+# is doubled there, so splitting at \\ leaves pieces whose only escapes are
+# \n, \r and \t
+def decode-listed-text [text: string] {
+  $text
+  | split row '\\'
+  | each {|piece|
+    $piece
+    | str replace --all '\n' (char newline)
+    | str replace --all '\r' (char cr)
+    | str replace --all '\t' (char tab)
+  }
+  | str join '\'
 }
 
 # Check if string is a number
@@ -268,34 +271,32 @@ def is-number [str: string] {
   }
 }
 
-# Check if text needs to be quoted (contains special characters that require escaping)
-# Special chars: | ; & > < ( ) [ ] { } $ " ' ` \ * ? ~ # @ ! % ^ = + - / : ,
+# True if the text would not come back as it is when put on the command line
+# bare: a special character — | ; & > < ( ) [ ] { } $ " ' ` \ * ? ~ # @ ! % ^ = + - / : ,
+# — a control character, or any whitespace but single spaces between words
 def needs-quotes [text: string] {
   let special_chars = ["|", ";", "&", ">", "<", "(", ")", "[", "]", "{", "}", "$", '"', "'", "`", "\\", "*", "?", "~", "#", "@", "!", "%", "^", "=", "+", "-", "/", ":", ","]
   let chars = ($text | split chars)
-  ($chars | any {|char| $char in $special_chars})
+  (($chars | any {|char| $char in $special_chars})
+    or ($text =~ '[[:cntrl:]]|  |^ | $'))
 }
 
-# Check if text contains single quote
-def contains-single-quote [text: string] {
-  ($text | str contains "'")
-}
-
-# Wrap text in quotes if it contains special characters
-# Use single quotes if no single quote in text, otherwise use double quotes with escaping
+# Wrap text in quotes if it contains special characters. Single quotes take
+# every character as it is but ' itself; a text with one goes into a raw
+# string r#'...'#, which ends at the first ' followed by its hashes, so it
+# gets one # more than the longest run of them after a ' in the text
 def quote-if-needed [text: string] {
   if not (needs-quotes $text) {
     return $text
   }
-  
-  # If no single quote in text, use single quotes (no escaping needed)
-  if not (contains-single-quote $text) {
+  if not ($text | str contains "'") {
     return $"'($text)'"
-  } else {
-    # Use double quotes with escaping
-    let escaped = ($text | str replace '"' '\\"')
-    $"\"($escaped)\""
   }
+  mut hashes = "#"
+  while ($text | str contains $"'($hashes)") {
+    $hashes = $hashes + "#"
+  }
+  $"r($hashes)'($text)'($hashes)"
 }
 
 # Get entered task IDs from spans (skip "rusk" and command)
@@ -578,10 +579,15 @@ def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_
       try {
         let current_id = ($cur | into int)
         let task_text = (get-task-text $current_id $spans)
-        if ($task_text != null) {
+        # The line editor drops control characters other than tab and line
+        # feed from what it inserts (a CR, a bell, an escape sequence): such a
+        # text would be stored changed, so it is not offered
+        if ($task_text != null) and not ($task_text =~ '[\x00-\x08\x0b-\x1f]') {
           let id_str = ($current_id | into string)
           let quoted_text = (quote-if-needed $task_text)
-          return [{value: $"($id_str) ($quoted_text)", description: "Append task text"}]
+          # A text that starts with `-` would be read as options: after `--` rusk takes it as text
+          let dashes = if ($task_text | str starts-with "-") { "-- " } else { "" }
+          return [{value: $"($id_str) ($dashes)($quoted_text)", description: "Append task text"}]
         }
       } catch {}
     }
@@ -602,13 +608,16 @@ def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_
 }
 
 # Complete mark/del commands
-def complete-mark-del [cur: string, command: string] {
+def complete-mark-del [cur: string, command: string, spans: list<string>] {
   # Complete flags (including empty cur after command)
   if ($cur == "") or ($cur | str starts-with "-") {
     let all_flags = if ($command == "del" or $command == "d") {
-      [
-        {value: "--done", description: "Delete all completed tasks"}
-      ] | append (get-common-flags)
+      # `--done` takes no ids: offered only before any
+      let cmd_idx = ($spans | enumerate | where item == $command | get index | first)
+      let has_ids = ($spans | skip ($cmd_idx + 1) | drop 1 | any {|w| $w =~ '^[0-9,]+$' })
+      if $has_ids { [] } else {
+        [{value: "--done", description: "Delete all completed tasks"}]
+      } | append (get-common-flags)
     } else {
       [
         {value: "-p", description: "Toggle the priority flag"},
@@ -987,7 +996,7 @@ export def rusk-completions-main [spans: list<string>] {
     }
     
     "mark" | "m" | "del" | "d" => {
-      complete-mark-del $cur_n $ctx.command
+      complete-mark-del $cur_n $ctx.command $spans
     }
     
     "list" | "l" | "restore" | "r" => {

@@ -12,10 +12,16 @@ pub(super) struct EditorState {
     pub lines: Vec<String>,
     pub row: usize,
     pub col: usize,
-    /// Desired visual column (in chars) to preserve while moving vertically.
-    pub desired_col_char: usize,
+    /// Desired visual column (in terminal cells) to preserve while moving vertically.
+    pub desired_col_cell: usize,
     pub anchor: Option<(usize, usize)>,
+    /// First visual row on screen. The view is state of its own: the wheel
+    /// moves it without the cursor, and `render` clamps it to the text.
     pub view_top: usize,
+    /// Whether the next frame brings the cursor into view. The wheel clears
+    /// it so the view can leave the cursor behind; any key, click or paste
+    /// sets it again.
+    pub follow_cursor: bool,
 }
 
 impl EditorState {
@@ -31,14 +37,15 @@ impl EditorState {
             let c = lines[r].len();
             (r, c)
         };
-        let desired_col_char = view::visual_col(&lines, vw.max(1), row, col);
+        let desired_col_cell = view::visual_col(&lines, vw.max(1), row, col);
         Self {
             lines,
             row,
             col,
-            desired_col_char,
+            desired_col_cell,
             anchor: None,
             view_top: 0,
+            follow_cursor: true,
         }
     }
 
@@ -118,7 +125,28 @@ impl EditorState {
     }
 
     pub fn recompute_desired(&mut self, vw: usize) {
-        self.desired_col_char = view::visual_col(&self.lines, vw.max(1), self.row, self.col);
+        self.snap_cursor();
+        self.desired_col_cell = view::visual_col(&self.lines, vw.max(1), self.row, self.col);
+    }
+
+    /// Puts the cursor somewhere the next edit can act on: a row that
+    /// exists, and a byte offset that is not inside a character.
+    ///
+    /// Every method that moves or edits ends in `recompute_desired`, so
+    /// this is the one place that has to be right. Deleting a line used to
+    /// carry a column measured against the old line over to the new one,
+    /// and a column that landed inside a `п` took `String::insert` — and
+    /// the whole process, terminal and all — down with it.
+    fn snap_cursor(&mut self) {
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        }
+        self.row = self.row.min(self.lines.len() - 1);
+        self.col = text_ops::clamp_col(&self.lines[self.row], self.col);
+        if let Some((arow, acol)) = self.anchor {
+            let arow = arow.min(self.lines.len() - 1);
+            self.anchor = Some((arow, text_ops::clamp_col(&self.lines[arow], acol)));
+        }
     }
 
     // ── Movement ────────────────────────────────────────────────────────────
@@ -157,7 +185,7 @@ impl EditorState {
             vw,
             self.row,
             self.col,
-            self.desired_col_char,
+            self.desired_col_cell,
             true,
         );
         self.row = r;
@@ -170,7 +198,7 @@ impl EditorState {
             vw,
             self.row,
             self.col,
-            self.desired_col_char,
+            self.desired_col_cell,
             false,
         );
         self.row = r;
@@ -200,7 +228,7 @@ impl EditorState {
     pub fn goto_buffer_start(&mut self) {
         self.row = 0;
         self.col = 0;
-        self.desired_col_char = 0;
+        self.desired_col_cell = 0;
     }
 
     pub fn goto_buffer_end(&mut self, vw: usize) {
@@ -234,18 +262,39 @@ impl EditorState {
         self.recompute_desired(vw);
     }
 
+    // ── View ────────────────────────────────────────────────────────────────
+
+    /// Move the view by `delta` visual rows, within `0..=max_top`. The
+    /// cursor and the selection stay where they are.
+    pub fn scroll_view(&mut self, delta: isize, max_top: usize) {
+        self.view_top = self.view_top.saturating_add_signed(delta).min(max_top);
+    }
+
     // ── Editing ─────────────────────────────────────────────────────────────
 
     pub fn insert_char(&mut self, ch: char, vw: usize) {
+        // A terminal that reports Tab as a character gets the same spaces as
+        // the Tab key: nothing puts a tab into the buffer, and nothing puts
+        // any other control character there either.
+        match ch {
+            '\t' => return self.insert_tab(vw),
+            '\n' | '\r' => return self.insert_newline(vw),
+            c if crate::printable::is_control(c) => return,
+            _ => {}
+        }
         self.delete_selection();
         self.lines[self.row].insert(self.col, ch);
         self.col += ch.len_utf8();
         self.recompute_desired(vw);
     }
 
+    /// Insert text at the cursor (typed, pasted or restored). It is cleaned
+    /// here, once (`text_ops::clean_input`), so the buffer holds only text
+    /// the editor can measure in cells and print as it stands.
     pub fn insert_str(&mut self, text: &str, vw: usize) {
         self.delete_selection();
-        let (r, c) = text_ops::insert_string(&mut self.lines, self.row, self.col, text);
+        let text = text_ops::clean_input(text);
+        let (r, c) = text_ops::insert_string(&mut self.lines, self.row, self.col, &text);
         self.row = r;
         self.col = c;
         self.recompute_desired(vw);
@@ -258,11 +307,11 @@ impl EditorState {
         self.lines.insert(self.row + 1, tail);
         self.row += 1;
         self.col = 0;
-        self.desired_col_char = 0;
+        self.desired_col_cell = 0;
     }
 
     pub fn insert_tab(&mut self, vw: usize) {
-        self.insert_str("    ", vw);
+        self.insert_str(text_ops::TAB_AS_SPACES, vw);
     }
 
     pub fn backspace(&mut self, vw: usize) {
@@ -336,9 +385,10 @@ mod tests {
             lines: owned,
             row,
             col,
-            desired_col_char: col,
+            desired_col_cell: col,
             anchor: None,
             view_top: 0,
+            follow_cursor: true,
         }
     }
 
@@ -370,6 +420,18 @@ mod tests {
         s.insert_char('b', VW);
         assert_eq!(s.joined(), "ab");
         assert_eq!((s.row, s.col), (0, 2));
+    }
+
+    #[test]
+    fn control_characters_never_reach_the_buffer() {
+        let mut s = EditorState::from_prefill(&[String::new()], false, VW);
+        s.insert_char('a', VW);
+        s.insert_char('\x1b', VW);
+        s.insert_char('\u{9b}', VW);
+        s.insert_str("b\x1b[31mc\0", VW);
+        assert_eq!(s.lines, vec!["ab[31mc"]);
+        s.insert_char('\n', VW);
+        assert_eq!(s.lines, vec!["ab[31mc", ""]);
     }
 
     #[test]
@@ -508,13 +570,32 @@ mod tests {
 
     #[test]
     fn dirty_vs_compares_against_raw_prefill_with_cr() {
-        // split_multi_line_prefill normalizes \r\n to \n, so a state built
-        // from such a prefill differs from the raw string.
+        // A buffer built from such a prefill differs from the raw string:
+        // `split_multi_line_prefill` normalizes \r\n to \n. The session
+        // therefore compares against the normalized text (see `baseline` in
+        // `mod.rs` and the test below), not against the raw prefill.
         let lines = text_ops::split_multi_line_prefill("a\r\nb");
         let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
         let s = state_with(&refs, 0, 0);
         assert!(s.dirty_vs("a\r\nb"));
         assert!(!s.dirty_vs("a\nb"));
+    }
+
+    /// REVIEW №10: opening a task whose text holds a tab (or a CR) is not an
+    /// edit - the dirty glyph stays clean, Esc asks nothing and no draft is
+    /// autosaved - even though the buffer shows spaces. Whether the task is
+    /// rewritten on Ctrl+S is decided by `interactive_edit_text`, which
+    /// compares against the same normalization.
+    #[test]
+    fn a_tab_or_cr_in_the_prefill_is_not_an_edit() {
+        for prefill in ["a\tb", "a\r\nb", "\tone\n\ttwo"] {
+            let lines = text_ops::split_multi_line_prefill(prefill);
+            let baseline = lines.join("\n");
+            let refs: Vec<&str> = lines.iter().map(|s| s.as_str()).collect();
+            let s = state_with(&refs, 0, 0);
+            assert!(!s.dirty_vs(&baseline), "{prefill:?} came up as edited");
+            assert!(!baseline.contains('\t'), "{prefill:?} kept a tab");
+        }
     }
 
     #[test]

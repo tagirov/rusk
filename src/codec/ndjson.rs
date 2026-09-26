@@ -16,8 +16,7 @@ pub fn encode(tasks: &[Task]) -> Result<String> {
 }
 
 pub fn decode(data: &str) -> Result<Vec<Task>> {
-    data.trim_start_matches('\u{feff}')
-        .lines()
+    data.lines()
         .enumerate()
         .filter(|(_, line)| !line.trim().is_empty())
         .map(|(i, line)| {

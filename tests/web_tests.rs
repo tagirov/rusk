@@ -6,28 +6,10 @@
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
-use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
 use std::time::Duration;
 
 mod common;
-
-// The spawned debug binary always resolves the database to the shared
-// rusk_debug path, so serialize tests that touch it.
-static DB_MUTEX: Mutex<()> = Mutex::new(());
-
-fn debug_db_path() -> PathBuf {
-    std::env::temp_dir().join("rusk_debug").join("tasks.json")
-}
-
-fn setup_test_db(tasks_json: &str) {
-    let db_path = debug_db_path();
-    if let Some(parent) = db_path.parent() {
-        fs::create_dir_all(parent).unwrap();
-    }
-    fs::write(&db_path, tasks_json).unwrap();
-}
 
 /// Kills the spawned server on drop. Keeps the stdout pipe open for the
 /// child's lifetime — closing it early would make the server's own
@@ -45,10 +27,9 @@ impl Drop for ServerGuard {
     }
 }
 
-fn spawn_serve(rusk_config: &str, extra_args: &[&str]) -> ServerGuard {
-    let bin = common::require_rusk_bin().expect("rusk binary not found");
-    let mut child = Command::new(bin)
-        .env("RUSK_DB", debug_db_path())
+fn spawn_serve(sb: &common::Sandbox, rusk_config: &str, extra_args: &[&str]) -> ServerGuard {
+    let mut child = sb
+        .cmd()
         .env("RUSK_CONFIG", rusk_config)
         .args(["serve", "--port", "0"])
         .args(extra_args)
@@ -155,6 +136,18 @@ impl Client {
     }
 }
 
+/// The `ETag` response header as sent (quotes included).
+fn etag_of(response: &str) -> String {
+    response
+        .lines()
+        .take_while(|line| !line.is_empty())
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("etag").then(|| value.trim().to_string())
+        })
+        .unwrap_or_else(|| panic!("no ETag header in: {response}"))
+}
+
 fn status_of(response: &str) -> u16 {
     response
         .split_whitespace()
@@ -168,9 +161,9 @@ const ONE_TASK_DB: &str =
 
 #[test]
 fn test_serve_full_crud() {
-    let _guard = DB_MUTEX.lock().unwrap();
-    setup_test_db(ONE_TASK_DB);
-    let server = spawn_serve("", &[]);
+    let sb = common::Sandbox::new();
+    sb.write_db(ONE_TASK_DB);
+    let server = spawn_serve(&sb, "", &[]);
     let mut client = Client::connect(server.port);
 
     let res = client.get("/api/tasks", "");
@@ -203,7 +196,7 @@ fn test_serve_full_crud() {
     assert_eq!(status_of(&res), 204, "{res}");
 
     // CLI writes are visible on the next request (server re-reads the file).
-    setup_test_db(ONE_TASK_DB);
+    sb.write_db(ONE_TASK_DB);
     let res = client.get("/api/tasks", "");
     assert!(res.contains("Web test task"));
 
@@ -217,15 +210,176 @@ fn test_serve_full_crud() {
     assert_eq!(status_of(&res), 415, "{res}");
 }
 
+/// REVIEW №22 (R1): an error body names the cause, not only the step that
+/// failed - also where the database cannot even be opened for a request
+/// (`server.rs`, before any API handler runs). A directory in place of the
+/// database file fails for every user, root included.
+#[test]
+fn test_serve_error_bodies_name_the_cause() {
+    let sb = common::Sandbox::new();
+    std::fs::create_dir(sb.db_path()).unwrap();
+    let server = spawn_serve(&sb, "", &[]);
+    let mut client = Client::connect(server.port);
+
+    for res in [
+        client.get("/api/tasks", ""),
+        client.send_json("POST", "/api/tasks", r#"{"text":"x"}"#),
+        client.send_json("PATCH", "/api/tasks/1", r#"{"done":true}"#),
+    ] {
+        assert_eq!(status_of(&res), 500, "{res}");
+        assert!(res.contains("Failed to read the database file"), "{res}");
+        assert!(res.contains("os error"), "the cause is missing: {res}");
+    }
+}
+
+/// REVIEW №162 / №156: the list and every task carry their revision as
+/// `ETag`; a change sent with `If-Match` is refused (412) when what it is
+/// aimed at is no longer what the client has seen, e.g. because a CLI
+/// command ran in between.
+#[test]
+fn test_serve_if_match_refuses_changes_to_what_the_client_has_not_seen() {
+    let sb = common::Sandbox::new();
+    sb.write_db(
+        r#"[{"id":1,"text":"alpha","date":null,"done":false,"priority":false},
+            {"id":2,"text":"beta","date":null,"done":false,"priority":false},
+            {"id":3,"text":"gamma","date":null,"done":false,"priority":false}]"#,
+    );
+    let server = spawn_serve(&sb, "", &[]);
+    let mut client = Client::connect(server.port);
+    let conditional = |client: &mut Client, method: &str, path: &str, etag: &str, body: &str| {
+        client.request(&format!(
+            "{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n\
+             If-Match: {etag}\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        ))
+    };
+
+    let list_seen = etag_of(&client.get("/api/tasks", ""));
+    assert!(
+        list_seen.starts_with('"') && list_seen.ends_with('"'),
+        "an entity tag is quoted: {list_seen}"
+    );
+    let gamma = client.get("/api/tasks/3", "");
+    assert_eq!(status_of(&gamma), 200, "{gamma}");
+    assert!(gamma.contains(r#""text":"gamma""#), "{gamma}");
+    let gamma_seen = etag_of(&gamma);
+    let beta_seen = etag_of(&client.get("/api/tasks/2", ""));
+    assert_eq!(status_of(&client.get("/api/tasks/9", "")), 404);
+
+    // Meanwhile, in a terminal: task 3 is deleted and its id reused.
+    let cli = |args: &[&str]| {
+        let out = sb.cmd().args(args).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    };
+    let del = client.request("DELETE /api/tasks/3 HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    assert_eq!(status_of(&del), 204, "{del}");
+    cli(&["add", "BRAND NEW important task"]);
+
+    // The stale page deletes "gamma" / saves its form / ticks the box —
+    // whether it names the task it saw or the list it saw.
+    let form = r#"{"text":"gamma","date":null,"priority":true}"#;
+    for seen in [&gamma_seen, &list_seen] {
+        let res = conditional(&mut client, "DELETE", "/api/tasks/3", seen, "");
+        assert_eq!(status_of(&res), 412, "{res}");
+        let res = conditional(&mut client, "PATCH", "/api/tasks/3", seen, form);
+        assert_eq!(status_of(&res), 412, "{res}");
+    }
+    let res = conditional(&mut client, "PUT", "/api/tasks", &list_seen, "[]");
+    assert_eq!(status_of(&res), 412, "{res}");
+    let db = sb.read_db();
+    assert!(db.contains("BRAND NEW important task") && !db.contains("\"priority\": true"), "{db}");
+
+    // Task 2 is still what was seen: changes elsewhere do not refuse it.
+    // The answer names the new revision of the task, so a client can chain.
+    let res = conditional(&mut client, "PATCH", "/api/tasks/2", &beta_seen, r#"{"done":true}"#);
+    assert_eq!(status_of(&res), 200, "{res}");
+    let beta_now = etag_of(&res);
+    assert_ne!(beta_now, beta_seen);
+    assert_eq!(beta_now, etag_of(&client.get("/api/tasks/2", "")));
+    let res = conditional(&mut client, "PATCH", "/api/tasks/2", &beta_seen, r#"{"done":false}"#);
+    assert_eq!(status_of(&res), 412, "{res}");
+    let res = conditional(&mut client, "DELETE", "/api/tasks/2", &beta_now, "");
+    assert_eq!(status_of(&res), 204, "{res}");
+
+    // The list revision works for the list: compare-and-swap of a PUT.
+    let list_now = etag_of(&client.get("/api/tasks", ""));
+    assert_ne!(list_now, list_seen);
+    let res = conditional(&mut client, "PUT", "/api/tasks", &list_now, "[]");
+    assert_eq!(status_of(&res), 200, "{res}");
+    assert_eq!(etag_of(&res), etag_of(&client.get("/api/tasks", "")));
+
+    // No If-Match: applies to whatever is there, as before.
+    let res = client.send_json("POST", "/api/tasks", r#"{"text":"unconditional"}"#);
+    assert_eq!(status_of(&res), 201, "{res}");
+    let res = client.send_json("PATCH", "/api/tasks/1", r#"{"done":true}"#);
+    assert_eq!(status_of(&res), 200, "{res}");
+}
+
+/// REVIEW №156: the http database backend sends the revision it loaded back
+/// with its save, so it cannot overwrite what the web UI or another machine
+/// stored in between; `update` — what the commands use — re-reads and
+/// applies its change to the current list.
+#[test]
+#[cfg(feature = "backend-http")]
+fn test_http_backend_does_not_overwrite_concurrent_changes() {
+    if Command::new("curl").arg("--version").output().is_err() {
+        eprintln!("skipping test_http_backend_does_not_overwrite_concurrent_changes: curl not found");
+        return;
+    }
+    let sb = common::Sandbox::new();
+    sb.write_db(
+        r#"[{"id":1,"text":"server task","date":null,"done":false,"priority":false},
+            {"id":2,"text":"second","date":null,"done":false,"priority":false}]"#,
+    );
+    let server = spawn_serve(&sb, "", &[]);
+    let db = rusk::Backend::parse(&format!("http://127.0.0.1:{}", server.port)).unwrap();
+    let mut client = Client::connect(server.port);
+    let add_from_web_ui = |client: &mut Client, text: &str| {
+        let res = client.send_json("POST", "/api/tasks", &format!(r#"{{"text":"{text}"}}"#));
+        assert_eq!(status_of(&res), 201, "{res}");
+    };
+
+    // `rusk del 1` waits at its prompt while the web UI adds a task.
+    let snapshot = db.load().unwrap();
+    add_from_web_ui(&mut client, "added during the prompt");
+
+    // Writing the snapshot back is refused...
+    let without_first: Vec<rusk::Task> = snapshot.iter().skip(1).cloned().collect();
+    let err = db.save(&without_first).unwrap_err();
+    assert!(err.is::<rusk::StaleDatabase>(), "{err}");
+    assert!(sb.read_db().contains("added during the prompt"));
+
+    // ...and the update deletes task 1 from the list as it is now.
+    let tasks = db
+        .update(&snapshot, true, &mut |tasks| {
+            tasks.retain(|t| t.id != 1);
+            Ok(())
+        })
+        .unwrap()
+        .tasks;
+    let texts: Vec<&str> = tasks.iter().map(|t| t.text.as_str()).collect();
+    assert_eq!(texts, ["second", "added during the prompt"]);
+    let on_server = sb.read_db();
+    assert!(on_server.contains("added during the prompt") && !on_server.contains("server task"));
+
+    // The backend is current after its own write: the next save goes through.
+    db.save(&tasks).unwrap();
+    // A failure the server reports comes with its message, not just a code.
+    let mut bad = tasks.clone();
+    bad.push(bad[0].clone());
+    let err = db.save(&bad).unwrap_err().to_string();
+    assert!(err.contains("HTTP 400") && err.contains("unique"), "{err}");
+}
+
 #[test]
 fn test_serve_token_auth() {
-    let _guard = DB_MUTEX.lock().unwrap();
-    setup_test_db(ONE_TASK_DB);
+    let sb = common::Sandbox::new();
+    sb.write_db(ONE_TASK_DB);
 
     let dir = tempfile::tempdir().unwrap();
     let cfg_path = dir.path().join("cfg");
     fs::write(&cfg_path, "web_token = s3cret\n").unwrap();
-    let server = spawn_serve(cfg_path.to_str().unwrap(), &[]);
+    let server = spawn_serve(&sb, cfg_path.to_str().unwrap(), &[]);
     let mut client = Client::connect(server.port);
 
     let res = client.get("/api/tasks", "");
@@ -253,10 +407,9 @@ fn test_serve_token_auth() {
 
 #[test]
 fn test_serve_refuses_non_loopback_without_token() {
-    let bin = common::require_rusk_bin().expect("rusk binary not found");
-    let out = Command::new(bin)
-        .env("RUSK_DB", debug_db_path())
-        .env("RUSK_CONFIG", "")
+    let sb = common::Sandbox::new();
+    let out = sb
+        .cmd()
         .args(["serve", "--host", "0.0.0.0", "--port", "0"])
         .output()
         .unwrap();
@@ -267,17 +420,15 @@ fn test_serve_refuses_non_loopback_without_token() {
 
 #[test]
 fn test_gen_static_page() {
-    let _guard = DB_MUTEX.lock().unwrap();
-    setup_test_db(
+    let sb = common::Sandbox::new();
+    sb.write_db(
         r#"[{"id":1,"text":"Static page task </script><script>alert(1)</script>","date":"2026-07-10","done":false,"priority":true}]"#,
     );
 
     let dir = tempfile::tempdir().unwrap();
     let out_path = dir.path().join("index.html");
-    let bin = common::require_rusk_bin().expect("rusk binary not found");
-    let out = Command::new(bin)
-        .env("RUSK_DB", debug_db_path())
-        .env("RUSK_CONFIG", "")
+    let out = sb
+        .cmd()
         .args(["gen", "-o", out_path.to_str().unwrap()])
         .output()
         .unwrap();
@@ -297,38 +448,26 @@ fn test_gen_static_page() {
 }
 
 /// Full HTTP sync flow against a live `rusk serve`. The local side gets its
-/// own database by pointing TMPDIR at a private directory (debug builds
-/// resolve the db under the temp dir), while the server keeps the shared one.
+/// own sandbox, the server another one.
 #[test]
 #[cfg(feature = "sync")]
 fn test_sync_http_roundtrip() {
+    let sb = common::Sandbox::new();
     if Command::new("curl").arg("--version").output().is_err() {
         eprintln!("skipping test_sync_http_roundtrip: curl not found");
         return;
     }
-    let _guard = DB_MUTEX.lock().unwrap();
-    setup_test_db(ONE_TASK_DB);
-    let server = spawn_serve("", &[]);
+    sb.write_db(ONE_TASK_DB);
+    let server = spawn_serve(&sb, "", &[]);
     let remote = format!("http://127.0.0.1:{}", server.port);
 
-    let local_root = tempfile::tempdir().unwrap();
-    let local_db = local_root.path().join("rusk_debug").join("tasks.json");
-    fs::create_dir_all(local_db.parent().unwrap()).unwrap();
-    fs::write(
-        &local_db,
+    let local = common::Sandbox::with_db(
         r#"[{"id":1,"text":"Local only task","date":null,"done":false,"priority":false}]"#,
-    )
-    .unwrap();
-
-    let bin = common::require_rusk_bin().expect("rusk binary not found");
+    );
+    let local_db = local.db_path();
     let sync = |args: &[&str]| {
-        Command::new(&bin)
-            // Debug binaries resolve the db under TMPDIR; release binaries
-            // honor RUSK_DB. Both point at the same private local file.
-            .env("TMPDIR", local_root.path())
-            .env("TMP", local_root.path())
-            .env("RUSK_DB", &local_db)
-            .env("RUSK_CONFIG", "")
+        local
+            .cmd()
             .env("RUSK_SYNC_REMOTE", &remote)
             .args(args)
             .output()
@@ -374,12 +513,10 @@ fn test_sync_http_roundtrip() {
 
 #[test]
 fn test_gen_to_stdout() {
-    let _guard = DB_MUTEX.lock().unwrap();
-    setup_test_db(ONE_TASK_DB);
-    let bin = common::require_rusk_bin().expect("rusk binary not found");
-    let out = Command::new(bin)
-        .env("RUSK_DB", debug_db_path())
-        .env("RUSK_CONFIG", "")
+    let sb = common::Sandbox::new();
+    sb.write_db(ONE_TASK_DB);
+    let out = sb
+        .cmd()
         .args(["gen", "-o", "-"])
         .output()
         .unwrap();

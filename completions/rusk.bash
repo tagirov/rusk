@@ -37,16 +37,17 @@ _rusk_get_task_ids() {
     fi
 }
 
-# Check if text contains special characters that require quoting
+# True if the text would not come back as it is when put on the command line
+# bare: a shell-special character, or any whitespace but single spaces between
+# words (tabs, line breaks, runs of spaces and spaces at either end).
 _rusk_needs_quotes() {
     local text="$1"
     # Special chars: | ; & > < ( ) [ ] { } $ " ' ` \ * ? ~ # @ ! % ^ = + - / : ,
-    # Using case statement for portability and reliability
     case "$text" in
         *[\|\;\&\>\<\(\)\[\]\{\}\$\"\'\`\\*\?\~\#\@\!\%\^\=\+\-\/\:\,]*)
             return 0
             ;;
-        *$'\n'*)
+        *[[:cntrl:]]* | *'  '* | ' '* | *' ')
             return 0
             ;;
     esac
@@ -68,7 +69,9 @@ _rusk_quote_text() {
     echo "'$escaped'"
 }
 
-# Get task text by ID (supports multi-line tasks via rusk list --for-completion)
+# The text of task $1 from `rusk list --for-completion-lines`, quoted for the command
+# line. Each task is one line, `<id><TAB><text>`, with `\\`, `\n`, `\r` and
+# `\t` escaped in the text: `printf %b` gives it back.
 _rusk_get_task_text() {
     local task_id="$1"
     local rusk_cmd=$(_rusk_cmd)
@@ -79,28 +82,23 @@ _rusk_get_task_text() {
     
     local output
     if [ -n "$rusk_db" ]; then
-        output=$( ( export RUSK_DB="$rusk_db"; "$rusk_cmd" list --for-completion 2>/dev/null ) )
+        output=$( ( export RUSK_DB="$rusk_db"; "$rusk_cmd" list --for-completion-lines 2>/dev/null ) )
     else
-        output=$("$rusk_cmd" list --for-completion 2>/dev/null)
+        output=$("$rusk_cmd" list --for-completion-lines 2>/dev/null)
     fi
     
-    local text="" collecting=0 id rest
+    local text="" line
     while IFS= read -r line; do
-        if [[ "$line" =~ ^([0-9]+)$'\t'(.*)$ ]]; then
-            id="${BASH_REMATCH[1]}"
-            rest="${BASH_REMATCH[2]}"
-            if [[ "$id" == "$task_id" ]]; then
-                text="$rest"
-                collecting=1
-            else
-                collecting=0
-            fi
-        elif [[ $collecting -eq 1 ]]; then
-            text="${text}"$'\n'"${line}"
+        if [[ "$line" == "$task_id"$'\t'* ]]; then
+            printf -v text '%b' "${line#*$'\t'}"
+            break
         fi
     done <<< "$output"
     
     if [ -n "$text" ]; then
+        # A text that starts with `-` would be read as options: after `--`
+        # rusk takes it as text
+        [[ "$text" == -* ]] && printf -- '-- '
         _rusk_quote_text "$text"
     fi
 }
@@ -161,7 +159,7 @@ _rusk_count_ids() {
     # Start from word after command (rusk_idx + 2: skip "rusk" and command like "edit")
     local start_idx=$((rusk_idx + 2))
     for ((i=start_idx; i<COMP_CWORD; i++)); do
-        if [[ "${COMP_WORDS[i]}" =~ ^[0-9]+$ ]]; then
+        if [[ "${COMP_WORDS[i]}" =~ ^[0-9,]+$ ]]; then
             ((count++))
         fi
     done
@@ -334,11 +332,13 @@ _rusk_complete_edit_flags() {
     return 0
 }
 
-# Complete flags for del command
+# Complete flags for del command (`--done` takes no ids: offered only before any)
 _rusk_complete_del_flags() {
     local gcur="$cur"
     [[ "${1:-0}" == 1 ]] && gcur=""
-    COMPREPLY=($(compgen -W "--done --help -h" -- "$gcur"))
+    local flags="--help -h"
+    [ "$(_rusk_count_ids)" -eq 0 ] && flags="--done $flags"
+    COMPREPLY=($(compgen -W "$flags" -- "$gcur"))
     return 0
 }
 

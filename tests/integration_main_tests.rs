@@ -1,54 +1,13 @@
 // Integration tests for the rusk binary (main.rs argument parsing and flag filtering)
 
-use std::fs;
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::sync::Mutex;
+use std::process::Stdio;
 
 mod common;
 
-static BIN_TEST_MUTEX: Mutex<()> = Mutex::new(());
-
-fn rusk_bin() -> PathBuf {
-    common::require_rusk_bin().expect("rusk binary not found, run cargo build")
-}
-
-fn debug_db_path() -> PathBuf {
-    std::env::temp_dir().join("rusk_debug").join("tasks.json")
-}
-
-/// Spawn `rusk` with `RUSK_DB` pointing at the integration harness file. Release binaries
-/// do not detect "test mode", so without this they would use `~/.rusk` while tests write
-/// under `debug_db_path()`.
-fn rusk_command() -> Command {
-    let mut cmd = Command::new(rusk_bin());
-    cmd.env("RUSK_DB", debug_db_path());
-    // Release binaries would otherwise read (and auto-create) the developer's
-    // real config file; an empty RUSK_CONFIG disables the config system.
-    cmd.env("RUSK_CONFIG", "");
-    cmd
-}
-
-fn setup_test_db(tasks_json: &str) {
-    let db_path = debug_db_path();
-    if let Some(parent) = db_path.parent() {
-        fs::create_dir_all(parent).unwrap();
-    }
-    fs::write(&db_path, tasks_json).unwrap();
-}
-
-fn read_db() -> String {
-    let p = debug_db_path();
-    if p.exists() {
-        fs::read_to_string(&p).unwrap_or_default()
-    } else {
-        String::new()
-    }
-}
-
 #[test]
 fn test_binary_del_help() {
-    let out = rusk_command().args(["del", "--help"]).output().unwrap();
+    let sb = common::Sandbox::new();
+    let out = sb.cmd().args(["del", "--help"]).output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("Delete tasks"));
@@ -57,7 +16,8 @@ fn test_binary_del_help() {
 
 #[test]
 fn test_binary_mark_help() {
-    let out = rusk_command().args(["mark", "--help"]).output().unwrap();
+    let sb = common::Sandbox::new();
+    let out = sb.cmd().args(["mark", "--help"]).output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("Toggle task completion"));
@@ -65,15 +25,14 @@ fn test_binary_mark_help() {
 
 #[test]
 fn test_binary_mark_help_after_id_leaves_db_unchanged() {
-    let _guard = BIN_TEST_MUTEX.lock().unwrap();
-
+    let sb = common::Sandbox::new();
     let db = r#"[
         {"id":1,"text":"Task 1","date":null,"done":false,"priority":false},
         {"id":2,"text":"Task 2","date":null,"done":false,"priority":false}
     ]"#;
-    setup_test_db(db);
+    sb.write_db(db);
 
-    let out = rusk_command().args(["mark", "1", "-h"]).output().unwrap();
+    let out = sb.cmd().args(["mark", "1", "-h"]).output().unwrap();
     assert!(
         out.status.success(),
         "mark 1 -h should print help and exit 0"
@@ -85,7 +44,7 @@ fn test_binary_mark_help_after_id_leaves_db_unchanged() {
         "expected mark subcommand help on stdout: {stdout}"
     );
 
-    let db_after: Vec<serde_json::Value> = serde_json::from_str(&read_db()).unwrap();
+    let db_after: Vec<serde_json::Value> = serde_json::from_str(&sb.read_db()).unwrap();
     let t1 = db_after.iter().find(|t| t["id"] == 1).unwrap();
     assert!(
         !t1["done"].as_bool().unwrap(),
@@ -95,7 +54,8 @@ fn test_binary_mark_help_after_id_leaves_db_unchanged() {
 
 #[test]
 fn test_binary_add_date_flag_help_value() {
-    let out = rusk_command()
+    let sb = common::Sandbox::new();
+    let out = sb.cmd()
         .args(["add", "x", "-d", "-h"])
         .output()
         .unwrap();
@@ -106,7 +66,8 @@ fn test_binary_add_date_flag_help_value() {
 
 #[test]
 fn test_binary_add_help_includes_relative_date_syntax() {
-    let out = rusk_command().args(["add", "--help"]).output().unwrap();
+    let sb = common::Sandbox::new();
+    let out = sb.cmd().args(["add", "--help"]).output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
@@ -117,7 +78,8 @@ fn test_binary_add_help_includes_relative_date_syntax() {
 
 #[test]
 fn test_binary_root_long_help_mentions_dates() {
-    let out = rusk_command().args(["--help"]).output().unwrap();
+    let sb = common::Sandbox::new();
+    let out = sb.cmd().args(["--help"]).output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
@@ -128,14 +90,13 @@ fn test_binary_root_long_help_mentions_dates() {
 
 #[test]
 fn test_binary_list_first_line_omits_body_lines() {
-    let _guard = BIN_TEST_MUTEX.lock().unwrap();
-
+    let sb = common::Sandbox::new();
     let db = r#"[
         {"id":1,"text":"Title line\nBody paragraph","date":null,"done":false,"priority":false}
     ]"#;
-    setup_test_db(db);
+    sb.write_db(db);
 
-    let out = rusk_command()
+    let out = sb.cmd()
         .env("RUSK_NO_COLOR", "1")
         .args(["list", "-c"])
         .output()
@@ -154,10 +115,10 @@ fn test_binary_list_first_line_omits_body_lines() {
 
 #[test]
 fn test_binary_add_rejects_invalid_relative_date() {
-    let _guard = BIN_TEST_MUTEX.lock().unwrap();
-    setup_test_db(r#"[{"id":1,"text":"T","date":null,"done":false,"priority":false}]"#);
+    let sb = common::Sandbox::new();
+    sb.write_db(r#"[{"id":1,"text":"T","date":null,"done":false,"priority":false}]"#);
 
-    let out = rusk_command()
+    let out = sb.cmd()
         .args(["add", "x", "-d", "0d"])
         .output()
         .unwrap();
@@ -171,10 +132,10 @@ fn test_binary_add_rejects_invalid_relative_date() {
 
 #[test]
 fn test_binary_add_interactive_requires_tty() {
-    let _guard = BIN_TEST_MUTEX.lock().unwrap();
-    setup_test_db("[]");
+    let sb = common::Sandbox::new();
+    sb.write_db("[]");
 
-    let out = rusk_command()
+    let out = sb.cmd()
         .arg("add")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -199,7 +160,8 @@ fn test_binary_add_interactive_requires_tty() {
 
 #[test]
 fn test_binary_add_rejects_d_clear_with_no_text() {
-    let out = rusk_command().args(["add", "-d", "_"]).output().unwrap();
+    let sb = common::Sandbox::new();
+    let out = sb.cmd().args(["add", "-d", "_"]).output().unwrap();
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
@@ -210,7 +172,8 @@ fn test_binary_add_rejects_d_clear_with_no_text() {
 
 #[test]
 fn test_binary_edit_date_flag_help_value() {
-    let out = rusk_command()
+    let sb = common::Sandbox::new();
+    let out = sb.cmd()
         .args(["edit", "1", "-d", "--help"])
         .output()
         .unwrap();
@@ -221,8 +184,9 @@ fn test_binary_edit_date_flag_help_value() {
 
 #[test]
 fn test_binary_edit_trailing_help_after_id() {
+    let sb = common::Sandbox::new();
     for args in [["e", "22", "-h"], ["e", "22", "--help"]] {
-        let out = rusk_command().args(args).output().unwrap();
+        let out = sb.cmd().args(args).output().unwrap();
         assert!(out.status.success(), "args={args:?}");
         let stdout = String::from_utf8_lossy(&out.stdout);
         assert!(
@@ -234,7 +198,8 @@ fn test_binary_edit_trailing_help_after_id() {
 
 #[test]
 fn test_binary_edit_help_includes_relative_date_syntax() {
-    let out = rusk_command().args(["edit", "--help"]).output().unwrap();
+    let sb = common::Sandbox::new();
+    let out = sb.cmd().args(["edit", "--help"]).output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
@@ -248,14 +213,13 @@ fn test_binary_edit_help_includes_relative_date_syntax() {
 
 #[test]
 fn test_binary_edit_plus_relative_from_existing_date() {
-    let _guard = BIN_TEST_MUTEX.lock().unwrap();
-
+    let sb = common::Sandbox::new();
     let db = r#"[
         {"id":1,"text":"Task","date":"2025-06-01","done":false,"priority":false}
     ]"#;
-    setup_test_db(db);
+    sb.write_db(db);
 
-    let out = rusk_command()
+    let out = sb.cmd()
         .args(["edit", "1", "-d", "+1w"])
         .output()
         .unwrap();
@@ -265,43 +229,40 @@ fn test_binary_edit_plus_relative_from_existing_date() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let db_after: Vec<serde_json::Value> = serde_json::from_str(&read_db()).unwrap();
+    let db_after: Vec<serde_json::Value> = serde_json::from_str(&sb.read_db()).unwrap();
     assert_eq!(db_after[0]["date"], "2025-06-08");
 }
 
 #[test]
 fn test_binary_edit_rejects_bare_date_flag() {
-    let _guard = BIN_TEST_MUTEX.lock().unwrap();
+    let sb = common::Sandbox::new();
+    sb.write_db(r#"[{"id":1,"text":"T","date":null,"done":false,"priority":false}]"#);
 
-    setup_test_db(r#"[{"id":1,"text":"T","date":null,"done":false,"priority":false}]"#);
-
-    let out = rusk_command().args(["edit", "1", "-d"]).output().unwrap();
+    let out = sb.cmd().args(["edit", "1", "-d"]).output().unwrap();
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("without a value")
-            || stderr.contains("--date")
-            || stderr.contains("first line of the task"),
+        stderr.contains("a value is required for '--date <DATE>'"),
         "stderr={stderr}"
     );
+    assert!(sb.read_db().contains(r#""text":"T""#), "nothing may be written");
 }
 
 #[test]
 fn test_binary_edit_with_date_flag_sets_date_and_text() {
-    let _guard = BIN_TEST_MUTEX.lock().unwrap();
-
+    let sb = common::Sandbox::new();
     let db = r#"[
         {"id":1,"text":"Original","date":null,"done":false,"priority":false}
     ]"#;
-    setup_test_db(db);
+    sb.write_db(db);
 
-    let out = rusk_command()
+    let out = sb.cmd()
         .args(["edit", "1", "Updated text", "-d", "15-06-2025"])
         .output()
         .unwrap();
     assert!(out.status.success(), "edit with -d and text should succeed");
 
-    let db_after: Vec<serde_json::Value> = serde_json::from_str(&read_db()).unwrap();
+    let db_after: Vec<serde_json::Value> = serde_json::from_str(&sb.read_db()).unwrap();
     let t = &db_after[0];
     assert_eq!(t["text"], "Updated text");
     assert_eq!(t["date"], "2025-06-15");
@@ -309,19 +270,19 @@ fn test_binary_edit_with_date_flag_sets_date_and_text() {
 
 #[test]
 fn test_binary_mark_error_when_only_flags() {
-    let _guard = BIN_TEST_MUTEX.lock().unwrap();
+    let sb = common::Sandbox::new();
+    sb.write_db(r#"[{"id":1,"text":"Task","date":null,"done":false,"priority":false}]"#);
 
-    setup_test_db(r#"[{"id":1,"text":"Task","date":null,"done":false,"priority":false}]"#);
-
-    let out = rusk_command().args(["mark", "--", "-"]).output().unwrap();
+    let out = sb.cmd().args(["mark", "--", "-"]).output().unwrap();
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("No valid task IDs"));
+    assert!(stderr.contains("'-' is not a task id"), "{stderr}");
 }
 
 #[test]
 fn test_binary_root_help_documents_rusk_no_color() {
-    let out = rusk_command().args(["--help"]).output().unwrap();
+    let sb = common::Sandbox::new();
+    let out = sb.cmd().args(["--help"]).output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
@@ -332,11 +293,11 @@ fn test_binary_root_help_documents_rusk_no_color() {
 
 #[test]
 fn test_binary_rusk_no_color_disables_ansi_escapes() {
-    let _guard = BIN_TEST_MUTEX.lock().unwrap();
-    setup_test_db(r#"[{"id":1,"text":"Task","date":null,"done":false,"priority":false}]"#);
+    let sb = common::Sandbox::new();
+    sb.write_db(r#"[{"id":1,"text":"Task","date":null,"done":false,"priority":false}]"#);
 
     // Force colors on via CLICOLOR_FORCE; baseline run should contain ANSI escapes.
-    let out_colored = rusk_command()
+    let out_colored = sb.cmd()
         .env("CLICOLOR_FORCE", "1")
         .env_remove("NO_COLOR")
         .env_remove("RUSK_NO_COLOR")
@@ -350,7 +311,7 @@ fn test_binary_rusk_no_color_disables_ansi_escapes() {
     );
 
     // With RUSK_NO_COLOR=1 the same run must not contain ANSI escapes.
-    let out_plain = rusk_command()
+    let out_plain = sb.cmd()
         .env("CLICOLOR_FORCE", "1")
         .env_remove("NO_COLOR")
         .env("RUSK_NO_COLOR", "1")
@@ -362,19 +323,18 @@ fn test_binary_rusk_no_color_disables_ansi_escapes() {
         !stderr_plain.contains("\x1b["),
         "RUSK_NO_COLOR=1 stderr must not contain ANSI escapes:\n{stderr_plain:?}"
     );
-    assert!(stderr_plain.contains("No valid task IDs"));
+    assert!(stderr_plain.contains("'-' is not a task id"), "{stderr_plain}");
 }
 
 #[test]
 fn test_binary_mark_priority_toggles_and_preserves_across_done() {
-    let _guard = BIN_TEST_MUTEX.lock().unwrap();
-
-    setup_test_db(r#"[{"id":1,"text":"Task","date":null,"done":false,"priority":false}]"#);
+    let sb = common::Sandbox::new();
+    sb.write_db(r#"[{"id":1,"text":"Task","date":null,"done":false,"priority":false}]"#);
 
     // `rusk m 1 -p` → priority=true, done=false.
-    let out = rusk_command().args(["mark", "1", "-p"]).output().unwrap();
+    let out = sb.cmd().args(["mark", "1", "-p"]).output().unwrap();
     assert!(out.status.success(), "mark -p should succeed: {out:?}");
-    let db: Vec<serde_json::Value> = serde_json::from_str(&read_db()).unwrap();
+    let db: Vec<serde_json::Value> = serde_json::from_str(&sb.read_db()).unwrap();
     assert_eq!(db[0]["priority"], true);
     assert_eq!(db[0]["done"], false);
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -384,31 +344,31 @@ fn test_binary_mark_priority_toggles_and_preserves_across_done() {
     );
 
     // `rusk m 1` → done=true, priority preserved.
-    rusk_command().args(["mark", "1"]).output().unwrap();
-    let db: Vec<serde_json::Value> = serde_json::from_str(&read_db()).unwrap();
+    sb.cmd().args(["mark", "1"]).output().unwrap();
+    let db: Vec<serde_json::Value> = serde_json::from_str(&sb.read_db()).unwrap();
     assert_eq!(db[0]["done"], true);
     assert_eq!(db[0]["priority"], true);
 
     // `rusk m 1` → reverts to priority (done=false, priority still true).
-    rusk_command().args(["mark", "1"]).output().unwrap();
-    let db: Vec<serde_json::Value> = serde_json::from_str(&read_db()).unwrap();
+    sb.cmd().args(["mark", "1"]).output().unwrap();
+    let db: Vec<serde_json::Value> = serde_json::from_str(&sb.read_db()).unwrap();
     assert_eq!(db[0]["done"], false);
     assert_eq!(db[0]["priority"], true);
 
     // `rusk m 1 -p` again → priority cleared.
-    rusk_command().args(["mark", "1", "-p"]).output().unwrap();
-    let db: Vec<serde_json::Value> = serde_json::from_str(&read_db()).unwrap();
+    sb.cmd().args(["mark", "1", "-p"]).output().unwrap();
+    let db: Vec<serde_json::Value> = serde_json::from_str(&sb.read_db()).unwrap();
     assert_eq!(db[0]["done"], false);
     assert_eq!(db[0]["priority"], false);
 }
 
 #[test]
 fn test_binary_rusk_no_color_empty_does_not_disable() {
-    let _guard = BIN_TEST_MUTEX.lock().unwrap();
-    setup_test_db(r#"[{"id":1,"text":"Task","date":null,"done":false,"priority":false}]"#);
+    let sb = common::Sandbox::new();
+    sb.write_db(r#"[{"id":1,"text":"Task","date":null,"done":false,"priority":false}]"#);
 
     // Empty value is treated as "not set" (NO_COLOR semantics); colors stay forced on.
-    let out = rusk_command()
+    let out = sb.cmd()
         .env("CLICOLOR_FORCE", "1")
         .env_remove("NO_COLOR")
         .env("RUSK_NO_COLOR", "")
@@ -424,13 +384,13 @@ fn test_binary_rusk_no_color_empty_does_not_disable() {
 
 #[test]
 fn test_binary_add_with_after_shows_deps_and_mark_is_not_blocked() {
-    let _guard = BIN_TEST_MUTEX.lock().unwrap();
-    setup_test_db(
+    let sb = common::Sandbox::new();
+    sb.write_db(
         r#"[{"id":1,"text":"base","date":null,"done":false,"priority":false},
             {"id":2,"text":"other","date":null,"done":false,"priority":false}]"#,
     );
 
-    let out = rusk_command()
+    let out = sb.cmd()
         .env("RUSK_NO_COLOR", "1")
         .args(["add", "deploy", "-a", "1,2"])
         .output()
@@ -441,10 +401,10 @@ fn test_binary_add_with_after_shows_deps_and_mark_is_not_blocked() {
         stdout.contains("deploy (1,2)"),
         "added task should show its deps:\n{stdout}"
     );
-    assert!(read_db().contains("\"after\""), "deps must be persisted");
+    assert!(sb.read_db().contains("\"after\""), "deps must be persisted");
 
     // The list appends the deps in parentheses after the text.
-    let out = rusk_command()
+    let out = sb.cmd()
         .env("RUSK_NO_COLOR", "1")
         .args(["list"])
         .output()
@@ -457,7 +417,7 @@ fn test_binary_add_with_after_shows_deps_and_mark_is_not_blocked() {
 
     // Dependencies are advisory (an ordering hint for agents/tooling):
     // manual marking works even while the deps are unfinished.
-    let out = rusk_command()
+    let out = sb.cmd()
         .env("RUSK_NO_COLOR", "1")
         .args(["mark", "3"])
         .output()
@@ -467,15 +427,15 @@ fn test_binary_add_with_after_shows_deps_and_mark_is_not_blocked() {
         stdout.contains("Marked task as done"),
         "mark must not be blocked by unfinished deps:\n{stdout}"
     );
-    assert!(read_db().contains("\"done\": true"), "task 3 must be done");
+    assert!(sb.read_db().contains("\"done\": true"), "task 3 must be done");
 }
 
 #[test]
 fn test_binary_add_rejects_missing_after_ids() {
-    let _guard = BIN_TEST_MUTEX.lock().unwrap();
-    setup_test_db(r#"[{"id":1,"text":"T","date":null,"done":false,"priority":false}]"#);
+    let sb = common::Sandbox::new();
+    sb.write_db(r#"[{"id":1,"text":"T","date":null,"done":false,"priority":false}]"#);
 
-    let out = rusk_command()
+    let out = sb.cmd()
         .args(["add", "x", "-a", "9"])
         .output()
         .unwrap();
@@ -486,7 +446,7 @@ fn test_binary_add_rejects_missing_after_ids() {
         "error should name the missing id:\n{stderr}"
     );
 
-    let out = rusk_command()
+    let out = sb.cmd()
         .args(["add", "x", "-a", "oops"])
         .output()
         .unwrap();
@@ -495,13 +455,13 @@ fn test_binary_add_rejects_missing_after_ids() {
 
 #[test]
 fn test_binary_edit_sets_and_clears_after() {
-    let _guard = BIN_TEST_MUTEX.lock().unwrap();
-    setup_test_db(
+    let sb = common::Sandbox::new();
+    sb.write_db(
         r#"[{"id":1,"text":"base","date":null,"done":false,"priority":false},
             {"id":2,"text":"dep","date":null,"done":false,"priority":false}]"#,
     );
 
-    let out = rusk_command()
+    let out = sb.cmd()
         .env("RUSK_NO_COLOR", "1")
         .args(["edit", "1", "-a", "2"])
         .output()
@@ -512,21 +472,21 @@ fn test_binary_edit_sets_and_clears_after() {
         stdout.contains("- after: 2"),
         "edit should report the new deps:\n{stdout}"
     );
-    assert!(read_db().contains("\"after\""), "deps must be persisted");
+    assert!(sb.read_db().contains("\"after\""), "deps must be persisted");
 
     // Self-dependency is rejected.
-    let out = rusk_command().args(["edit", "1", "-a", "1"]).output().unwrap();
+    let out = sb.cmd().args(["edit", "1", "-a", "1"]).output().unwrap();
     assert!(!out.status.success(), "self-dependency must fail");
 
     // `_` clears the list.
-    let out = rusk_command()
+    let out = sb.cmd()
         .env("RUSK_NO_COLOR", "1")
         .args(["edit", "1", "-a", "_"])
         .output()
         .unwrap();
     assert!(out.status.success(), "edit -a _ should succeed: {out:?}");
     assert!(
-        !read_db().contains("\"after\""),
+        !sb.read_db().contains("\"after\""),
         "cleared deps must not be persisted"
     );
 }

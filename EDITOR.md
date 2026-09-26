@@ -14,6 +14,7 @@
   - [Clipboard and undo](#clipboard-and-undo)
   - [Mouse](#mouse)
 - [Dirty-state confirmation](#dirty-state-confirmation)
+- [Leaving the editor](#leaving-the-editor)
 - [Draft autosave and recovery](#draft-autosave-and-recovery)
 - [Task date header](#task-date-header)
 - [Output after editing](#output-after-editing)
@@ -52,11 +53,28 @@ third line …
 
 - Top rows: the editable text, soft-wrapped to fit the terminal width. The
   wrap is word-aware: rows break at spaces so words stay whole; only a word
-  longer than the text column is split mid-word.
+  longer than the text column is split mid-word. Width is counted in
+  terminal cells, not characters - CJK and most emoji take two cells,
+  combining marks none - and a row is only ever cut between grapheme
+  clusters, so a flag, a family emoji or a letter with its accent stays
+  whole. The cursor, vertical movement and mouse clicks use the same
+  measure: a click lands in front of the character drawn under it.
 - If the first line starts with a valid due-date token, it is shown in color
   (**green** for today or later, **red** if before today); other rows use
   equivalent-width indent so cursor math stays accurate.
-- Footer (last row): hotkey hint that adapts to the terminal width.
+- Tabs become four spaces on the way in (task text, pasted text), so what
+  the editor draws is what it saves; a terminal would otherwise place a tab
+  on its own tab stop, out of step with every other measurement. Other
+  control characters (ESC, NUL, BEL, C1) are dropped on the way in: a pasted
+  or stored `ESC[31m` would otherwise recolor the screen. Opening a task
+  whose text holds a tab or a control character is not an edit by itself:
+  saving it untouched leaves the stored text as it was.
+- Arrow keys and Backspace/Delete step by character, not by grapheme
+  cluster: inside a multi-character emoji the cursor column does not move
+  until the whole cluster is crossed.
+- Footer (last row): hotkey hint that adapts to the terminal width — shorter
+  wordings on narrow terminals, never overlapped by the status glyph; a
+  one-row terminal shows the text only.
 - Arrows `↑` / `↓` at the bottom-left appear when the buffer scrolls.
 - Status glyph at the bottom-right: `●` (dirty) / `○` (saved).
 
@@ -66,10 +84,10 @@ third line …
 
 | Key | Action |
 |-----|--------|
-| `Ctrl+S` | Save and exit. Deletes the autosave draft. |
+| `Ctrl+S` | Save and exit. The draft goes once the database holds the text. |
 | `Esc` | Cancel / skip task. Prompts when the buffer is dirty. |
 | `Ctrl+G` or `F1` | Show the in-editor help overlay. |
-| `Ctrl+C` | Copy selection if any; otherwise abort the program. |
+| `Ctrl+C` | Copy selection if any (the selection stays); otherwise abort, keeping the buffer as a draft. |
 
 ### Navigation
 
@@ -81,7 +99,7 @@ third line …
 | `Ctrl+↑` / `Ctrl+↓` | Move by 5 visual rows. |
 | `Home` / `End` | Smart Home (first non-space, then col 0) / end of line. |
 | `Ctrl+Home` / `Ctrl+End` | Buffer start / end. |
-| `PageUp` / `PageDown` | Scroll one page. |
+| `PageUp` / `PageDown` | Scroll one page; the cursor moves with the view. |
 | `Ctrl+PageUp` / `Ctrl+PageDown` | Buffer start / end. |
 
 ### Selection
@@ -137,41 +155,91 @@ A process-local fallback covers environments where neither is available
 | Triple-click | Select the whole line. |
 | `Shift` + click | Extend existing selection to the click point. |
 | Middle click | Paste from the system clipboard at the click point. |
-| Scroll wheel | Scroll the view (cursor follows by 3 visual rows). |
+| Scroll wheel | Scroll the view by 3 visual rows. The cursor and the selection stay where they are (the cursor is hidden while out of sight); the next key brings the view back to it. |
 
 ## Dirty-state confirmation
 
 Pressing `Esc` while the buffer differs from the original text (dirty state,
 signalled by `●`) shows an overlay `Discard changes? [y/N]`. Answering `y`
-discards changes, clears the autosave draft, and cancels the edit. Any other
+discards changes, clears the autosave draft, and cancels the edit. `Ctrl+C`
+in the overlay aborts the session and keeps the buffer as a draft. Any other
 key returns to the editor.
+
+## Leaving the editor
+
+However the session ends, the terminal is given back: raw mode off, the
+alternate screen left, mouse reporting and bracketed paste turned off, the
+cursor shown. That holds for `Ctrl+S` and `Esc`, for an error inside the
+editor, for a panic (the message is printed onto the restored screen, not
+onto the one being torn down), and on unix for `SIGTERM`, `SIGHUP` and
+`SIGQUIT` — those also write the buffer out as a draft and exit `128 +
+signal` (143 for `SIGTERM`).
+
+That holds with the help screen or the `Discard changes?` overlay up, too:
+they hand control back to the editor's own loop rather than waiting for a
+key that is never coming.
+
+`rusk edit <id>` with no new text needs a terminal, exactly as `rusk add`
+with no text does; into a pipe or a redirect it says so instead of painting
+an editor nobody can see.
 
 ## Draft autosave and recovery
 
-- The editor writes its buffer to `$RUSK_DB/editor.draft` every ~3 seconds
-  while there are unsaved changes. `$RUSK_DB` falls back to `./.rusk/` when not
-  set (see the [main README](README.md#database-location)).
-- The draft payload is JSON with the task key, timestamp, and text:
+A draft is what the editor had in its buffer when it stopped without storing
+anything: `Ctrl+C`, a `SIGTERM`, a save the database refused, a crash. It
+exists so that the next edit of that task can offer the text back.
+
+- **Where.** One file per task, next to the database:
+  `editor-task-3.draft`, `editor-new-task.draft`. `$RUSK_DB` falls back to
+  `./.rusk/` when not set (see the [main README](README.md#database-location)).
+  For an http(s) or ssh database there is no local directory to use, so the
+  drafts go to `$XDG_RUNTIME_DIR/rusk`, or `<temp>/rusk-<uid>` when there is
+  no runtime directory — created `0700`, never a `/tmp/rusk` shared with
+  everyone on the machine.
+- **When.** Every ~3 seconds while the buffer differs from the stored task,
+  and once more whenever the editor stops with something unsaved in it.
+  Each autosave replaces the previous draft atomically (an interrupted write
+  never destroys it) and the file is readable by its owner only (`0600`). If
+  a draft cannot be written, rusk says so once the terminal is back. Clearing
+  the buffer is an edit like any other: an empty draft is kept, not skipped.
+- **Payload.** JSON with the task key, the identity of the text the draft was
+  typed against, a timestamp, and the text:
 
   ```json
-  { "key": "task-3", "text": "...", "timestamp": "2026-04-21T10:20:30+00:00" }
+  { "key": "task-3", "base": "8f1c…", "text": "...", "timestamp": "2026-04-21T10:20:30+00:00" }
   ```
 
-- On a clean save (`Ctrl+S`) or confirmed discard (`Esc` → `y`) the draft file
-  is deleted.
-- For **new** tasks from `rusk add` (no text on the command line), the draft
-  key is `new-task` and recovery is offered the same way.
-- When the editor starts and finds a draft whose key matches the task being
-  edited, it prompts:
+- **Removed when the text is somewhere safer**: once the database holds it,
+  on a confirmed discard (`Esc` → `y`), and as soon as the buffer is brought
+  back to the task's own text — there is nothing unsaved left to keep. A
+  `rusk del` takes the draft of the deleted task with it.
+- **`Ctrl+S` stores the task right away** — in `rusk edit 1,2,3` each task as
+  soon as its editor is closed, so a later `Esc` or `Ctrl+C` does not take
+  the earlier edits with it. If the save is refused or fails — another
+  process changed or deleted the task while the editor was open, the database
+  cannot be reached — nothing is overwritten and **the draft is still there**:
+  run the command again, answer `y`, and merge your text with the task as it
+  is now.
+- **Recovery.** When the editor is about to open a task that has a draft, it
+  says how old the draft is and what is in it:
 
   ```
-  Restore unsaved draft for task 3? [y/N]:
+  Restore unsaved draft for task 3 (12 minutes ago, “buy oat milk and…”)? [y/N]:
   ```
 
-  Answering `y` pre-loads the draft instead of the stored text. Any other
-  answer deletes the draft and continues with the stored text.
-- A crash, `Ctrl+C`, or a terminal kill leaves the draft file in place so the
-  next `rusk edit <id>` can offer recovery.
+  Answering `y` loads the draft into the buffer; the task's stored text stays
+  the baseline, so `●` shows at once, `Esc` asks before discarding, and
+  `Ctrl+R` goes back to what the task actually holds. Any other answer
+  deletes the draft and opens the stored text.
+- A draft is pinned to the text it was typed against, so one left over from a
+  task that has since been deleted is never offered for the **new** task that
+  reused its id.
+- `rusk add -d <date>` keeps its date when a draft is restored: the draft
+  holds text, not a due date, so the date is put back in front unless the
+  draft already begins with one.
+- A draft that cannot be read is not thrown away — it is kept as
+  `editor-task-3.draft.corrupt` and rusk says where it went, because the text
+  inside it may still be readable by a human.
 
 ## Task date header
 

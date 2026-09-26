@@ -8,9 +8,9 @@
 //! (foreign UIDs get the lowest free id on load), RELATED-TO with a rusk
 //! UID = a `--after` dependency (foreign relations are ignored). Other components
 //! (VEVENT, VALARM) and properties are ignored and not preserved — rusk
-//! owns the file.
+//! owns the file. A VTODO without SUMMARY has no text: no task, unless its
+//! UID is a rusk one (see [`crate::model::normalize`]).
 
-use super::assign_missing_ids;
 use crate::model::{Task, TaskId};
 use anyhow::{Context, Result};
 use chrono::NaiveDate;
@@ -106,7 +106,7 @@ pub fn encode(tasks: &[Task]) -> String {
 /// previous one.
 fn unfold(data: &str) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
-    for raw in data.trim_start_matches('\u{feff}').lines() {
+    for raw in data.lines() {
         let line = raw.strip_suffix('\r').unwrap_or(raw);
         if let Some(rest) = line.strip_prefix(' ').or_else(|| line.strip_prefix('\t'))
             && let Some(last) = lines.last_mut()
@@ -205,7 +205,6 @@ pub fn decode(data: &str) -> Result<Vec<Task>> {
     if in_vtodo {
         anyhow::bail!("iCalendar: unterminated VTODO component");
     }
-    assign_missing_ids(&mut tasks)?;
     Ok(tasks)
 }
 
@@ -258,7 +257,7 @@ mod tests {
         assert_eq!(tasks[0].date, NaiveDate::from_ymd_opt(2026, 8, 1));
         assert!(tasks[0].done);
         assert!(!tasks[0].priority, "PRIORITY:9 is low, not the flag");
-        assert_eq!(tasks[0].id, 1, "foreign UID gets a free id");
+        assert_eq!(tasks[0].id, 0, "a foreign UID is no id: the load hands one out");
     }
 
     #[test]

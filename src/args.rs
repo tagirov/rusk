@@ -20,8 +20,14 @@ first whitespace-delimited token at the start of the first line of the task text
 current due date — today if none — or `_` to clear). A valid date token is highlighted in color; \
 see Ctrl+G / F1 in the editor for the full date syntax. \
 One-shot date or text+date without opening the TUI: `rusk edit <id> -d <date>` (same \
-relative rules as in the TUI; `_` clears). Bare `-d` / `--date` (no value) is not \
-supported. For new tasks, use `rusk add -d`.\n";
+relative rules as in the TUI; `_` clears). `-d` / `--date` needs a value and may be given \
+once. The ids are one comma-separated list (`1,2,3`); the first word after it that is not \
+glued to it by a comma starts the text, so `rusk edit 3 1,000 units` edits task 3 only. \
+When everything after the ids is numbers (`rusk edit 1,2 3`), nothing is changed: those \
+read as more ids. Everything after `--` is text, word for word: that is where a text made \
+of numbers goes, and any word that starts with `-` (`rusk edit 1 -- -x means exclude`); \
+before `--`, such a word is an option, and `-h` prints this help without changing anything. \
+For new tasks, use `rusk add -d`.\n";
 
 /// Root `--help` tail (after subcommands/options). Omits `completions` when that feature is off so
 /// distro builds (`--no-default-features`) match the available CLI and static files in `completions/`.
@@ -59,7 +65,6 @@ rusk add report -d 31-12-2025\n  \
 rusk add deploy -a 19,22          # depends on tasks 19 and 22\n  \
 rusk add                          # interactive editor\n  \
 rusk add -d 2w                    # editor with the date pre-seeded",
-        help_template = "{about-section}\n\nUsage: rusk add [OPTIONS] [TEXT]...\n\n{all-args}\n\n{after-help}",
         after_long_help = DATE_FORMAT_LONG_HELP
     )]
     Add {
@@ -80,6 +85,7 @@ rusk add -d 2w                    # editor with the date pre-seeded",
             short = 'a',
             long,
             value_name = "IDS",
+            allow_hyphen_values = true,
             help = "Tasks this one depends on, comma-separated (e.g. 19,22): shown after the text; an ordering hint for agents, manual marking is not restricted"
         )]
         after: Option<String>,
@@ -92,16 +98,19 @@ Examples:\n  \
 rusk del 3\n  \
 rusk del 1,2,3\n  \
 rusk del --done",
-        help_template = "{about-section}\n\nUsage: rusk del [OPTIONS] [IDS]...\n\n{all-args}"
+        override_usage = "rusk del <IDS>\n       rusk del --done"
     )]
     Del {
         #[arg(
-            trailing_var_arg = true,
             value_name = "IDS",
-            help = "Task IDs: comma-separated (e.g. 1,2,3); without commas only the first ID is used"
+            help = "Task IDs: one comma-separated list, e.g. 1,2,3"
         )]
         ids: Vec<String>,
-        #[arg(long, help = "Delete all completed tasks (ignores IDS)")]
+        #[arg(
+            long,
+            conflicts_with = "ids",
+            help = "Delete all completed tasks instead of the ones given by ID"
+        )]
         done: bool,
     },
     #[command(
@@ -122,7 +131,7 @@ rusk mark 1 -p"
         priority: bool,
         #[arg(
             value_name = "IDS",
-            help = "Task IDs: comma-separated (e.g. 1,2,3); without commas only the first ID is used"
+            help = "Task IDs: one comma-separated list, e.g. 1,2,3"
         )]
         ids: Vec<String>,
     },
@@ -131,25 +140,49 @@ rusk mark 1 -p"
         about = "Edit tasks by ID (without new text opens the interactive editor)",
         long_about = "Edit tasks by ID. Without new text, opens the interactive editor (set or \
 clear a due date on the first line). With text, sets task text in one shot. Optional `-d <date>` \
-(non-TUI) sets the due date; optional `-a <ids>` (non-TUI) sets the dependency list (`_` clears it).\n\n\
+(non-TUI) sets the due date; optional `-a <ids>` (non-TUI) sets the dependency list (`_` clears it). \
+Everything after `--` is text, word for word (words that start with `-`, a text of numbers).\n\n\
 Examples:\n  \
 rusk e 1                          # interactive editor\n  \
 rusk e 1 -d 2w\n  \
 rusk e 3 new text -d 15-06-2025\n  \
 rusk e 1 -d _                     # clear the due date\n  \
 rusk e 1 -a 19,22                 # depends on tasks 19 and 22\n  \
-rusk e 1 -a _                     # clear the dependency list",
-        help_template = "{about-section}\n\nUsage: rusk edit [ARGS]...\n\n{all-args}\n\n{after-help}",
+rusk e 1 -a _                     # clear the dependency list\n  \
+rusk e 1 -- -x means exclude      # a text with words that start with a dash",
+        override_usage = "rusk edit [OPTIONS] <IDS> [TEXT]... [-- <TEXT>...]",
         after_long_help = EDIT_SUBCOMMAND_LONG_HELP
     )]
     Edit {
         #[arg(
-            trailing_var_arg = true,
-            allow_hyphen_values = false,
-            value_name = "ARGS",
-            help = "Task IDs (comma-separated) followed by optional new text. Without text, opens the interactive editor"
+            value_name = "IDS",
+            help = "Task IDs: one comma-separated list, e.g. 1,2,3"
         )]
-        args: Vec<String>,
+        ids: Option<String>,
+        #[arg(
+            value_name = "TEXT",
+            help = "New text (the words after the IDS). Without text, opens the interactive editor. Words after `--` are text as they are"
+        )]
+        text: Vec<String>,
+        /// The words after `--`: text, never ids or options.
+        #[arg(last = true, value_name = "TEXT", hide = true)]
+        verbatim: Vec<String>,
+        #[arg(
+            short,
+            long,
+            value_name = "DATE",
+            allow_hyphen_values = true,
+            help = "New due date: DD-MM-YYYY, today/tomorrow, relative from today (2d, 3q, 10d5w, …), `+2w` relative from the task's current date, or `_` to clear it. See `rusk add --help` for the syntax. Pass `-d -h` for this command's help"
+        )]
+        date: Option<String>,
+        #[arg(
+            short = 'a',
+            long,
+            value_name = "IDS",
+            allow_hyphen_values = true,
+            help = "New dependency list, comma-separated (e.g. 19,22), or `_` to clear it"
+        )]
+        after: Option<String>,
     },
     #[command(
         visible_alias = "l",
@@ -158,8 +191,16 @@ rusk e 1 -a _                     # clear the dependency list",
 subcommand does the same. Use -c for a compact single-line view."
     )]
     List {
+        /// The listing the completion scripts of rusk 0.7.3 and before read
+        /// (a text's further lines unmarked, so ambiguous), kept as it was
+        /// for scripts installed then; the current ones read
+        /// `--for-completion-lines`.
         #[arg(long, hide = true, default_value_t = false)]
         for_completion: bool,
+        /// What the completion scripts read: one line per task, the text
+        /// escaped (see `handlers::completion_line`).
+        #[arg(long, hide = true, default_value_t = false)]
+        for_completion_lines: bool,
         #[arg(
             short = 'c',
             long,
@@ -176,8 +217,7 @@ one phrase. With --id, print only the IDs of matching tasks (one per line, no co
 Examples:\n  \
 rusk search protein\n  \
 rusk s buy groceries\n  \
-rusk s --id protein",
-        help_template = "{about-section}\n\nUsage: rusk search [OPTIONS] <QUERY>...\n\n{all-args}"
+rusk s --id protein"
     )]
     Search {
         #[arg(
@@ -191,7 +231,7 @@ rusk s --id protein",
     },
     #[command(
         visible_alias = "r",
-        about = "Restore task database from the automatic backup (.json.backup)"
+        about = "Restore task database from the automatic backup (<database>.backup)"
     )]
     Restore,
     #[cfg(feature = "web")]

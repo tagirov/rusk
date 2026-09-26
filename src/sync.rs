@@ -5,8 +5,8 @@
 //! (system `ssh`; pull is a remote `cat`, push is an atomic temp+`mv`
 //! replace), `http(s)://host[:port]` uses the http backend (the API of a
 //! running `rusk serve` via the system `curl`, optional Bearer token from
-//! `sync_token`). Unlike `rusk_db`, the ssh form here also accepts a bare
-//! `host:/path` without `user@`.
+//! `sync_token`). The value is read exactly like `rusk_db` (see
+//! [`crate::location`]), except that it cannot be a local path.
 //!
 //! Conflict safety without merge machinery: a state file next to the
 //! database stores the hash of the last synced content. Comparing
@@ -15,9 +15,15 @@
 //! Hashes are taken over the canonical serialization (parsed tasks
 //! re-encoded as compact JSON), so the pretty-printed local file and the
 //! compact HTTP body compare equal, as do CSV-backed databases.
+//!
+//! Both sides are read first and written later. A side that another writer
+//! changes in between is not overwritten: the backends refuse to replace
+//! what they did not read (`StaleDatabase`), and the sync is simply run
+//! again.
 
-use crate::backend::{Backend, http::HttpBackend, ssh::SshBackend};
+use crate::backend::{Backend, Loaded, http::HttpBackend, ssh::SshBackend};
 use crate::config::theme;
+use crate::location::Location;
 use crate::Task;
 use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
@@ -35,20 +41,22 @@ enum Remote {
 }
 
 impl Remote {
-    fn parse(s: &str, token: Option<String>) -> Result<Self> {
-        if s.starts_with("http://") || s.starts_with("https://") {
-            return Ok(Remote::Http(HttpBackend::new(s, token)));
+    /// A sync remote is a location (see [`crate::location`]) that is not
+    /// on this machine.
+    /// The token is asked for only when the remote is a server.
+    fn parse(s: &str, token: impl FnOnce() -> Result<Option<String>>) -> Result<Self> {
+        let location = Location::parse(s).with_context(|| {
+            format!("invalid sync remote '{}'", crate::printable::escape(s))
+        })?;
+        match location {
+            Location::Http(url) => Ok(Remote::Http(HttpBackend::new(&url, token()?))),
+            Location::Ssh(ssh) => Ok(Remote::Ssh(SshBackend::new(&ssh)?)),
+            Location::Local(_) => bail!(
+                "invalid sync remote '{}': expected `user@host:/path/tasks.json` (ssh) \
+                 or `https://host` (rusk serve API)",
+                crate::printable::escape(s)
+            ),
         }
-        if let Some((target, path)) = s.split_once(':')
-            && !target.is_empty()
-            && !path.is_empty()
-        {
-            return Ok(Remote::Ssh(SshBackend::new(target, path)?));
-        }
-        bail!(
-            "invalid sync remote '{s}': expected `user@host:/path/tasks.json` (ssh) \
-             or `https://host` (rusk serve API)"
-        );
     }
 
     fn describe(&self) -> String {
@@ -58,10 +66,15 @@ impl Remote {
         }
     }
 
-    fn fetch(&self) -> Result<Vec<Task>> {
+    fn fetch(&self) -> Result<Loaded> {
         match self {
-            Remote::Ssh(b) => b.load(),
-            Remote::Http(b) => b.load(),
+            Remote::Ssh(b) => b.read(),
+            // A server that answers holds a database; one that does not is
+            // an error, never an absence.
+            Remote::Http(b) => Ok(Loaded {
+                tasks: b.load()?,
+                missing: false,
+            }),
         }
     }
 
@@ -97,24 +110,69 @@ fn decide(base: Option<&str>, local: &str, remote: &str, remote_empty: bool) -> 
     }
 }
 
-fn fnv1a(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for &b in bytes {
-        hash ^= u64::from(b);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
+/// What one side holds, as far as this matters for the guard below.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Side {
+    /// There is no database at that location at all — it was never
+    /// created, or the file is gone. (A database that exists but cannot be
+    /// read never gets here: the backends make that an error.)
+    Missing,
+    /// A database holding no tasks.
+    Empty,
+    Tasks(usize),
 }
 
-/// Stable across formats: tasks re-encoded as compact JSON, then FNV-1a 64.
+impl Side {
+    fn of(db: &Loaded) -> Self {
+        match (db.missing, db.tasks.len()) {
+            (true, _) => Side::Missing,
+            (false, 0) => Side::Empty,
+            (false, count) => Side::Tasks(count),
+        }
+    }
+
+    fn has_tasks(self) -> bool {
+        matches!(self, Side::Tasks(_))
+    }
+
+    /// How the side reads in the guard's message, after `what` names it.
+    fn describe(self, what: &str) -> String {
+        match self {
+            Side::Missing => format!("{what} does not exist"),
+            Side::Empty => format!("{what} has no tasks"),
+            Side::Tasks(count) => format!("{what} has {count} task(s)"),
+        }
+    }
+}
+
+/// A fast-forward that would replace a side holding tasks with zero tasks.
+///
+/// Both reasons for the zero need an explicit `--force`: a database file
+/// that is not there is no instruction to delete anything, and "the user
+/// emptied it" is a change too big to propagate on a guess.
+#[derive(Debug, PartialEq, Eq)]
+enum Wipe {
+    /// Pushing an empty local database over a remote holding tasks.
+    Remote,
+    /// Pulling an empty remote over a local database holding tasks.
+    Local,
+}
+
+fn wipe_guard(status: &SyncStatus, local: Side, remote: Side) -> Option<Wipe> {
+    match status {
+        SyncStatus::LocalAhead if !local.has_tasks() && remote.has_tasks() => Some(Wipe::Remote),
+        SyncStatus::RemoteAhead if !remote.has_tasks() && local.has_tasks() => Some(Wipe::Local),
+        _ => None,
+    }
+}
+
+/// Stable across formats and transports, see [`crate::revision`].
 fn canonical_hash(tasks: &[Task]) -> Result<String> {
-    let json = serde_json::to_string(tasks).context("Failed to serialize tasks")?;
-    Ok(format!("{:016x}", fnv1a(json.as_bytes())))
+    crate::revision::list_revision(tasks)
 }
 
 fn state_path(db_path: &Path) -> PathBuf {
-    let ext = db_path.extension().and_then(|e| e.to_str()).unwrap_or("json");
-    db_path.with_extension(format!("{ext}.sync"))
+    crate::backend::aux_path(db_path, "sync")
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -136,19 +194,24 @@ fn write_base(state_path: &Path, remote: &str, hash: &str) {
         hash: hash.to_string(),
     };
     if let Ok(json) = serde_json::to_string(&state) {
-        let _ = std::fs::write(state_path, json);
+        let _ = crate::atomic::replace_aux_file(
+            state_path,
+            json.as_bytes(),
+            crate::atomic::Mode::Keep,
+        );
     }
 }
 
 pub fn run(direction: Direction) -> Result<()> {
     let config = crate::config::config();
-    let remote_str = crate::config::env_or_config("RUSK_SYNC_REMOTE", &config.sync_remote)
+    let remote_str = crate::config::env_or_config("RUSK_SYNC_REMOTE", &config.sync_remote)?
         .context(
             "no sync remote configured: set `sync_remote` in the config file \
              or the RUSK_SYNC_REMOTE environment variable",
         )?;
-    let token = crate::config::env_or_config("RUSK_SYNC_TOKEN", &config.sync_token);
-    let remote = Remote::parse(&remote_str, token)?;
+    let remote = Remote::parse(&remote_str, || {
+        crate::config::env_or_config("RUSK_SYNC_TOKEN", &config.sync_token)
+    })?;
 
     let local = Backend::resolve()?;
     let Some(db_path) = local.local_path().map(Path::to_path_buf) else {
@@ -158,8 +221,10 @@ pub fn run(direction: Direction) -> Result<()> {
             local.describe()
         );
     };
-    let local_tasks = local.load()?;
-    let remote_tasks = remote.fetch()?;
+    let local_db = local.read()?;
+    let remote_db = remote.fetch()?;
+    let (local_side, remote_side) = (Side::of(&local_db), Side::of(&remote_db));
+    let (local_tasks, remote_tasks) = (local_db.tasks, remote_db.tasks);
 
     let local_hash = canonical_hash(&local_tasks)?;
     let remote_hash = canonical_hash(&remote_tasks)?;
@@ -204,6 +269,30 @@ pub fn run(direction: Direction) -> Result<()> {
         );
     };
 
+    let forced = matches!(
+        direction,
+        Direction::Push { force: true } | Direction::Pull { force: true }
+    );
+    if !forced {
+        match wipe_guard(&status, local_side, remote_side) {
+            Some(Wipe::Remote) => bail!(
+                "{}, while {}; refusing to empty the remote. Use `rusk sync pull --force` to \
+                 restore the local database from the remote, or `rusk sync push --force` to \
+                 really empty the remote",
+                local_side.describe(&format!("the local database at {}", db_path.display())),
+                remote_side.describe(&remote.describe())
+            ),
+            Some(Wipe::Local) => bail!(
+                "{}, while {}; refusing to empty the local database. Use `rusk sync push --force` \
+                 to restore the remote from the local database, or `rusk sync pull --force` to \
+                 really empty the local database",
+                remote_side.describe(&remote.describe()),
+                local_side.describe(&format!("the local database at {}", db_path.display()))
+            ),
+            None => {}
+        }
+    }
+
     match (direction, status) {
         (_, SyncStatus::InSync) => {
             // Record the base so a later divergence is detected even if the
@@ -241,19 +330,19 @@ mod tests {
     #[test]
     fn remote_parsing() {
         assert!(matches!(
-            Remote::parse("user@vps:/srv/tasks/tasks.json", None).unwrap(),
+            Remote::parse("user@vps:/srv/tasks/tasks.json", || Ok(None)).unwrap(),
             Remote::Ssh(_)
         ));
         // Bare host (no user@) is accepted for sync remotes.
         assert!(matches!(
-            Remote::parse("vps:/srv/tasks/tasks.json", None).unwrap(),
+            Remote::parse("vps:/srv/tasks/tasks.json", || Ok(None)).unwrap(),
             Remote::Ssh(_)
         ));
-        let http = Remote::parse("https://tasks.example.com/", None).unwrap();
+        let http = Remote::parse("https://tasks.example.com/", || Ok(None)).unwrap();
         assert!(matches!(http, Remote::Http(_)));
         assert_eq!(http.describe(), "https://tasks.example.com");
-        assert!(Remote::parse("just-a-host", None).is_err());
-        assert!(Remote::parse(":/path", None).is_err());
+        assert!(Remote::parse("just-a-host", || Ok(None)).is_err());
+        assert!(Remote::parse(":/path", || Ok(None)).is_err());
     }
 
     #[test]
@@ -269,6 +358,53 @@ mod tests {
         // First sync: empty remote is seedable, non-empty needs a decision.
         assert_eq!(decide(None, "l", "r", true), SyncStatus::LocalAhead);
         assert_eq!(decide(None, "l", "r", false), SyncStatus::Diverged);
+    }
+
+    #[test]
+    fn wipe_guard_blocks_only_emptying_fast_forwards() {
+        use Side::{Empty, Missing, Tasks};
+        use SyncStatus::*;
+        // A local database with nothing in it about to be pushed over a
+        // remote that holds tasks — emptied or never created, both are
+        // refused.
+        assert_eq!(wipe_guard(&LocalAhead, Empty, Tasks(2)), Some(Wipe::Remote));
+        assert_eq!(wipe_guard(&LocalAhead, Missing, Tasks(2)), Some(Wipe::Remote));
+        // The same the other way round.
+        assert_eq!(wipe_guard(&RemoteAhead, Tasks(2), Empty), Some(Wipe::Local));
+        assert_eq!(wipe_guard(&RemoteAhead, Tasks(2), Missing), Some(Wipe::Local));
+        // Seeding a side that holds nothing is always fine.
+        assert_eq!(wipe_guard(&LocalAhead, Tasks(1), Missing), None);
+        assert_eq!(wipe_guard(&RemoteAhead, Missing, Tasks(1)), None);
+        // Ordinary fast-forwards and the other states are untouched.
+        assert_eq!(wipe_guard(&LocalAhead, Tasks(1), Tasks(2)), None);
+        assert_eq!(wipe_guard(&RemoteAhead, Tasks(1), Tasks(2)), None);
+        assert_eq!(wipe_guard(&InSync, Empty, Empty), None);
+        assert_eq!(wipe_guard(&Diverged, Missing, Tasks(1)), None);
+    }
+
+    #[test]
+    fn a_side_says_which_kind_of_nothing_it_holds() {
+        let side = |missing, count: usize| {
+            Side::of(&Loaded {
+                tasks: (0..count)
+                    .map(|i| Task {
+                        id: i as u32 + 1,
+                        text: "t".into(),
+                        date: None,
+                        done: false,
+                        priority: false,
+                        after: Vec::new(),
+                    })
+                    .collect(),
+                missing,
+            })
+        };
+        assert_eq!(side(true, 0), Side::Missing);
+        assert_eq!(side(false, 0), Side::Empty);
+        assert_eq!(side(false, 2), Side::Tasks(2));
+        assert_eq!(side(true, 0).describe("the local database"), "the local database does not exist");
+        assert_eq!(side(false, 0).describe("the remote"), "the remote has no tasks");
+        assert_eq!(side(false, 2).describe("the remote"), "the remote has 2 task(s)");
     }
 
     #[test]

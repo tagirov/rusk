@@ -1,7 +1,7 @@
 # Basic completion tests for PowerShell
 
 . $PSScriptRoot/helpers.ps1
-. /home/alex/.config/powershell/rusk-completions.ps1
+. $PSScriptRoot/../../../completions/rusk.ps1
 
 $allTestsPassed = $true
 

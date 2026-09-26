@@ -52,16 +52,16 @@ Environment variables always win over config values.
 
 | Key | Type | Default | Env override | Meaning |
 |---|---|---|---|---|
-| `rusk_db` | location | — | `RUSK_DB` | Database location. A file or directory path (`~/` expands to the home directory) — the extension picks the format: `.csv`, `.md`, `.txt` (todo.txt), `.ndjson`/`.jsonl`, `.ics`, `.db`/`.sqlite`/`.sqlite3` (SQLite), anything else is JSON. Or a remote: `https://host` (the API of a running `rusk serve`) or `user@host:/path` (a file over ssh). See README → Database Formats; non-JSON/CSV variants need their build feature |
+| `rusk_db` | location | — | `RUSK_DB` | Database location. A file or directory path (`~` and `~/` expand to the home directory, here and in `RUSK_DB`; a relative path is taken from the current directory, like the default `.rusk/tasks.json`) — the last extension picks the format: `.csv`, `.md`, `.txt` (todo.txt), `.ndjson`/`.jsonl`, `.ics`, `.db`/`.sqlite`/`.sqlite3` (SQLite), anything else is JSON (`notes.txt.json` is JSON). Or a remote: `https://host` (the API of a running `rusk serve`; scheme in any case, a trailing `/api/tasks` is dropped, a query or fragment is refused — the token goes in `db_token`) or `[user@]host:path` as `scp` reads it (a file over ssh; `user@[::1]:/path` for IPv6, `~/` is the remote home directory, SQLite is local only). A local file whose name has a `:` in it is written with `./` in front. Other `scheme://` values are refused. See README → Database Formats; non-JSON/CSV variants need their build feature |
 | `db_token` | string | — | `RUSK_DB_TOKEN` | Bearer token when `rusk_db` is an http(s) location (the serve's `web_token`) |
 | `git_backend` | bool | `false` | — | Commit every save of a local file database to a git repository in the database directory (needs `git` and the `backend-git` feature) |
 | `no_color` | bool | `false` | `RUSK_NO_COLOR` / `NO_COLOR` | Disable ANSI colors. The config can only disable colors, never re-enable them over the environment |
 | `compact` | bool | `false` | — | Compact `rusk list` view by default (`-c` still forces it per run) |
-| `backup` | bool | `true` | — | Write a `.backup` copy next to the database on every save |
+| `backup` | bool | `true` | — | Write a `.backup` copy next to the database on every save — locally, and on the remote for an ssh database. With `false` an existing `.backup` is neither refreshed nor removed: `rusk restore` still uses it and warns how old it is |
 | `web_host` | string | `127.0.0.1` | — | Bind address for `rusk serve` (see [WEB.md](WEB.md)) |
 | `web_port` | u16 | `7272` | — | Port for `rusk serve` |
 | `web_token` | string | — | — | Access token for `rusk serve`; required for non-loopback hosts |
-| `sync_remote` | string | — | `RUSK_SYNC_REMOTE` | Remote for `rusk sync`: `user@host:/path/tasks.json` (ssh) or `https://host` (serve API) |
+| `sync_remote` | string | — | `RUSK_SYNC_REMOTE` | Remote for `rusk sync`: `[user@]host:/path/tasks.json` (ssh) or `https://host` (serve API), read exactly like a remote `rusk_db` |
 | `sync_token` | string | — | `RUSK_SYNC_TOKEN` | Bearer token for http(s) sync remotes |
 | `keywords` | list | `TEMP INFO FIXME WIP` | — | Keywords highlighted when a task text starts with one (only the first word is matched; space- or comma-separated, case-sensitive; `keywords =` with no value disables). Color comes from the `keyword` theme key |
 

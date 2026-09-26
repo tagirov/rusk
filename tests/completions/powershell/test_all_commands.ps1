@@ -1,7 +1,7 @@
 # Comprehensive tests for all rusk commands and their completion behavior
 
 . $PSScriptRoot/helpers.ps1
-. /home/alex/.config/powershell/rusk-completions.ps1
+. $PSScriptRoot/../../../completions/rusk.ps1
 
 $allTestsPassed = $true
 

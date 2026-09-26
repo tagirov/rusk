@@ -41,7 +41,9 @@ _rusk_get_task_ids() {
     fi
 }
 
-# Check if text contains special characters that require quoting
+# True if the text would not come back as it is when put on the command line
+# bare: a shell-special character, or any whitespace but single spaces between
+# words (tabs, line breaks, runs of spaces and spaces at either end).
 _rusk_needs_quotes() {
     local text="$1"
     # Special chars: | ; & > < ( ) [ ] { } $ " ' ` \ * ? ~ # @ ! % ^ = + - / : ,
@@ -50,8 +52,7 @@ _rusk_needs_quotes() {
         *[\|\;\&\>\<\(\)\[\]\{\}\$\"\'\`\\*\?\~\#\@\!\%\^\=\+\-\/\:\,]*)
             return 0
             ;;
-        *$'\n'*)
-            # Multi-line task text must be quoted to survive as one argument
+        *[[:cntrl:]]* | *'  '* | ' '* | *' ')
             return 0
             ;;
     esac
@@ -75,49 +76,10 @@ _rusk_quote_text() {
     print -r -- "'$escaped'"
 }
 
-# Get task text by ID (supports multi-line tasks via rusk list --for-completion)
-_rusk_get_task_text() {
-    local task_id="$1"
-    local rusk_cmd=$(_rusk_cmd)
-    local rusk_db=""
-    local -a buffer_words
-    buffer_words=(${(z)LBUFFER})
-    for word in "${buffer_words[@]}"; do
-        if [[ "$word" =~ ^RUSK_DB=(.+)$ ]]; then
-            rusk_db="${match[1]}"
-            break
-        fi
-    done
-    
-    local output
-    if [ -n "$rusk_db" ]; then
-        output=$(env RUSK_DB="$rusk_db" "$rusk_cmd" list --for-completion 2>/dev/null)
-    else
-        output=$("$rusk_cmd" list --for-completion 2>/dev/null)
-    fi
-    
-    local text="" collecting=0 id rest
-    while IFS= read -r line; do
-        if [[ "$line" =~ ^[0-9]+$'\t' ]]; then
-            id="${line%%$'\t'*}"
-            rest="${line#*$'\t'}"
-            if [[ "$id" == "$task_id" ]]; then
-                text="$rest"
-                collecting=1
-            else
-                collecting=0
-            fi
-        elif (( collecting )); then
-            text="${text}"$'\n'"${line}"
-        fi
-    done <<< "$output"
-    
-    if [ -n "$text" ]; then
-        _rusk_quote_text "$text"
-    fi
-}
-
-# Get raw task text by ID (no quoting) - quoting is applied later for zsh
+# Sets REPLY to the text of task $1 from `rusk list --for-completion-lines`; fails
+# when there is none. Each task is one line, `<id><TAB><text>`, with `\\`,
+# `\n`, `\r` and `\t` escaped in the text: `printf %b` gives it back. REPLY
+# rather than output: a command substitution would drop trailing newlines.
 _rusk_get_task_text_raw() {
     local task_id="$1"
     local rusk_cmd=$(_rusk_cmd)
@@ -133,31 +95,25 @@ _rusk_get_task_text_raw() {
     
     local output
     if [ -n "$rusk_db" ]; then
-        output=$(env RUSK_DB="$rusk_db" "$rusk_cmd" list --for-completion 2>/dev/null)
+        output=$(env RUSK_DB="$rusk_db" "$rusk_cmd" list --for-completion-lines 2>/dev/null)
     else
-        output=$("$rusk_cmd" list --for-completion 2>/dev/null)
+        output=$("$rusk_cmd" list --for-completion-lines 2>/dev/null)
     fi
     
-    local text="" collecting=0 id rest
-    while IFS= read -r line; do
-        if [[ "$line" =~ ^[0-9]+$'\t' ]]; then
-            id="${line%%$'\t'*}"
-            rest="${line#*$'\t'}"
-            if [[ "$id" == "$task_id" ]]; then
-                text="$rest"
-                collecting=1
-            else
-                collecting=0
-            fi
-        elif (( collecting )); then
-            text="${text}"$'\n'"${line}"
+    local line
+    REPLY=""
+    for line in "${(@f)output}"; do
+        if [[ "$line" == "$task_id"$'\t'* ]]; then
+            printf -v REPLY '%b' "${line#*$'\t'}"
+            break
         fi
-    done <<< "$output"
-    
-    if [ -n "$text" ]; then
-        # print -r: zsh's echo would reprocess backslash escapes in the text
-        print -r -- "$text"
-    fi
+    done
+    [[ -n "$REPLY" ]]
+}
+
+# The text of task $1, quoted for the command line.
+_rusk_get_task_text() {
+    _rusk_get_task_text_raw "$1" && _rusk_quote_text "$REPLY"
 }
 
 # Get entered task IDs from command line
@@ -226,7 +182,7 @@ _rusk_count_ids() {
     local start_idx=$((rusk_idx + 2))
     local end_idx=${CURRENT:-${#words[@]}}
     for ((i=start_idx; i<end_idx; i++)); do
-        if [[ "${words[i]}" =~ ^[0-9]+$ ]]; then
+        if [[ "${words[i]}" =~ ^[0-9,]+$ ]]; then
             ((count++))
         fi
     done
@@ -453,10 +409,12 @@ _rusk_main() {
             elif [[ "$cur" =~ ^[0-9]+$ ]] && [[ ("$prev" == "edit" || "$prev" == "e") ]]; then
                 local count_ids=$(_rusk_count_ids)
                 if [ "$count_ids" -eq 0 ]; then
-                    local raw_text=$(_rusk_get_task_text_raw "$cur")
-                    if [ -n "$raw_text" ]; then
+                    if _rusk_get_task_text_raw "$cur"; then
+                        local raw_text="$REPLY"
                         # Quote only when needed; do not escape plain spaces.
                         local quoted_text="$(_rusk_quote_text "$raw_text")"
+                        # A text that starts with `-` would be read as options: after `--` rusk takes it as text.
+                        [[ "$raw_text" == -* ]] && quoted_text="-- ${quoted_text}"
                         # Do not assign to BUFFER in zsh completion: it's read-only in real completion context.
                         # Instead, return a completion candidate that includes the ID plus the quoted task text.
                         local completion_value="${cur} ${quoted_text}"
@@ -478,7 +436,12 @@ _rusk_main() {
         mark|m|del|d)
             if [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; }; then
                 if [[ "$cmd" == "del" || "$cmd" == "d" ]]; then
-                    _rusk_zsh_compadd_flags -- --done --help -h
+                    # `--done` takes no ids: offered only before any
+                    if [ "$(_rusk_count_ids)" -eq 0 ]; then
+                        _rusk_zsh_compadd_flags -- --done --help -h
+                    else
+                        _rusk_zsh_compadd_flags -- --help -h
+                    fi
                 else
                     _rusk_zsh_compadd_flags -- -p --priority -h --help
                 fi

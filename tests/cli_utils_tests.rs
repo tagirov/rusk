@@ -89,46 +89,14 @@ fn test_strip_ansi_codes_nested_codes() {
     assert_eq!(result, "hello");
 }
 
+/// REVIEW №38: a sequence ends at its own final byte, not at the next `m`.
+/// Anything else ate the text after it (`\e[?25l after` lost "after").
 #[test]
-fn test_extract_ansi_codes_no_codes() {
-    let (prefix, suffix) = HandlerCLI::extract_ansi_codes("hello world");
-    assert_eq!(prefix, "");
-    assert_eq!(suffix, "");
-}
-
-#[test]
-fn test_extract_ansi_codes_single_code() {
-    let (prefix, suffix) = HandlerCLI::extract_ansi_codes("\x1b[31mhello");
-    assert_eq!(prefix, "\x1b[31m");
-    assert_eq!(suffix, "\x1b[0m");
-}
-
-#[test]
-fn test_extract_ansi_codes_multiple_codes() {
-    let (prefix, suffix) = HandlerCLI::extract_ansi_codes("\x1b[1m\x1b[31mhello");
-    assert!(prefix.contains("\x1b[1m"));
-    assert!(prefix.contains("\x1b[31m"));
-    assert_eq!(suffix, "\x1b[0m");
-}
-
-#[test]
-fn test_extract_ansi_codes_with_text() {
-    let (prefix, suffix) = HandlerCLI::extract_ansi_codes("\x1b[32mhello\x1b[0m world");
-    assert_eq!(prefix, "\x1b[32m");
-    assert_eq!(suffix, "\x1b[0m");
-}
-
-#[test]
-fn test_extract_ansi_codes_unterminated_sequence_dropped() {
-    // A sequence without the closing 'm' is not part of the prefix.
-    let (prefix, suffix) = HandlerCLI::extract_ansi_codes("\x1b[31");
-    assert_eq!(prefix, "");
-    assert_eq!(suffix, "");
-
-    // A complete sequence followed by an unterminated one keeps only the complete part.
-    let (prefix, suffix) = HandlerCLI::extract_ansi_codes("\x1b[1m\x1b[3");
-    assert_eq!(prefix, "\x1b[1m");
-    assert_eq!(suffix, "\x1b[0m");
+fn test_strip_ansi_codes_ends_each_sequence_where_the_terminal_does() {
+    assert_eq!(HandlerCLI::strip_ansi_codes("a\x1b[?25l after"), "a after");
+    assert_eq!(HandlerCLI::strip_ansi_codes("\x1b]0;title\x07 mom"), " mom");
+    assert_eq!(HandlerCLI::strip_ansi_codes("\x1b]8;;url\x1b\\link"), "link");
+    assert_eq!(HandlerCLI::strip_ansi_codes("x\x1b7y"), "xy");
 }
 
 #[test]

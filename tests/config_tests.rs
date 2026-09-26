@@ -2,33 +2,14 @@
 // auto-creation, theme colors, no_color precedence, warnings, compact, backup.
 
 use std::fs;
-use std::path::PathBuf;
 use std::process::Command;
-use std::sync::Mutex;
 
 mod common;
 
-// Tests below share the debug db path (RUSK_DB is ignored by debug binaries,
-// which resolve to the same fixed path); serialize the ones that touch it.
-static DB_MUTEX: Mutex<()> = Mutex::new(());
-
-fn debug_db_path() -> PathBuf {
-    std::env::temp_dir().join("rusk_debug").join("tasks.json")
-}
-
-fn setup_test_db(tasks_json: &str) {
-    let db_path = debug_db_path();
-    if let Some(parent) = db_path.parent() {
-        fs::create_dir_all(parent).unwrap();
-    }
-    fs::write(&db_path, tasks_json).unwrap();
-}
-
 /// `rusk` with the given RUSK_CONFIG value and ANSI colors forced on
 /// (`colored` would otherwise strip them from piped output).
-fn rusk_with_config(cfg_path: &str) -> Command {
-    let mut cmd = Command::new(common::require_rusk_bin().expect("rusk binary not found"));
-    cmd.env("RUSK_DB", debug_db_path());
+fn rusk_with_config(sb: &common::Sandbox, cfg_path: &str) -> Command {
+    let mut cmd = sb.cmd();
     cmd.env("RUSK_CONFIG", cfg_path);
     cmd.env("CLICOLOR_FORCE", "1");
     cmd.env_remove("RUSK_NO_COLOR");
@@ -41,14 +22,14 @@ const ONE_TASK_DB: &str =
 
 #[test]
 fn test_config_auto_created_and_parses_cleanly() {
-    let _guard = DB_MUTEX.lock().unwrap();
-    setup_test_db(ONE_TASK_DB);
+    let sb = common::Sandbox::new();
+    sb.write_db(ONE_TASK_DB);
 
     let dir = tempfile::tempdir().unwrap();
     let cfg_path = dir.path().join("cfg");
     assert!(!cfg_path.exists());
 
-    let out = rusk_with_config(cfg_path.to_str().unwrap())
+    let out = rusk_with_config(&sb, cfg_path.to_str().unwrap())
         .arg("list")
         .output()
         .unwrap();
@@ -60,7 +41,7 @@ fn test_config_auto_created_and_parses_cleanly() {
     assert!(content.contains("priority_marker = accent"));
 
     // The shipped template must parse without warnings on the next run.
-    let out2 = rusk_with_config(cfg_path.to_str().unwrap())
+    let out2 = rusk_with_config(&sb, cfg_path.to_str().unwrap())
         .arg("list")
         .output()
         .unwrap();
@@ -73,18 +54,19 @@ fn test_config_auto_created_and_parses_cleanly() {
 
 #[test]
 fn test_theme_color_from_config_applies() {
+    let sb = common::Sandbox::new();
     let dir = tempfile::tempdir().unwrap();
     let cfg_path = dir.path().join("cfg");
     fs::write(&cfg_path, "error = green\n").unwrap();
 
     // `rusk edit` with no args errors out before opening the database.
-    let out = rusk_with_config(cfg_path.to_str().unwrap())
+    let out = rusk_with_config(&sb, cfg_path.to_str().unwrap())
         .arg("edit")
         .output()
         .unwrap();
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("No arguments provided"));
+    assert!(stderr.contains("no task ids given"), "{stderr}");
     assert!(
         stderr.contains("\x1b[32m"),
         "error should be green from the config, got: {stderr:?}"
@@ -94,12 +76,13 @@ fn test_theme_color_from_config_applies() {
 
 #[test]
 fn test_empty_rusk_config_disables_config_and_keeps_red() {
+    let sb = common::Sandbox::new();
     let dir = tempfile::tempdir().unwrap();
     let cfg_path = dir.path().join("cfg");
     fs::write(&cfg_path, "error = green\n").unwrap();
 
     // RUSK_CONFIG="" disables the config entirely, even though the file exists.
-    let out = rusk_with_config("").arg("edit").output().unwrap();
+    let out = rusk_with_config(&sb, "").arg("edit").output().unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("\x1b[31m"),
@@ -109,11 +92,12 @@ fn test_empty_rusk_config_disables_config_and_keeps_red() {
 
 #[test]
 fn test_env_no_color_beats_config() {
+    let sb = common::Sandbox::new();
     let dir = tempfile::tempdir().unwrap();
     let cfg_path = dir.path().join("cfg");
     fs::write(&cfg_path, "no_color = false\n").unwrap();
 
-    let out = rusk_with_config(cfg_path.to_str().unwrap())
+    let out = rusk_with_config(&sb, cfg_path.to_str().unwrap())
         .env("RUSK_NO_COLOR", "1")
         .arg("edit")
         .output()
@@ -128,11 +112,12 @@ fn test_env_no_color_beats_config() {
 
 #[test]
 fn test_config_no_color_disables_ansi() {
+    let sb = common::Sandbox::new();
     let dir = tempfile::tempdir().unwrap();
     let cfg_path = dir.path().join("cfg");
     fs::write(&cfg_path, "no_color = true\n").unwrap();
 
-    let out = rusk_with_config(cfg_path.to_str().unwrap())
+    let out = rusk_with_config(&sb, cfg_path.to_str().unwrap())
         .arg("edit")
         .output()
         .unwrap();
@@ -143,14 +128,14 @@ fn test_config_no_color_disables_ansi() {
 
 #[test]
 fn test_malformed_config_warns_with_line_numbers_and_still_works() {
-    let _guard = DB_MUTEX.lock().unwrap();
-    setup_test_db(ONE_TASK_DB);
+    let sb = common::Sandbox::new();
+    sb.write_db(ONE_TASK_DB);
 
     let dir = tempfile::tempdir().unwrap();
     let cfg_path = dir.path().join("cfg");
     fs::write(&cfg_path, "not a valid line\nerror = blu\n").unwrap();
 
-    let out = rusk_with_config(cfg_path.to_str().unwrap())
+    let out = rusk_with_config(&sb, cfg_path.to_str().unwrap())
         .arg("list")
         .output()
         .unwrap();
@@ -164,14 +149,14 @@ fn test_malformed_config_warns_with_line_numbers_and_still_works() {
 
 #[test]
 fn test_unused_variable_warns() {
-    let _guard = DB_MUTEX.lock().unwrap();
-    setup_test_db(ONE_TASK_DB);
+    let sb = common::Sandbox::new();
+    sb.write_db(ONE_TASK_DB);
 
     let dir = tempfile::tempdir().unwrap();
     let cfg_path = dir.path().join("cfg");
     fs::write(&cfg_path, "no_colour = true\n").unwrap();
 
-    let out = rusk_with_config(cfg_path.to_str().unwrap())
+    let out = rusk_with_config(&sb, cfg_path.to_str().unwrap())
         .arg("list")
         .output()
         .unwrap();
@@ -182,8 +167,8 @@ fn test_unused_variable_warns() {
 
 #[test]
 fn test_compact_from_config() {
-    let _guard = DB_MUTEX.lock().unwrap();
-    setup_test_db(
+    let sb = common::Sandbox::new();
+    sb.write_db(
         r#"[{"id":1,"text":"First line\nSecond line","date":null,"done":false,"priority":false}]"#,
     );
 
@@ -192,30 +177,30 @@ fn test_compact_from_config() {
     fs::write(&cfg_path, "compact = true\n").unwrap();
 
     // Bare `rusk` should honor `compact = true` from the config.
-    let out = rusk_with_config(cfg_path.to_str().unwrap()).output().unwrap();
+    let out = rusk_with_config(&sb, cfg_path.to_str().unwrap()).output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("First line"));
     assert!(!stdout.contains("Second line"), "got: {stdout}");
 
     // Without the config the full text is shown.
-    let out = rusk_with_config("").output().unwrap();
+    let out = rusk_with_config(&sb, "").output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("Second line"), "got: {stdout}");
 }
 
 #[test]
 fn test_backup_toggle_from_config() {
-    let _guard = DB_MUTEX.lock().unwrap();
-    setup_test_db(ONE_TASK_DB);
-    let backup_path = debug_db_path().with_extension("json.backup");
+    let sb = common::Sandbox::new();
+    sb.write_db(ONE_TASK_DB);
+    let backup_path = sb.db_path().with_extension("json.backup");
     let _ = fs::remove_file(&backup_path);
 
     let dir = tempfile::tempdir().unwrap();
     let cfg_path = dir.path().join("cfg");
     fs::write(&cfg_path, "backup = false\n").unwrap();
 
-    let out = rusk_with_config(cfg_path.to_str().unwrap())
+    let out = rusk_with_config(&sb, cfg_path.to_str().unwrap())
         .args(["add", "no backup expected"])
         .output()
         .unwrap();
@@ -225,7 +210,7 @@ fn test_backup_toggle_from_config() {
         "`backup = false` must skip the backup copy"
     );
 
-    let out = rusk_with_config("")
+    let out = rusk_with_config(&sb, "")
         .args(["add", "backup expected"])
         .output()
         .unwrap();
@@ -235,7 +220,8 @@ fn test_backup_toggle_from_config() {
 
 #[test]
 fn test_help_mentions_rusk_config() {
-    let out = rusk_with_config("").arg("--help").output().unwrap();
+    let sb = common::Sandbox::new();
+    let out = rusk_with_config(&sb, "").arg("--help").output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("RUSK_CONFIG"));

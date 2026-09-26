@@ -59,77 +59,102 @@ impl HandlerCLI {
         Self::print_task_text_with_wrapping_suffixed(prefix, text, None);
     }
 
-    /// Like `print_task_text_with_wrapping`, but appends `suffix` verbatim
-    /// after the last wrapped line. The suffix keeps its own ANSI styling
-    /// (wrapping strips inner codes from `text`, so it can't live there).
+    /// Prints a task's `text` in bold under `prefix`, wrapped to the
+    /// terminal, and appends `suffix` verbatim after the last line. `text` is
+    /// the task's own, unstyled: its control characters are escaped here, so
+    /// a task cannot drive the terminal, and each wrapped line is styled on
+    /// its own. The suffix keeps its ANSI styling; one that would push the
+    /// last line past the terminal width gets a line of its own instead.
     pub(crate) fn print_task_text_with_wrapping_suffixed(prefix: &str, text: &str, suffix: Option<&str>) {
         let max_line_width = Self::get_max_line_width();
         const LEFT_MARGIN: usize = 4;
         const RIGHT_MARGIN: usize = 4;
 
-        let text_plain = Self::strip_ansi_codes(text);
-        let (ansi_prefix, ansi_suffix) = Self::extract_ansi_codes(text);
         let available_width = max_line_width
             .saturating_sub(LEFT_MARGIN)
             .saturating_sub(RIGHT_MARGIN);
-        let wrapped_lines_plain = Self::wrap_text_by_words(&text_plain, available_width);
+        let wrapped_lines = Self::wrap_text_by_words(&crate::printable::escape(text), available_width);
 
         println!("{}", prefix);
 
         let left_indent = " ".repeat(LEFT_MARGIN);
-        let last = wrapped_lines_plain.len().saturating_sub(1);
-        for (i, line) in wrapped_lines_plain.iter().enumerate() {
-            let tail = if i == last { suffix.unwrap_or("") } else { "" };
-            println!("{}{}{}{}{}", left_indent, ansi_prefix, line, ansi_suffix, tail);
+        let last = wrapped_lines.len().saturating_sub(1);
+        let last_line_width = wrapped_lines.last().map_or(0, |l| crate::width::width(l));
+        let suffix_fits =
+            last_line_width + suffix.map_or(0, Self::display_width) <= available_width;
+        for (i, line) in wrapped_lines.iter().enumerate() {
+            let tail = match suffix {
+                Some(s) if i == last && suffix_fits => s,
+                _ => "",
+            };
+            println!("{}{}{}", left_indent, line.bold(), tail);
+        }
+        if let Some(s) = suffix
+            && !suffix_fits
+        {
+            for line in Self::wrap_suffix_alone(s, available_width) {
+                println!("{}{}", left_indent, line);
+            }
         }
     }
 
+    /// Width of styled text in terminal cells: ANSI codes take no cells.
     #[doc(hidden)]
-    pub fn extract_ansi_codes(s: &str) -> (String, String) {
-        let mut prefix = String::new();
-        let mut chars = s.chars().peekable();
-
-        // Collect leading complete ANSI sequences (ESC ... 'm'); an unterminated
-        // sequence is dropped, matching the previous behavior.
-        while chars.peek() == Some(&'\x1b') {
-            let mut ansi_seq = String::new();
-            for ch in chars.by_ref() {
-                ansi_seq.push(ch);
-                if ch == 'm' {
-                    prefix.push_str(&ansi_seq);
-                    break;
-                }
-            }
-            if !ansi_seq.ends_with('m') {
-                break;
-            }
-        }
-
-        let suffix = if prefix.is_empty() {
-            String::new()
-        } else {
-            "\x1b[0m".to_string()
-        };
-
-        (prefix, suffix)
+    pub fn display_width(s: &str) -> usize {
+        crate::width::width(&Self::strip_ansi_codes(s))
     }
 
+    /// The dependency note `(1,2,…)` laid out on lines of its own, for when it
+    /// does not fit after the task text. Its own line is no free pass past the
+    /// width: a long list of ids is wrapped like any other text, at the commas
+    /// so the ids stay readable. The styling of the ids is dropped — wrapping
+    /// cannot carry ANSI codes through.
+    #[doc(hidden)]
+    pub fn wrap_suffix_alone(suffix: &str, width: usize) -> Vec<String> {
+        let plain = Self::strip_ansi_codes(suffix);
+        let plain = plain.trim_start();
+        if crate::width::width(plain) <= width {
+            return vec![plain.to_string()];
+        }
+        // Too long even on a line of its own: break it at the commas, where
+        // an id stays readable, rather than through the digits.
+        Self::wrap_text_by_words(&plain.replace(',', ", "), width)
+    }
+
+    /// `s` without the ANSI sequences rusk styles its own output with, so
+    /// it can be measured. A sequence ends where the terminal ends it: a CSI
+    /// (`ESC [`) at its final byte (`@`..`~`), an OSC (`ESC ]`) at BEL or
+    /// ST, any other escape after one character. Task text is escaped before
+    /// it is styled (`printable::escape`) and holds no ESC by then.
     #[doc(hidden)]
     pub fn strip_ansi_codes(s: &str) -> String {
-        let mut result = String::new();
+        let mut result = String::with_capacity(s.len());
         let mut chars = s.chars().peekable();
 
         while let Some(ch) = chars.next() {
-            if ch == '\x1b' {
-                while let Some(&next) = chars.peek() {
-                    if next == 'm' {
-                        chars.next();
-                        break;
-                    }
-                    chars.next();
-                }
-            } else {
+            if ch != '\x1b' {
                 result.push(ch);
+                continue;
+            }
+            match chars.next() {
+                Some('[') => {
+                    for c in chars.by_ref() {
+                        if ('@'..='~').contains(&c) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    while let Some(c) = chars.next() {
+                        if c == '\x07' {
+                            break;
+                        }
+                        if c == '\x1b' && chars.next_if_eq(&'\\').is_some() {
+                            break;
+                        }
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -241,33 +266,42 @@ impl HandlerCLI {
     fn wrap_single_line_by_words(text: &str, width: usize) -> Vec<String> {
         let mut lines = Vec::new();
         let mut current_line = String::new();
+        let mut current_width = 0usize;
 
-        // Split an over-long word into width-sized chunks. Take at least one
-        // char per chunk so a zero width cannot loop forever.
+        // Split an over-long word into chunks that fit the width, cutting
+        // only between grapheme clusters so a flag, a ZWJ sequence or a
+        // letter with its accent stays whole. A cluster wider than the whole
+        // width still gets a chunk of its own, so a zero (or narrow) width
+        // cannot loop forever.
         let push_word_chunks = |lines: &mut Vec<String>, word: &str| {
-            let mut chars: Vec<char> = word.chars().collect();
-            while !chars.is_empty() {
-                let take = width.min(chars.len()).max(1);
-                lines.push(chars.drain(..take).collect());
+            let mut rest = word;
+            while !rest.is_empty() {
+                let take = crate::width::prefix_within(rest, width);
+                lines.push(rest[..take].to_string());
+                rest = &rest[take..];
             }
         };
 
         for word in text.split_whitespace() {
-            let word_len = word.chars().count();
+            let word_width = crate::width::width(word);
 
             if current_line.is_empty() {
-                if word_len <= width {
+                if word_width <= width {
                     current_line.push_str(word);
+                    current_width = word_width;
                 } else {
                     push_word_chunks(&mut lines, word);
                 }
-            } else if current_line.chars().count() + 1 + word_len <= width {
+            } else if current_width + 1 + word_width <= width {
                 current_line.push(' ');
                 current_line.push_str(word);
+                current_width += 1 + word_width;
             } else {
                 lines.push(std::mem::take(&mut current_line));
-                if word_len <= width {
+                current_width = 0;
+                if word_width <= width {
                     current_line.push_str(word);
+                    current_width = word_width;
                 } else {
                     push_word_chunks(&mut lines, word);
                 }

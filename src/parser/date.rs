@@ -115,9 +115,11 @@ pub fn parse_cli_date_with_base(date_str: &str, base: NaiveDate) -> Result<Naive
     }
 
     let normalized = normalize_date_string(trimmed);
-    NaiveDate::parse_from_str(&normalized, "%d-%m-%Y").with_context(|| {
-        format!(
-            "Invalid date '{}': use DD-MM-YYYY, DD/MM/YYYY, or DD.MM.YYYY (D-M-YY is OK), \
+    // chrono's reason ("input is out of range" for 31-02) goes right after
+    // the value: as a cause it would trail the whole syntax help.
+    NaiveDate::parse_from_str(&normalized, "%d-%m-%Y").map_err(|reason| {
+        anyhow::anyhow!(
+            "Invalid date '{}' ({reason}): use DD-MM-YYYY, DD/MM/YYYY, or DD.MM.YYYY (D-M-YY is OK), \
 or DD-Mon-YY / DD-Mon-YYYY (e.g. 11-jan-25), \n\
 or `today` / `tomorrow`, \
 or a relative offset such as 2d, 2w, 5m, 3q, 2y (combinable, e.g. 10d5w); \
@@ -345,5 +347,18 @@ mod tests {
         let base = d(2025, 1, 1);
         let err = parse_cli_date_with_base("invalid", base).unwrap_err();
         assert!(err.to_string().contains("Invalid date"));
+    }
+
+    /// Why the date is not one comes right after the value, before the
+    /// syntax help (as a cause it would trail all of it).
+    #[test]
+    fn invalid_date_says_why_next_to_the_value() {
+        let err = parse_cli_date_with_base("31-02-2025", d(2025, 1, 1)).unwrap_err();
+        let message = format!("{err:#}");
+        assert!(
+            message.starts_with("Invalid date '31-02-2025' (input is out of range): use "),
+            "{message}"
+        );
+        assert_eq!(message.matches("out of range").count(), 1, "{message}");
     }
 }

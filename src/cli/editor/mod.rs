@@ -50,7 +50,7 @@ use crossterm::{
 #[cfg(feature = "interactive")]
 use std::io::{self, Write};
 #[cfg(feature = "interactive")]
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 #[cfg(feature = "interactive")]
 use input::Action;
@@ -63,26 +63,40 @@ use super::HandlerCLI;
 pub(crate) fn run_editor(
     prompt: &str,
     prefill: &str,
+    restored: Option<&str>,
     cursor_at_start: bool,
     validate: Option<fn(&str) -> bool>,
     allow_skip: bool,
     extras: EditorExtras,
 ) -> Result<String> {
     let mut stdout = io::stdout();
-    terminal::enter(&mut stdout)?;
+    // From here on the terminal is the editor's, and the guard is what
+    // gives it back — on the way out below, but also on a `?`, a panic or
+    // a SIGTERM. Nothing between here and the end may restore it by hand.
+    let mut guard = terminal::TerminalGuard::enter(&mut stdout)?;
 
-    let prompt_width = prompt.chars().count();
+    let prompt_width = crate::width::width(prompt);
     let prefill_lines = text_ops::split_multi_line_prefill(prefill);
+    // What the task holds now: line endings unified and tabs expanded.
+    // Everything that asks "did the user change anything?" — the dirty
+    // glyph, the discard prompt, the draft autosave — compares against this,
+    // so merely opening a task written with tabs or CRLF is not an edit,
+    // and a buffer that starts from a restored draft is dirty from the
+    // first frame, because against the stored task it is.
+    let baseline = prefill_lines.join("\n");
+    let opening_lines = match restored {
+        Some(text) => text_ops::split_multi_line_prefill(text),
+        None => prefill_lines.clone(),
+    };
 
     let init_size = view::term_size();
     let initial_vw = view::editor_text_layout(init_size.0 as usize, prompt_width).0;
-    let mut state = state::EditorState::from_prefill(&prefill_lines, cursor_at_start, initial_vw);
+    let mut state = state::EditorState::from_prefill(&opening_lines, cursor_at_start, initial_vw);
 
     let mut history = history::History::new();
     let mut clipboard = clipboard::EditorClipboard::new();
     let mut click_tracker = mouse::ClickTracker::default();
-    let mut last_autosave = Instant::now();
-    let mut last_saved_content = prefill.to_string();
+    let mut autosave = draft::Autosave::default();
 
     let first_line_colored = extras.first_line_colored.clone();
 
@@ -91,7 +105,7 @@ pub(crate) fn run_editor(
                   term_size: (u16, u16)|
      -> Result<()> {
         let selection = state.selection_range();
-        let dirty = state.dirty_vs(prefill);
+        let dirty = state.dirty_vs(&baseline);
         view::render(
             stdout,
             view::RenderInput {
@@ -103,6 +117,7 @@ pub(crate) fn run_editor(
                 cursor_row: state.row,
                 cursor_col: state.col,
                 view_top: &mut state.view_top,
+                follow_cursor: state.follow_cursor,
                 validate: validate.as_ref(),
                 selection,
                 dirty,
@@ -114,13 +129,16 @@ pub(crate) fn run_editor(
     render(&mut stdout, &mut state, init_size)?;
 
     loop {
-        draft::tick(
-            &extras,
-            &state.lines,
-            prefill,
-            &mut last_saved_content,
-            &mut last_autosave,
-        );
+        draft::tick(&extras, &state.lines, &baseline, &mut autosave);
+
+        // A SIGTERM from a window that was closed, a SIGHUP from a
+        // connection that dropped: the terminal goes back the way it was
+        // and the buffer is kept, exactly as a Ctrl+C would.
+        if let Some(signum) = terminal::caught_signal() {
+            draft::flush(&extras, &state.lines, &baseline, &mut autosave);
+            guard.finish(&mut stdout);
+            terminal::exit_after_signal(signum, draft_note(&extras, &autosave).as_deref());
+        }
 
         let Some(ev) = poll_event(Duration::from_millis(500))? else {
             continue;
@@ -171,8 +189,12 @@ pub(crate) fn run_editor(
                     stdout.flush().ok();
                     continue;
                 }
-                terminal::finish(&mut stdout)?;
-                draft::cleanup(&extras);
+                // The draft stays until the text is somewhere safer: the
+                // caller removes it once the database holds it, and a save
+                // that fails afterwards leaves the text right here.
+                draft::flush(&extras, &state.lines, &baseline, &mut autosave);
+                guard.finish(&mut stdout);
+                warn_about_drafts(&extras, &autosave);
                 return Ok(joined);
             }
             Action::Cancel => {
@@ -183,13 +205,25 @@ pub(crate) fn run_editor(
                     term_size,
                 );
                 let dr = view::discard_dialog_row(fr, rows);
-                if state.dirty_vs(prefill) && !terminal::confirm_discard(&mut stdout, dr)? {
-                    term_size = view::term_size();
-                    render(&mut stdout, &mut state, term_size)?;
-                    continue;
+                if state.dirty_vs(&baseline) {
+                    match terminal::confirm_discard(&mut stdout, dr)? {
+                        terminal::Discard::No => {
+                            term_size = view::term_size();
+                            render(&mut stdout, &mut state, term_size)?;
+                            continue;
+                        }
+                        terminal::Discard::Abort => {
+                            return abort(&mut guard, &mut stdout, &extras, &state, &baseline, &mut autosave);
+                        }
+                        terminal::Discard::Yes => {}
+                    }
                 }
-                terminal::finish(&mut stdout)?;
-                draft::cleanup(&extras);
+                // Discarded on purpose: there is nothing unsaved left.
+                if let Some(slot) = &extras.draft {
+                    draft::remove(slot);
+                }
+                guard.finish(&mut stdout);
+                warn_about_drafts(&extras, &autosave);
                 return Err(if allow_skip {
                     crate::error::AppError::SkipTask.into()
                 } else {
@@ -197,13 +231,55 @@ pub(crate) fn run_editor(
                 });
             }
             Action::Abort => {
-                terminal::finish(&mut stdout)?;
-                println!("\n");
-                return Err(crate::error::AppError::UserAbort.into());
+                return abort(&mut guard, &mut stdout, &extras, &state, &baseline, &mut autosave);
             }
         }
 
         render(&mut stdout, &mut state, term_size)?;
+    }
+}
+
+/// Ctrl+C. It ends the session on the spot — that is what it is for — but
+/// not by throwing away what was typed: the buffer goes to the draft first,
+/// so the next `rusk edit` can offer it back.
+#[cfg(feature = "interactive")]
+fn abort(
+    guard: &mut terminal::TerminalGuard,
+    stdout: &mut io::Stdout,
+    extras: &EditorExtras,
+    state: &state::EditorState,
+    baseline: &str,
+    autosave: &mut draft::Autosave,
+) -> Result<String> {
+    draft::flush(extras, &state.lines, baseline, autosave);
+    guard.finish(stdout);
+    println!("\n");
+    if let Some(note) = draft_note(extras, autosave) {
+        eprintln!("{note}");
+    }
+    Err(crate::error::AppError::UserAbort.into())
+}
+
+/// What to say about the draft once the terminal is back: that the typed
+/// text was kept, or that it could not be.
+#[cfg(feature = "interactive")]
+fn draft_note(extras: &EditorExtras, autosave: &draft::Autosave) -> Option<String> {
+    if let Some(error) = &autosave.error {
+        return Some(format!("Warning: {error}"));
+    }
+    let slot = extras.draft.as_ref()?;
+    slot.path
+        .exists()
+        .then(|| "Your text was kept as a draft; the next edit of this task offers it back.".to_string())
+}
+
+/// An autosave that failed is worth one line, once the editor is no longer
+/// holding the screen.
+#[cfg(feature = "interactive")]
+fn warn_about_drafts(extras: &EditorExtras, autosave: &draft::Autosave) {
+    let _ = extras;
+    if let Some(error) = &autosave.error {
+        crate::backend::warn_once(&format!("Warning: {error}"));
     }
 }
 
@@ -224,6 +300,7 @@ impl HandlerCLI {
     pub(crate) fn run_multi_line_editor(
         prompt: &str,
         prefill: &str,
+        restored: Option<&str>,
         cursor_at_start: bool,
         validate: Option<fn(&str) -> bool>,
         allow_skip: bool,
@@ -232,21 +309,12 @@ impl HandlerCLI {
         run_editor(
             prompt,
             prefill,
+            restored,
             cursor_at_start,
             validate,
             allow_skip,
             extras,
         )
-    }
-
-    #[cfg(feature = "interactive")]
-    pub(crate) fn draft_path_for(dir: &std::path::Path) -> std::path::PathBuf {
-        draft::path_for(dir)
-    }
-
-    #[cfg(feature = "interactive")]
-    pub(crate) fn read_draft_for(path: &std::path::Path, key: &str) -> Option<String> {
-        draft::read_for(path, key)
     }
 
     // Public helpers re-exported for tests and external tooling.

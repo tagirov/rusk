@@ -8,12 +8,13 @@
 //! Failures here never fail the save that already happened — they are
 //! reported as warnings.
 
+use super::file::Change;
 use super::warn_yellow;
 use std::path::Path;
 use std::process::Command;
 
 /// Auxiliary siblings that must not clutter the history.
-const GITIGNORE: &str = "*.tmp\n*.backup\n*.before_restore\n*.sync\n";
+const GITIGNORE: &str = "*.tmp\n*.backup\n*.before_restore*\n*.sync\n*.lock\n*.draft\n*.draft.corrupt\n";
 
 fn git(dir: &Path, args: &[&str]) -> Result<std::process::Output, String> {
     Command::new("git")
@@ -44,7 +45,7 @@ fn git_ok(dir: &Path, args: &[&str]) -> Result<(), String> {
     }
 }
 
-fn try_commit(db_path: &Path, task_count: usize) -> Result<(), String> {
+fn try_commit(db_path: &Path, task_count: usize, change: Change) -> Result<(), String> {
     let dir = db_path.parent().filter(|p| !p.as_os_str().is_empty());
     let Some(dir) = dir else {
         return Err("database path has no parent directory".to_string());
@@ -79,7 +80,10 @@ fn try_commit(db_path: &Path, task_count: usize) -> Result<(), String> {
         return Ok(()); // content unchanged: skip the empty commit quietly
     }
 
-    let message = format!("rusk: update {name} ({task_count} tasks)");
+    let message = match change {
+        Change::Update => format!("rusk: update {name} ({task_count} tasks)"),
+        Change::Restore => format!("rusk: restore {name} from backup ({task_count} tasks)"),
+    };
     // A local fallback identity keeps commits working where user.name/email
     // are not configured; a configured identity wins as usual.
     let mut commit_args = vec![
@@ -98,8 +102,8 @@ fn try_commit(db_path: &Path, task_count: usize) -> Result<(), String> {
 }
 
 /// Commits the saved database file; failures become warnings, never errors.
-pub fn commit_db(db_path: &Path, task_count: usize) {
-    if let Err(e) = try_commit(db_path, task_count) {
+pub(super) fn commit_db(db_path: &Path, task_count: usize, change: Change) {
+    if let Err(e) = try_commit(db_path, task_count, change) {
         warn_yellow(&format!("Warning: git_backend: {e}"));
     }
 }
@@ -114,19 +118,24 @@ mod tests {
         let db = dir.path().join("tasks.json");
 
         std::fs::write(&db, "[]").unwrap();
-        try_commit(&db, 0).unwrap();
+        try_commit(&db, 0, Change::Update).unwrap();
         assert!(dir.path().join(".git").exists());
         assert!(dir.path().join(".gitignore").exists());
 
         // Unchanged content: no new commit, no error.
-        try_commit(&db, 0).unwrap();
+        try_commit(&db, 0, Change::Update).unwrap();
 
         std::fs::write(&db, "[{}]").unwrap();
-        try_commit(&db, 1).unwrap();
+        try_commit(&db, 1, Change::Update).unwrap();
+
+        // A restore is a commit of its own, named as such.
+        std::fs::write(&db, "[]").unwrap();
+        try_commit(&db, 0, Change::Restore).unwrap();
 
         let log = git(dir.path(), &["log", "--oneline"]).unwrap();
         let commits = String::from_utf8_lossy(&log.stdout);
-        assert_eq!(commits.lines().count(), 2, "{commits}");
+        assert_eq!(commits.lines().count(), 3, "{commits}");
         assert!(commits.contains("rusk: update tasks.json (1 tasks)"));
+        assert!(commits.contains("rusk: restore tasks.json from backup (0 tasks)"));
     }
 }

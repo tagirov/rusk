@@ -107,7 +107,7 @@ Common scenarios covered across all shells (bash, zsh, fish, powershell, nu):
 |----------|--------|----------|
 | **Root commands** | `rusk <tab>` | Commands: add, del, edit, list, mark, restore, completions (and aliases a, d, e, l, m, r, c) |
 | **Task ID completion** | `rusk edit <tab>`, `rusk mark <tab>`, `rusk del <tab>` | Empty (no task ID suggestions) |
-| **Task text after single ID** | `rusk edit 1<TAB>` | Task text only — **not** dates (critical for edit) |
+| **Task text after single ID** | `rusk edit 1<TAB>` | Task text only — **not** dates (critical for edit); fish completes the id first and gives the text on the next `<TAB>` (`rusk edit 1 <TAB>`) |
 | **Multiple IDs** | `rusk edit 1,2 <tab>`, `rusk mark 1,2 <tab>`, `rusk del 1,2 <tab>` | Empty (no task ID suggestions) |
 | **After date flag + space** | `rusk add x --date <tab>` | `-h` / `--help` only (no date value suggestions) |
 | **Flag completion** | `rusk add <tab>`, `rusk add -<tab>`, `rusk edit 1 -<tab>`, `rusk del -<tab>` | **add**: `--date`, `-d`, …; **edit** (after id): `--date`, `-d`, `-h`, `--help`; **del**: `--done`, … |

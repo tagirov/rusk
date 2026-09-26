@@ -18,12 +18,12 @@
 //!
 //! Caveats: rusk owns the file — lines that are not list items or their
 //! continuations (headers, prose) are ignored on load and dropped on the
-//! next save. Task text that itself starts with a `!` token, ends with an
-//! `@YYYY-MM-DD` token, or contains a line that looks like a `- [ ]` item is
-//! indistinguishable from the markup and will be reinterpreted; use JSON if
-//! that matters.
+//! next save, and so is an item with neither text nor id comment (an empty
+//! `- [ ]`, see [`crate::model::normalize`]). Task text that itself starts
+//! with a `!` token, ends with an `@YYYY-MM-DD` token after other words, or
+//! contains a line that looks like a `- [ ]` item is indistinguishable from
+//! the markup and will be reinterpreted; use JSON if that matters.
 
-use super::assign_missing_ids;
 use crate::model::{Task, TaskId};
 use anyhow::Result;
 use chrono::NaiveDate;
@@ -114,9 +114,12 @@ fn parse_meta_comment(inner: &str) -> Option<(TaskId, Vec<TaskId>)> {
     id.map(|id| (id, after))
 }
 
-/// Strips a trailing `@YYYY-MM-DD` token.
+/// Strips a trailing `@YYYY-MM-DD` token — unless nothing but the priority
+/// mark would be left: then the token is the text (as rusk writes a task
+/// whose whole text is `@2026-01-01`).
 fn take_date(content: &str) -> (Option<NaiveDate>, &str) {
     if let Some((text, last)) = content.rsplit_once(' ')
+        && !matches!(text.trim(), "" | "!")
         && let Some(date) = last.strip_prefix('@')
         && let Ok(date) = date.parse::<NaiveDate>()
     {
@@ -126,7 +129,7 @@ fn take_date(content: &str) -> (Option<NaiveDate>, &str) {
 }
 
 pub fn decode(data: &str) -> Result<Vec<Task>> {
-    let lines: Vec<&str> = data.trim_start_matches('\u{feff}').lines().collect();
+    let lines: Vec<&str> = data.lines().collect();
     let mut tasks: Vec<Task> = Vec::new();
     let mut in_task = false;
 
@@ -170,7 +173,6 @@ pub fn decode(data: &str) -> Result<Vec<Task>> {
         }
     }
 
-    assign_missing_ids(&mut tasks)?;
     Ok(tasks)
 }
 
@@ -212,8 +214,11 @@ mod tests {
     #[test]
     fn hand_written_items_get_free_ids() {
         let md = "# My tasks\n\n- [ ] no id here\n- [x] also none\nsome prose\n- [ ] third <!-- id:1 -->\n";
-        let tasks = decode(md).unwrap();
+        let mut tasks = decode(md).unwrap();
         assert_eq!(tasks.len(), 3);
+        // The decoder says "no id"; the load hands out the free ones.
+        assert_eq!((tasks[0].id, tasks[1].id, tasks[2].id), (0, 0, 1));
+        crate::model::normalize(&mut tasks).unwrap();
         assert_eq!(tasks[0].id, 2);
         assert!(tasks[1].done);
         assert_eq!(tasks[1].id, 3);
@@ -223,7 +228,8 @@ mod tests {
     #[test]
     fn alternative_bullets_and_bom() {
         let md = "\u{feff}* [ ] star bullet\n+ [X] plus bullet\n";
-        let tasks = decode(md).unwrap();
+        // The BOM is stripped by `codec::content`, before any decoder.
+        let tasks = crate::codec::DbFormat::Markdown.decode(md).unwrap();
         assert_eq!(tasks[0].text, "star bullet");
         assert!(tasks[1].done);
     }
@@ -259,5 +265,20 @@ mod tests {
     #[test]
     fn empty_input() {
         assert_eq!(decode("").unwrap(), Vec::<Task>::new());
+    }
+
+    /// A text that is nothing but a date token comes back as that text,
+    /// not as a date on a task without text.
+    #[test]
+    fn a_text_of_a_date_token_round_trips() {
+        for text in ["@2026-01-01", " @2026-01-01"] {
+            for (priority, date) in [(false, None), (true, None), (false, NaiveDate::from_ymd_opt(2026, 5, 5)), (true, NaiveDate::from_ymd_opt(2026, 5, 5))] {
+                let mut t = task(1, text);
+                t.priority = priority;
+                t.date = date;
+                let md = encode(std::slice::from_ref(&t));
+                assert_eq!(decode(&md).unwrap(), vec![t], "{md:?}");
+            }
+        }
     }
 }

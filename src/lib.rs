@@ -1,4 +1,5 @@
 pub mod args;
+pub mod atomic;
 pub mod backend;
 pub mod cli;
 pub mod codec;
@@ -6,9 +7,14 @@ pub mod codec;
 pub mod completions;
 pub mod config;
 pub mod error;
+mod lock;
+pub mod location;
 pub mod model;
 pub mod parser;
+pub mod printable;
+pub mod revision;
 pub mod storage;
+pub mod width;
 #[cfg(feature = "sync")]
 pub mod sync;
 #[cfg(any(feature = "backend-http", feature = "backend-ssh"))]
@@ -17,7 +23,7 @@ pub mod transport;
 pub mod web;
 pub mod windows_console;
 
-pub use backend::Backend;
+pub use backend::{Backend, Loaded, StaleDatabase};
 pub use config::{ColorValue, Config, Theme};
 pub use model::{Task, TaskId};
 
@@ -39,9 +45,8 @@ pub(crate) fn is_test_mode() -> bool {
     env_check || exe_check || cfg!(test)
 }
 pub use parser::{
-    BareEditAfterFlag, BareEditDateFlag, EditArgs, is_cli_date_help_value, normalize_date_string,
-    parse_after_ids, parse_cli_date, parse_cli_date_for_edit, parse_cli_date_with_base,
-    parse_edit_args, parse_flexible_ids, strip_edit_after_flag, strip_edit_date_flag,
-    validate_cli_date_edit_arg,
+    IdListError, is_cli_date_help_value, normalize_date_string, parse_cli_date,
+    parse_cli_date_for_edit, parse_cli_date_with_base, parse_edit_args, parse_id_args,
+    parse_id_list, split_leading_ids, validate_cli_date_edit_arg,
 };
 pub use storage::{MarkResult, TaskManager};

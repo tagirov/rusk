@@ -60,6 +60,15 @@ mkdir -p ~/.config/fish/completions
 rusk completions show fish > ~/.config/fish/completions/rusk.fish
 ```
 
+fish escapes what it completes itself and inserts one word per Tab, so
+`rusk edit 3<TAB>` completes the id and the next `<TAB>` puts the task text
+after it, exactly as it is. A text that starts with `-` gets `--` first
+(fish adds no space after a `-`: the next `<TAB>` does, the one after it
+gives the text). A
+text with a tab character or one that starts with `~` is not offered: fish
+cannot insert it unchanged. The script adds completions only; it binds no
+keys.
+
 ### Nu Shell
 ```bash
 # Get script from rusk and save it

@@ -170,7 +170,7 @@ theme_keys! {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
     /// Database location: a path, `https://host` (backend-http) or
-    /// `user@host:/path` (backend-ssh) — see `backend::Backend::parse`.
+    /// `[user@]host:path` (backend-ssh) — see `crate::location`.
     pub rusk_db: Option<String>,
     pub db_token: Option<String>,
     pub git_backend: bool,
@@ -259,22 +259,21 @@ fn parse_value(raw: &str) -> (String, bool) {
     (raw[..cut].trim_end().to_string(), false)
 }
 
-fn expand_tilde(value: &str) -> String {
-    if let Some(rest) = value.strip_prefix("~/")
-        && let Some(home) = dirs::home_dir()
-    {
-        return home.join(rest).to_string_lossy().into_owned();
-    }
-    value.to_string()
-}
-
-/// A non-empty environment variable wins over the config value.
+/// A non-empty environment variable wins over the config value. One that
+/// is not valid UTF-8 is an error: taking it for unset would quietly use
+/// the config value — another server, another token — instead.
 #[cfg(feature = "backend-http")]
-pub(crate) fn env_or_config(env: &str, config_value: &Option<String>) -> Option<String> {
-    std::env::var(env)
-        .ok()
-        .filter(|v| !v.is_empty())
-        .or_else(|| config_value.clone())
+pub(crate) fn env_or_config(
+    env: &str,
+    config_value: &Option<String>,
+) -> anyhow::Result<Option<String>> {
+    match std::env::var_os(env).filter(|v| !v.is_empty()) {
+        Some(value) => match value.into_string() {
+            Ok(value) => Ok(Some(value)),
+            Err(_) => anyhow::bail!("{env} is not valid UTF-8"),
+        },
+        None => Ok(config_value.clone()),
+    }
 }
 
 fn parse_bool(value: &str) -> Result<bool, String> {
@@ -312,7 +311,7 @@ fn apply_setting(
         return;
     }
     match key {
-        "rusk_db" => config.rusk_db = Some(expand_tilde(value)),
+        "rusk_db" => config.rusk_db = Some(value.to_string()),
         "db_token" => config.db_token = Some(value.to_string()),
         "no_color" | "compact" | "backup" | "git_backend" => match parse_bool(value) {
             Ok(b) => match key {
@@ -533,10 +532,12 @@ fn load_from(path: PathBuf) -> LoadOutcome {
 /// config system is disabled (defaults only — used by the test harness).
 /// Without `RUSK_CONFIG`, test/debug runs never touch the real config.
 pub fn load() -> LoadOutcome {
-    match std::env::var("RUSK_CONFIG") {
-        Ok(path) if path.is_empty() => LoadOutcome::default(),
-        Ok(path) => load_from(PathBuf::from(path)),
-        Err(_) => {
+    // `var_os`: a path does not have to be UTF-8, and one that is not must
+    // not be taken for "unset" and replaced by the default config.
+    match std::env::var_os("RUSK_CONFIG") {
+        Some(path) if path.is_empty() => LoadOutcome::default(),
+        Some(path) => load_from(PathBuf::from(path)),
+        None => {
             if crate::is_test_mode() || cfg!(debug_assertions) {
                 return LoadOutcome::default();
             }
@@ -772,12 +773,11 @@ mod tests {
     }
 
     #[test]
-    fn tilde_expansion() {
+    fn rusk_db_is_kept_as_written() {
+        // `~` is expanded where every location is read (crate::location),
+        // for RUSK_DB as much as for rusk_db.
         let c = cfg("rusk_db = ~/tasks/db.json\n");
-        let p = c.rusk_db.unwrap();
-        if let Some(home) = dirs::home_dir() {
-            assert_eq!(p, home.join("tasks/db.json").to_string_lossy());
-        }
+        assert_eq!(c.rusk_db.as_deref(), Some("~/tasks/db.json"));
     }
 
     #[test]

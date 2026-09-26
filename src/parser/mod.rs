@@ -5,7 +5,4 @@ pub use date::{
     is_cli_date_help_value, normalize_date_string, parse_cli_date, parse_cli_date_for_edit,
     parse_cli_date_with_base, validate_cli_date_edit_arg,
 };
-pub use ids::{
-    BareEditAfterFlag, BareEditDateFlag, EditArgs, parse_after_ids, parse_edit_args,
-    parse_flexible_ids, strip_edit_after_flag, strip_edit_date_flag,
-};
+pub use ids::{IdListError, parse_edit_args, parse_id_args, parse_id_list, split_leading_ids};

@@ -3,14 +3,14 @@ use clap::{CommandFactory, Parser};
 #[cfg(feature = "completions")]
 use colored::*;
 use rusk::{
-    BareEditAfterFlag, BareEditDateFlag, TaskManager,
+    IdListError, TaskId, TaskManager,
     args::{Cli, Command},
     cli::HandlerCLI,
     config,
     error::AppError,
-    is_cli_date_help_value, parse_after_ids, parse_edit_args, parse_flexible_ids,
+    is_cli_date_help_value, parse_edit_args, parse_id_args, parse_id_list,
     parser::date::is_cli_date_clear_value,
-    strip_edit_after_flag, strip_edit_date_flag, windows_console,
+    windows_console,
 };
 #[cfg(feature = "completions")]
 use rusk::{args::CompletionAction, completions::Shell};
@@ -24,28 +24,47 @@ fn print_subcommand_help(name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn args_have_date_then_help(args: &[String]) -> bool {
-    args.windows(2)
-        .any(|w| (w[0] == "-d" || w[0] == "--date") && is_cli_date_help_value(&w[1]))
-}
-
 /// Prints a CLI error with one blank line before and after (stderr).
 fn eprint_cli_error(msg: impl std::fmt::Display) {
     eprintln!("\n{}\n", msg);
 }
 
+/// `Error: <msg>` in the theme error color. An error may quote the database
+/// (the line a JSON parser stopped at, a CSV cell, an iCalendar value), so
+/// its control characters are escaped before it is styled.
+fn paint_error(msg: impl std::fmt::Display) -> String {
+    let text = format!("Error: {msg}");
+    config::theme().error.paint(&rusk::printable::escape(&text)).to_string()
+}
+
 /// Prints `Error: <msg>` in the theme error color and exits with code 1.
 fn exit_with_error(msg: impl std::fmt::Display) -> ! {
-    eprint_cli_error(config::theme().error.paint(&format!("Error: {msg}")));
+    eprint_cli_error(paint_error(msg));
     std::process::exit(1);
 }
 
-/// Drops argv words that look like flags (leading `-`) before flexible ID parsing.
-fn non_flag_args(args: &[String]) -> Vec<String> {
-    args.iter()
-        .filter(|arg| !arg.trim_start().starts_with('-'))
-        .cloned()
-        .collect()
+/// What `mark` / `del` / `edit` made of their task ids, or the error for
+/// what they got instead, followed by `examples` of the command's usage.
+fn ids_or_exit<T>(parsed: Result<T, IdListError>, examples: &str) -> T {
+    parsed.unwrap_or_else(|err| match err {
+        // Names the two ways out with the user's own words.
+        IdListError::MoreIds { .. } => exit_with_error(err),
+        _ => exit_with_error(format!("{err}; e.g. {examples}")),
+    })
+}
+
+/// A `--after` value: task ids, or `_` for "no dependencies" where clearing
+/// makes sense (`edit`).
+fn after_ids_or_exit(raw: &str, clear_allowed: bool) -> Vec<TaskId> {
+    if clear_allowed && is_cli_date_clear_value(raw) {
+        return Vec::new();
+    }
+    parse_id_list(raw).unwrap_or_else(|err| {
+        let clear = if clear_allowed { " or `_` to clear" } else { "" };
+        exit_with_error(format!(
+            "`--after` expects comma-separated task ids (e.g. 19,22){clear}: {err}"
+        ))
+    })
 }
 
 fn main() {
@@ -55,7 +74,11 @@ fn main() {
             Some(AppError::UserCancel) | Some(AppError::SkipTask) => std::process::exit(0),
             Some(AppError::UserAbort) => std::process::exit(130),
             None => {
-                eprint_cli_error(config::theme().error.paint(&format!("Error: {err}")));
+                // `{:#}` prints the whole chain: the outermost context alone
+                // ("Failed to read the database file") does not say what to
+                // fix, the cause under it does (the OS error, what curl or
+                // ssh wrote to stderr, SQLite's message).
+                eprint_cli_error(paint_error(format_args!("{err:#}")));
                 std::process::exit(1);
             }
         },
@@ -89,7 +112,7 @@ fn run() -> Result<()> {
     let cli = Cli::parse();
 
     // `sync` loads the database itself (and must not create sample tasks),
-    // so intercept it before the shared TaskManager is created.
+    // so intercept it before any TaskManager is created.
     #[cfg(feature = "sync")]
     if let Some(Command::Sync { direction }) = &cli.command {
         use rusk::args::SyncDirection;
@@ -101,7 +124,7 @@ fn run() -> Result<()> {
         return rusk::sync::run(direction);
     }
 
-    // `serve` never uses a shared TaskManager: the server re-reads the
+    // `serve` never keeps a TaskManager: the server re-reads the
     // database on every request (see web::server), so intercept it early
     // like `completions`.
     #[cfg(feature = "web")]
@@ -127,9 +150,10 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
-    // Help-only and validation paths that must not open the database. Debug/test builds use a
-    // fixed tasks.json path; parallel integration tests would otherwise race on TaskManager::new()
-    // before we detect trailing `-h` / `--help` on `edit`.
+    // Help and argument errors that need no database. Each command below
+    // also reads the rest of its arguments before it opens the database:
+    // a wrong argument is reported as such, not hidden behind a database
+    // that cannot be read, and a remote database is not contacted for it.
     match &cli.command {
         Some(Command::Add {
             text,
@@ -141,161 +165,138 @@ fn run() -> Result<()> {
                  Omit `--date` or use `rusk add` with a non-empty first line in the editor; see `rusk add --help`.",
             );
         }
-        Some(Command::Add { date: Some(d), .. }) if is_cli_date_help_value(d) => {
+        // `-d -h` / `-a -h`: the value slot takes `-h` (the options accept
+        // values that start with `-`), so the help is asked for here.
+        Some(Command::Add { date, after, .. })
+            if [date, after].into_iter().flatten().any(|v| is_cli_date_help_value(v)) =>
+        {
             print_subcommand_help("add")?;
             return Ok(());
         }
-        Some(Command::Edit { args }) => {
-            if args_have_date_then_help(args) {
-                print_subcommand_help("edit")?;
-                return Ok(());
-            }
-            if args.last().is_some_and(|a| is_cli_date_help_value(a)) {
-                print_subcommand_help("edit")?;
-                return Ok(());
-            }
-            if args.is_empty() {
-                exit_with_error("No arguments provided for edit command");
-            }
+        Some(Command::Edit { date, after, .. })
+            if [date, after].into_iter().flatten().any(|v| is_cli_date_help_value(v)) =>
+        {
+            print_subcommand_help("edit")?;
+            return Ok(());
         }
         _ => {}
     }
 
-    let mut tm = TaskManager::new()?;
+    // `restore` must work exactly when the database cannot be loaded, so it
+    // never goes through `TaskManager::new()` (which loads the database).
+    if let Some(Command::Restore) = &cli.command {
+        let mut restore_tm = TaskManager::new_for_restore()?;
+        return HandlerCLI::handle_restore(&mut restore_tm);
+    }
 
     match cli.command {
         Some(Command::Add { text, date, after }) => {
-            let after_ids = match &after {
-                None => Vec::new(),
-                Some(raw) => {
-                    let ids = parse_after_ids(raw);
-                    if ids.is_empty() {
-                        exit_with_error(format!(
-                            "`--after` expects comma-separated task ids (e.g. 19,22), got '{raw}'"
-                        ));
-                    }
-                    ids
-                }
-            };
+            let after_ids = after.as_deref().map_or_else(Vec::new, |raw| after_ids_or_exit(raw, false));
+            #[cfg(feature = "interactive")]
             if text.is_empty() {
+                use std::io::IsTerminal;
+                if !std::io::stdout().is_terminal() {
+                    exit_with_error(
+                        "interactive `rusk add` requires a terminal. \
+                         Pass the task on the command line, e.g. `rusk add buy milk`.",
+                    );
+                }
+                let mut tm = TaskManager::new()?;
+                return HandlerCLI::handle_add_task_interactive(&mut tm, date, after_ids);
+            }
+            let mut tm = TaskManager::new()?;
+            HandlerCLI::handle_add_task(&mut tm, text, date, after_ids)?;
+        }
+        Some(Command::Del { ids, done }) => {
+            // clap rejects `--done` together with ids.
+            let ids = if done {
+                Vec::new()
+            } else {
+                ids_or_exit(
+                    parse_id_args(&ids),
+                    "`rusk del 1,2,3`, or `rusk del --done` for all completed tasks",
+                )
+            };
+            let mut tm = TaskManager::new()?;
+            HandlerCLI::handle_delete_tasks(&mut tm, ids, done)?;
+        }
+        Some(Command::Mark { ids, priority }) => {
+            let ids = ids_or_exit(parse_id_args(&ids), "`rusk mark 1,2,3`");
+            let mut tm = TaskManager::new()?;
+            HandlerCLI::handle_mark_tasks(&mut tm, ids, priority)?;
+        }
+        Some(Command::Edit {
+            ids,
+            text,
+            verbatim,
+            date,
+            after,
+        }) => {
+            let after = after.as_deref().map(|raw| after_ids_or_exit(raw, true));
+            let args: Vec<String> = ids.into_iter().chain(text).collect();
+            let (ids, text) = ids_or_exit(
+                parse_edit_args(&args, &verbatim),
+                "`rusk edit 1` (the editor), `rusk edit 1,2 new text`, `rusk edit 1 -- -x text`",
+            );
+
+            if text.is_none() && date.is_none() && after.is_none() {
+                #[cfg(not(feature = "interactive"))]
+                exit_with_error("Interactive editing requires the 'interactive' feature");
                 #[cfg(feature = "interactive")]
                 {
+                    // The same check `rusk add` makes: without a terminal
+                    // the editor would paint into a pipe (and die of a
+                    // broken one) or into /dev/null, where nobody can see
+                    // it and Esc looks like success.
                     use std::io::IsTerminal;
                     if !std::io::stdout().is_terminal() {
                         exit_with_error(
-                            "interactive `rusk add` requires a terminal. \
-                             Pass the task on the command line, e.g. `rusk add buy milk`.",
+                            "interactive `rusk edit` requires a terminal. \
+                             Pass the new text on the command line, e.g. \
+                             `rusk edit 1 buy oat milk`.",
                         );
                     }
-                    HandlerCLI::handle_add_task_interactive(&mut tm, date, after_ids)?;
-                }
-                #[cfg(not(feature = "interactive"))]
-                {
-                    HandlerCLI::handle_add_task(&mut tm, text, date, after_ids)?;
-                }
-            } else {
-                HandlerCLI::handle_add_task(&mut tm, text, date, after_ids)?;
-            }
-        }
-        Some(Command::Del { ids, done }) => {
-            let parsed_ids = parse_flexible_ids(&non_flag_args(&ids));
-            HandlerCLI::handle_delete_tasks(&mut tm, parsed_ids, done)?;
-        }
-        Some(Command::Mark { ids, priority }) => {
-            let parsed_ids = parse_flexible_ids(&non_flag_args(&ids));
-            if parsed_ids.is_empty() {
-                exit_with_error("No valid task IDs provided");
-            }
-            HandlerCLI::handle_mark_tasks(&mut tm, parsed_ids, priority)?;
-        }
-        Some(Command::Edit { args }) => {
-            let (args, opt_date) = match strip_edit_date_flag(args) {
-                Ok(p) => p,
-                Err(BareEditDateFlag) => {
-                    exit_with_error(
-                        "`rusk edit` does not support `-d` / `--date` without a value. \
-                         Use `rusk edit <id>` to set the due date on the first line of the task text in the editor, \
-                         or pass a date: `rusk edit <id> -d 31-12-2025` or `rusk edit <id> -d 2w` (see `rusk add --help` for syntax).",
-                    );
-                }
-            };
-            let (args, opt_after) = match strip_edit_after_flag(args) {
-                Ok(p) => p,
-                Err(BareEditAfterFlag) => {
-                    exit_with_error(
-                        "`rusk edit` does not support `-a` / `--after` without a value. \
-                         Pass comma-separated task ids (`rusk edit <id> -a 19,22`) or `_` to clear the list.",
-                    );
-                }
-            };
-            let opt_after = opt_after.map(|raw| {
-                if raw == "_" {
-                    return Vec::new();
-                }
-                let ids = parse_after_ids(&raw);
-                if ids.is_empty() {
-                    exit_with_error(format!(
-                        "`--after` expects comma-separated task ids (e.g. 19,22) or `_` to clear, got '{raw}'"
-                    ));
-                }
-                ids
-            });
-
-            let (ids, text_option) = parse_edit_args(args);
-
-            if ids.is_empty() {
-                exit_with_error("No valid task IDs provided");
-            }
-
-            match (text_option, opt_date, &opt_after) {
-                (None, None, None) => {
-                    #[cfg(feature = "interactive")]
-                    {
-                        HandlerCLI::handle_edit_tasks_interactive(&mut tm, ids)?
-                    }
-                    #[cfg(not(feature = "interactive"))]
-                    {
-                        eprint_cli_error(
-                            config::theme()
-                                .error
-                                .paint("Interactive editing requires the 'interactive' feature"),
-                        );
-                        std::process::exit(1);
-                    }
-                }
-                (text_option, opt_date, _) => {
-                    HandlerCLI::handle_edit_tasks(&mut tm, ids, text_option, opt_date, opt_after)?
+                    let mut tm = TaskManager::new()?;
+                    return HandlerCLI::handle_edit_tasks_interactive(&mut tm, ids);
                 }
             }
+            let mut tm = TaskManager::new()?;
+            HandlerCLI::handle_edit_tasks(&mut tm, ids, text, date, after)?;
         }
         Some(Command::List {
             for_completion,
+            for_completion_lines,
             compact,
         }) => {
-            if for_completion {
+            let tm = TaskManager::new()?;
+            if for_completion_lines {
                 HandlerCLI::handle_list_tasks_for_completion(tm.tasks());
+            } else if for_completion {
+                HandlerCLI::handle_list_tasks_for_old_completion(tm.tasks());
             } else {
                 HandlerCLI::handle_list_tasks(tm.tasks(), compact || config::config().compact);
             }
         }
         Some(Command::Search { query, id }) => {
+            let tm = TaskManager::new()?;
             HandlerCLI::handle_search_tasks(tm.tasks(), &query.join(" "), id);
         }
         None => {
+            let tm = TaskManager::new()?;
             HandlerCLI::handle_list_tasks(tm.tasks(), config::config().compact);
         }
-        Some(Command::Restore) => {
-            let mut restore_tm = TaskManager::new_for_restore()?;
-            HandlerCLI::handle_restore(&mut restore_tm)?;
-        }
+        Some(Command::Restore) => unreachable!("handled before the database is loaded"),
         #[cfg(feature = "web")]
         Some(Command::Gen { output }) => {
+            let tm = TaskManager::new()?;
             let html = rusk::web::render_static_page(tm.tasks())?;
             if output == "-" {
                 print!("{html}");
             } else {
-                std::fs::write(&output, &html)
-                    .with_context(|| format!("Failed to write {output}"))?;
+                // Atomic replace where the location allows it: a web server
+                // (or a failed write) never sees a truncated page.
+                rusk::atomic::replace_output_file(std::path::Path::new(&output), html.as_bytes())
+                    .map_err(|e| anyhow::anyhow!("Failed to write '{output}': {e}"))?;
                 println!(
                     "{} {} ({} tasks)",
                     config::theme().success.paint("Generated"),
@@ -336,11 +337,11 @@ fn handle_completions_install(shells: Vec<Shell>) -> Result<()> {
 
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
+                .with_context(|| format!("Failed to create directory '{}'", parent.display()))?;
         }
 
         std::fs::write(&path, script)
-            .with_context(|| format!("Failed to write completion file: {}", path.display()))?;
+            .with_context(|| format!("Failed to write completion file '{}'", path.display()))?;
 
         println!(
             "{} {} {}",

@@ -425,29 +425,11 @@ fn test_completion_max_id_range() {
 fn test_completion_real_rusk_list_output() {
     // Integration test: verify that real rusk list output can be parsed
     // This test verifies that completion scripts can parse the actual output format
-    use std::process::Command;
+    // Private sandbox: the database, HOME and config of this test only.
+    let sb = common::Sandbox::new();
 
-    let rusk_bin = common::require_rusk_bin().expect("rusk binary not found, run cargo build");
-
-    // Create a temporary database for testing
-    let temp_dir = tempfile::tempdir().unwrap();
-    let db_path = temp_dir.path().join("tasks.json");
-
-    // In debug mode, rusk uses /tmp/rusk_debug/tasks.json regardless of RUSK_DB
-    // So we need to use that path for debug builds, or use release build
-    let actual_db_path = if cfg!(debug_assertions) {
-        std::env::temp_dir().join("rusk_debug").join("tasks.json")
-    } else {
-        db_path.clone()
-    };
-
-    // Ensure directory exists
-    if let Some(parent) = actual_db_path.parent() {
-        std::fs::create_dir_all(parent).unwrap();
-    }
-
-    // Create tasks using TaskManager and save to actual path
-    let mut tm = TaskManager::new_empty_with_path(actual_db_path.clone());
+    // Create tasks using TaskManager and save to the sandbox database
+    let mut tm = TaskManager::new_empty_with_path(sb.db_path());
     tm.add_task(vec!["Test task 1".to_string()], None).unwrap();
     tm.add_task(
         vec!["Test task 2".to_string()],
@@ -459,20 +441,7 @@ fn test_completion_real_rusk_list_output() {
     tm.save().unwrap();
 
     // Run rusk list and capture output
-    // Strip cargo-test env so the subprocess is not treated as test mode (which forces
-    // resolve_db_path to rusk_debug and ignores RUSK_DB in release).
-    let mut cmd = Command::new(&rusk_bin);
-    cmd.arg("list");
-    cmd.env_remove("RUST_TEST_THREADS");
-    cmd.env_remove("CARGO_TEST");
-    cmd.env_remove("__CARGO_TEST_CHANNEL");
-    // Without the test-mode env markers a release binary would read (and
-    // auto-create) the developer's real config file.
-    cmd.env("RUSK_CONFIG", "");
-    if !cfg!(debug_assertions) {
-        cmd.env("RUSK_DB", db_path.to_str().unwrap());
-    }
-    let output = cmd.output();
+    let output = sb.cmd().arg("list").output();
 
     // If command succeeds, verify output format is parseable.
     // If the binary doesn't exist or fails, skip the test (not a failure).

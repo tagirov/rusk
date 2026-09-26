@@ -34,22 +34,28 @@ function _rusk_get_cmd {
     return "rusk"
 }
 
-# Check if text contains special characters that require quoting
-# Special chars: | ; & > < ( ) [ ] { } $ " ' ` \ * ? ~ # @ ! % ^ = + - / : , and newlines
+# True if the text would not come back as it is when put on the command line
+# bare: a special character (| ; & > < ( ) [ ] { } $ " ' ` \ * ? ~ # @ ! % ^ = + - / : ,),
+# a typographic dash or quote (U+2013..U+2015, U+2018..U+201E: PowerShell reads
+# them as dashes and quotes), a control character, whitespace other than the
+# plain space (PowerShell splits words at a no-break space, U+3000 and the like
+# too), or plain spaces other than single ones between words
 function _rusk_needs_quotes {
     param([string]$text)
-    return $text -match '[|;\&><\(\)\[\]\{\}\$"\''`\\\*\?\~\#\@\!\%\^\=\+\-\/\:\,\r\n]'
+    return ($text -match '[|;\&><\(\)\[\]\{\}\$"\''`\\\*\?\~\#\@\!\%\^\=\+\-\/\:\,\p{Cc}\u2013-\u2015\u2018-\u201E]|[^\S ]') -or
+        ($text -match '  |^ | $')
 }
 
 # Quote text if it contains special characters
 # Always use PowerShell single quoting: inside single quotes the only special
-# character is the single quote itself, escaped by doubling it
+# characters are the single quotes (' and U+2018..U+201B, which PowerShell reads
+# as ' too), each escaped by doubling it
 function _rusk_quote_text {
     param([string]$text)
     if (-not (_rusk_needs_quotes $text)) {
         return $text
     }
-    return "'" + ($text -replace "'", "''") + "'"
+    return "'" + ($text -replace '[''\u2018-\u201B]', '$0$0') + "'"
 }
 
 # Shell names for `rusk completions install` / `show` (exclude already-typed full names)
@@ -174,32 +180,21 @@ function _rusk_get_task_ids {
     }
 }
 
-# Get task text by ID (supports multi-line tasks via rusk list --for-completion)
+# The text of a task from `rusk list --for-completion-lines`. Each task is one line,
+# `<id><TAB><text>`, with \\, \n, \r and \t escaped in the text; no other
+# backslash sequence occurs, so [regex]::Unescape gives the text back.
 function _rusk_get_task_text {
     param([string]$taskId)
     $rusk_cmd = _rusk_get_cmd
     try {
-        $output = & $rusk_cmd list --for-completion 2>$null
-        if ($output) {
-            $text = ""
-            $collecting = $false
-            foreach ($line in $output) {
-                $lineStr = [string]$line
-                if ($lineStr -match "^(\d+)`t(.*)") {
-                    $id = $matches[1]
-                    $rest = $matches[2]
-                    if ($id -eq $taskId) {
-                        $text = $rest
-                        $collecting = $true
-                    } else {
-                        $collecting = $false
-                    }
-                } elseif ($collecting) {
-                    $text = $text + "`n" + $lineStr
+        foreach ($line in @(& $rusk_cmd list --for-completion-lines 2>$null)) {
+            $lineStr = [string]$line
+            if ($lineStr.StartsWith("$taskId`t", [System.StringComparison]::Ordinal)) {
+                $text = [regex]::Unescape($lineStr.Substring($taskId.Length + 1))
+                if ($text) {
+                    return $text
                 }
-            }
-            if ($text.Trim()) {
-                return $text.Trim()
+                return $null
             }
         }
     } catch {
@@ -284,7 +279,7 @@ function _rusk_add_has_prior_task_text {
             $prev = $w
             continue
         }
-        if ($w.StartsWith('-')) {
+        if ($w.StartsWith('-', [System.StringComparison]::Ordinal)) {
             $prev = $w
             continue
         }
@@ -319,7 +314,7 @@ function _rusk_edit_has_task_id {
             $prev = $w
             continue
         }
-        if ($w.StartsWith('-')) {
+        if ($w.StartsWith('-', [System.StringComparison]::Ordinal)) {
             $prev = $w
             continue
         }
@@ -482,6 +477,10 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
                     $taskText = _rusk_get_task_text $cur
                     if ($taskText) {
                         $quotedText = _rusk_quote_text $taskText
+                        # A text that starts with `-` would be read as options: after `--` rusk takes it as text
+                        if ($taskText.StartsWith('-', [System.StringComparison]::Ordinal)) {
+                            $quotedText = "-- $quotedText"
+                        }
                         return @([System.Management.Automation.CompletionResult]::new("$cur $quotedText", "$cur $taskText", [System.Management.Automation.CompletionResultType]::ParameterValue, "Append task text"))
                     }
                 }
@@ -517,7 +516,12 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
         { $_ -in 'mark', 'm', 'del', 'd' } {
             if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur) -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
                 $df = if ($command -in @('del', 'd')) {
-                    @('--done', '--help', '-h')
+                    # `--done` takes no ids: offered only before any (`1,2` is one array token)
+                    $hasIds = $false
+                    for ($i = 2; $i -lt $tokens.Count; $i++) {
+                        if ((_rusk_token_text $tokens[$i]) -match '^[\d,]+$') { $hasIds = $true }
+                    }
+                    if ($hasIds) { @('--help', '-h') } else { @('--done', '--help', '-h') }
                 } else {
                     @('--priority', '-p', '--help', '-h')
                 }

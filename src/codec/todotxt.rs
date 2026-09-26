@@ -17,8 +17,15 @@
 //! text. Completion/creation dates at the head of a line are accepted but
 //! not preserved. Newlines inside task text are stored as a literal `\n`
 //! (with `\\` escaping a backslash) — nonstandard, but round-trips.
+//!
+//! A word of the task text that would be read as metadata — `x`, a
+//! priority or a date as the first word, a valid `due:`, `id:` or `after:`
+//! tag anywhere — is written with a backslash in front (`\x marks the
+//! spot`, `ticket \id:42 needs review`), which decoding takes off again: a
+//! text comes back as it was, whatever it looks like. A line of metadata
+//! only (`x (A) id:7`) has no text; what becomes of it is up to
+//! [`crate::model::normalize`].
 
-use super::assign_missing_ids;
 use crate::model::{Task, TaskId};
 use anyhow::Result;
 use chrono::NaiveDate;
@@ -57,7 +64,7 @@ pub fn encode(tasks: &[Task]) -> String {
         if task.priority {
             out.push_str("(A) ");
         }
-        out.push_str(&escape(&task.text));
+        out.push_str(&protect(&escape(&task.text)));
         if let Some(date) = task.date {
             out.push_str(&format!(" due:{date}"));
         }
@@ -98,10 +105,65 @@ fn parse_after_list(list: &str) -> Option<Vec<TaskId>> {
         .collect()
 }
 
+fn due_tag(token: &str) -> Option<NaiveDate> {
+    token.strip_prefix("due:")?.parse().ok()
+}
+
+fn id_tag(token: &str) -> Option<TaskId> {
+    token.strip_prefix("id:")?.parse().ok().filter(|&n| n != 0)
+}
+
+fn after_tag(token: &str) -> Option<Vec<TaskId>> {
+    parse_after_list(token.strip_prefix("after:")?)
+}
+
+/// A token that is metadata wherever it stands.
+fn is_tag(token: &str) -> bool {
+    due_tag(token).is_some() || id_tag(token).is_some() || after_tag(token).is_some()
+}
+
+/// A token that is metadata at the head of a line: the done mark, a
+/// priority, a completion or creation date.
+fn is_head_token(token: &str) -> bool {
+    token == "x" || is_priority_token(token) || is_date_token(token)
+}
+
+/// Marks the words of an escaped text that `decode` would take for
+/// metadata with a backslash in front. Only the first word can be at the
+/// head of the line: a marked one ends the head there. `escape` doubles
+/// every backslash of the text, so a single one before a word is this
+/// mark and nothing else.
+fn protect(escaped: &str) -> String {
+    let mut first = true;
+    escaped
+        .split(' ')
+        .map(|word| {
+            let at_head = first && !word.is_empty();
+            if !word.is_empty() {
+                first = false;
+            }
+            if (at_head && is_head_token(word)) || is_tag(word) {
+                format!("\\{word}")
+            } else {
+                word.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Takes off the mark [`protect`] put on a word.
+fn unprotect(token: &str) -> &str {
+    match token.strip_prefix('\\') {
+        Some(word) if is_head_token(word) || is_tag(word) => word,
+        _ => token,
+    }
+}
+
 pub fn decode(data: &str) -> Result<Vec<Task>> {
     let mut tasks: Vec<Task> = Vec::new();
 
-    for raw in data.trim_start_matches('\u{feff}').lines() {
+    for raw in data.lines() {
         let line = raw.trim_end_matches('\r').trim_end();
         if line.trim().is_empty() {
             continue;
@@ -136,24 +198,20 @@ pub fn decode(data: &str) -> Result<Vec<Task>> {
         let mut after: Vec<TaskId> = Vec::new();
         let mut words: Vec<&str> = Vec::new();
         for token in rest.split(' ') {
-            if let Some(d) = token.strip_prefix("due:")
-                && let Ok(d) = d.parse::<NaiveDate>()
+            if let Some(d) = due_tag(token)
                 && date.is_none()
             {
                 date = Some(d);
-            } else if let Some(n) = token.strip_prefix("id:")
-                && let Ok(n) = n.parse::<TaskId>()
-                && n != 0
+            } else if let Some(n) = id_tag(token)
                 && id.is_none()
             {
                 id = Some(n);
-            } else if let Some(list) = token.strip_prefix("after:")
+            } else if let Some(ids) = after_tag(token)
                 && after.is_empty()
-                && let Some(ids) = parse_after_list(list)
             {
                 after = ids;
             } else {
-                words.push(token);
+                words.push(unprotect(token));
             }
         }
 
@@ -167,7 +225,6 @@ pub fn decode(data: &str) -> Result<Vec<Task>> {
         });
     }
 
-    assign_missing_ids(&mut tasks)?;
     Ok(tasks)
 }
 
@@ -215,10 +272,10 @@ mod tests {
         assert!(tasks[0].done);
         assert_eq!(tasks[0].text, "pay the bill");
         assert_eq!(tasks[0].date, NaiveDate::from_ymd_opt(2026, 7, 20));
-        assert_eq!(tasks[0].id, 1);
+        assert_eq!(tasks[0].id, 0, "no id: the load hands one out");
         assert!(tasks[1].priority);
         assert_eq!(tasks[1].text, "call mom");
-        assert_eq!(tasks[1].id, 2);
+        assert_eq!(tasks[1].id, 0);
     }
 
     #[test]
@@ -251,5 +308,52 @@ mod tests {
     fn empty_and_blank_input() {
         assert_eq!(decode("").unwrap(), Vec::<Task>::new());
         assert_eq!(decode("\n  \n").unwrap(), Vec::<Task>::new());
+    }
+
+    /// REVIEW №30: a text that looks like metadata comes back as it was,
+    /// whatever the task's flags, date and dependencies.
+    #[test]
+    fn texts_that_look_like_metadata_round_trip() {
+        let texts = [
+            "x",
+            "x marks the spot",
+            "(B) plan the release",
+            "(A)",
+            "2026-09-20 dentist appointment",
+            "2026-10-01",
+            "due:2026-10-01",
+            "ticket id:42 needs review",
+            "do after:2 is done",
+            "x id:1",
+            "moved from due:2027-01-01 to next month",
+            "x (A) 2026-01-01 id:9",
+            "\\x is a backslash and an x",
+            "\\id:5 too",
+            "id:0 is no id, due:soon no date",
+            "two  spaces",
+        ];
+        for text in texts {
+            for (done, priority) in [(false, false), (true, false), (false, true), (true, true)] {
+                let mut t = task(7, text);
+                t.done = done;
+                t.priority = priority;
+                t.date = NaiveDate::from_ymd_opt(2027, 2, 2);
+                t.after = vec![1];
+                let txt = encode(std::slice::from_ref(&t));
+                assert_eq!(decode(&txt).unwrap(), vec![t], "{txt:?}");
+            }
+        }
+        // Only what would be misread is marked.
+        assert_eq!(
+            encode(&[task(3, "x (B) at 2026-01-01, see id:4")]),
+            "\\x (B) at 2026-01-01, see \\id:4 id:3\n"
+        );
+    }
+
+    /// A backslash that is no mark (a foreign file) stays as it is.
+    #[test]
+    fn a_backslash_before_other_words_is_kept() {
+        let tasks = decode("path \\share\\x id:1\n").unwrap();
+        assert_eq!(tasks[0].text, "path \\share\\x");
     }
 }

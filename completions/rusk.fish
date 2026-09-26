@@ -44,44 +44,6 @@ end
 # Task Management Functions
 # ============================================================================
 
-# Get all task IDs from rusk list output
-function __rusk_get_all_task_ids
-    set -l rusk_cmd (__rusk_cmd)
-    $rusk_cmd list 2>/dev/null | grep -E '[•✔]' | grep -oE '^\s+[•✔]\s+[0-9]+\s+' | grep -oE '[0-9]+' | sort -n
-end
-
-# Get entered task IDs from command line
-function __rusk_get_entered_ids
-    set -l cmdline (__rusk_get_cmdline)
-    set -l entered_ids
-    # Skip first two words: "rusk" and command
-    for i in (seq 3 (count $cmdline))
-        set -l arg $cmdline[$i]
-        if test -n "$arg"; and __rusk_is_number "$arg"
-            set -a entered_ids "$arg"
-        end
-    end
-    echo $entered_ids
-end
-
-# Get task IDs excluding already entered ones
-function __rusk_get_task_ids
-    set -l all_ids (__rusk_get_all_task_ids)
-    set -l entered_ids (__rusk_get_entered_ids)
-    
-    if test (count $entered_ids) -gt 0
-        for id in $all_ids
-            if not contains -- $id $entered_ids
-                echo $id
-            end
-        end
-    else
-        for id in $all_ids
-            echo $id
-        end
-    end
-end
-
 # The text of task $argv[1] from `rusk list --for-completion-lines`, printed as it
 # is (a trailing newline included). Each task is one line, `<id><TAB><text>`,
 # with `\\`, `\n`, `\r` and `\t` escaped in the text: `printf %b` gives it back.
@@ -483,13 +445,6 @@ function __rusk_complete_edit_text
     end
 end
 
-# Check if we should complete edit ID
-function __rusk_should_complete_edit_id
-    __rusk_is_command edit e; or return 1
-    # IDs should never be suggested; task text completion is handled separately.
-    return 1
-end
-
 # ============================================================================
 # Mark/Del Command Functions
 # ============================================================================
@@ -836,9 +791,6 @@ complete -c rusk -f -n '__rusk_should_complete_edit_flags' -a '(__rusk_complete_
 complete -c rusk -f \
     -n '__rusk_edit_text_slot >/dev/null' \
     -a '(__rusk_complete_edit_text | string split0)'
-
-# Task ID completion
-complete -c rusk -f -n '__rusk_should_complete_edit_id' -a '(__rusk_get_task_ids)' -d 'Task ID'
 
 # ============================================================================
 # Mark/Del Command Completions

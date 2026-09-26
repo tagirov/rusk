@@ -79,3 +79,25 @@ reset_counters() {
     TESTS_PASSED=0
     TESTS_FAILED=0
 }
+
+# Completion for the words given (the last one is the word under the cursor):
+# no candidate may be a task id — rusk never suggests ids. `compadd` works only
+# inside the completion system, so what the script hands to it is collected.
+assert_no_id_candidates() {
+    local -a words candidates
+    words=("$@")
+    local CURRENT=${#words}
+    local LBUFFER="${words[*]}"
+    local -a reply
+    compadd() { local -a a=("$@"); candidates+=("${(@)a[${a[(i)--]}+1,-1]}"); }
+    _rusk 2>/dev/null
+    unfunction compadd
+    local c
+    for c in "${candidates[@]}" "${reply[@]}"; do
+        if [[ "$c" == <-> ]]; then
+            assert_true 1 "No task id suggested for '${words[*]}' (got: ${candidates[*]})"
+            return
+        fi
+    done
+    assert_true 0 "No task id suggested for '${words[*]}'"
+}

@@ -190,33 +190,6 @@ def get-rusk-db-from-env [spans: list<string>] {
   null
 }
 
-# Extract task IDs from rusk list output
-def get-task-ids [spans: list<string>] {
-  try {
-    let rusk_cmd = (get-rusk-cmd)
-    let rusk_db = (get-rusk-db-from-env $spans)
-    
-    let output = if ($rusk_db != null) {
-      with-env {RUSK_DB: $rusk_db} { ^$rusk_cmd list | complete }
-    } else {
-      ^$rusk_cmd list | complete
-    }
-    
-    if ($output.exit_code == 0) {
-      ($output.stdout
-      | lines 
-      | where ($it | str contains "•") or ($it | str contains "✔")
-      | parse -r '^\s+[•✔]\s+(?<id>\d+)\s+' 
-      | get id 
-      | into int)
-    } else {
-      []
-    }
-  } catch {
-    []
-  }
-}
-
 # The text of a task from `rusk list --for-completion-lines`. Each task is one line,
 # `<id><TAB><text>`, with backslash, line feed, carriage return and tab
 # escaped in the text as \\, \n, \r and \t
@@ -344,33 +317,6 @@ def get-entered-ids [spans: list<string>] {
   })
 }
 
-# Complete task IDs with descriptions
-def complete-task-ids [entered_ids: list<int>, spans: list<string>] {
-  let all_ids = (get-task-ids $spans)
-  let filtered_ids = if ($entered_ids | is-empty) {
-    $all_ids
-  } else {
-    $all_ids | where {|id| not ($entered_ids | any {|entered| $entered == $id }) }
-  }
-  
-  ($filtered_ids | reverse | each {|id| 
-    let task_text = (get-task-text $id $spans)
-    let id_str = ($id | into string)
-    let description = if ($task_text != null) {
-      let text_len = ($task_text | str length)
-      let text = if $text_len > 80 {
-        ($task_text | split chars | first 80 | str join "") + "..."
-      } else {
-        $task_text
-      }
-      $"Task ID ($id_str): ($text)"
-    } else {
-      $"Task ID ($id_str)"
-    }
-    {value: $id_str, description: $description}
-  })
-}
-
 # ============================================================================
 # Completion Helper Functions
 # ============================================================================
@@ -406,44 +352,6 @@ def extract-id [word: string] {
     ($word | str substring 0..(($word | str length) - 1))
   } else {
     $word
-  }
-}
-
-# Complete task IDs with comma handling
-def complete-task-ids-with-comma [entered_ids: list<int>, cur: string, prev: string, spans: list<string>] {
-  let cur_ends_with_comma = (ends-with-comma $cur)
-  let prev_ends_with_comma = (ends-with-comma $prev)
-  let prev_id = (extract-id $prev)
-  let cur_id = (extract-id $cur)
-  
-  if (($prev_ends_with_comma and (is-number $prev_id)) or ($cur_ends_with_comma and (is-number $cur_id))) {
-    let prefix = if $cur_ends_with_comma { $cur } else { "" }
-    let completions = (complete-task-ids $entered_ids $spans)
-    
-    if ($prefix | str length) > 0 {
-      ($completions | each {|item|
-        {value: $"($prefix)($item.value)", description: $item.description}
-      })
-    } else {
-      $completions
-    }
-  } else {
-    []
-  }
-}
-
-# Get task text completion for edit command
-def get-task-text-completion [task_id: int, spans: list<string>] {
-  let task_text = (get-task-text $task_id $spans)
-  if ($task_text != null) {
-    let id_str = ($task_id | into string)
-    let cyan_start = (char -u "001b") + "[36m"
-    let reset = (char -u "001b") + "[0m"
-    let description = $"Current text[($cyan_start)($id_str)($reset)]:"
-    let quoted_text = (quote-if-needed $task_text)
-    [{value: $quoted_text, description: $description}]
-  } else {
-    []
   }
 }
 

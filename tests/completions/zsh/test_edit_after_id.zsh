@@ -19,10 +19,6 @@ else
 fi
 
 # Deterministic stubs to avoid dependency on external task data
-_rusk_get_task_text() {
-    echo "dummy task text"
-}
-
 _rusk_get_task_text_raw() {
     REPLY="dummy task text"
 }
@@ -75,13 +71,9 @@ else
     assert_true 1 "Functions _rusk and _rusk_get_task_text_raw exist"
 fi
 
-# Test 3: rusk e 1 2 <tab> (multiple IDs) - should return task IDs, not text
-print_test "rusk e 1 2 <tab> (multiple IDs)" "rusk e 1 2" "Should return task IDs (not text, not dates)"
-if (( $+functions[_rusk_get_entered_ids] )); then
-    assert_true 0 "Multiple IDs detected, should return task IDs"
-else
-    assert_true 1 "Function _rusk_get_entered_ids exists"
-fi
+# Test 3: rusk e 1 2 <tab> (multiple IDs) - no task text, no task IDs
+print_test "rusk e 1 2 <tab> (multiple IDs)" "rusk e 1 2" "Should return neither task text nor task IDs"
+assert_no_id_candidates rusk e 1 2 ""
 
 # Test 4: script has multiple -h/--help compadd sites (add/edit/restore/…)
 print_test "Completion script" "rusk.zsh" "Should have several help-flag compadd branches"

@@ -12,8 +12,6 @@ tests/completions/
 ├── README.md                    # This file
 ├── run_all.sh                   # Run all completion tests for all shells
 ├── rust/                        # Rust unit tests for completion code
-│   ├── mod.rs                   # Module entry point
-│   ├── completion_tests.rs           # Tests for parsing rusk list output
 │   ├── completions_install_tests.rs  # Tests for completion installation
 │   └── nu_completion_tests.rs        # Nu Shell-specific completion tests
 ├── powershell/                  # PowerShell completion tests

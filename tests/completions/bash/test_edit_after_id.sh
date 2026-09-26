@@ -78,13 +78,9 @@ else
     assert_true 1 "Function _rusk_completion exists"
 fi
 
-# Test 3: rusk e 1 2 <tab> (multiple IDs) - should return task IDs, not text
-print_test "rusk e 1 2 <tab> (multiple IDs)" "rusk e 1 2" "Should return task IDs (not text, not dates)"
-if declare -f _rusk_get_entered_ids >/dev/null; then
-    assert_true 0 "Multiple IDs detected, should return task IDs"
-else
-    assert_true 1 "Function _rusk_get_entered_ids exists"
-fi
+# Test 3: rusk e 1 2 <tab> (multiple IDs) - no task text, no task IDs
+print_test "rusk e 1 2 <tab> (multiple IDs)" "rusk e 1 2" "Should return neither task text nor task IDs"
+assert_no_id_candidates rusk e 1 2 ""
 
 # Test 4: rusk e 1 --date <tab> (space after flag) - help flags only, not dates
 print_test "rusk e 1 --date <tab> (space after flag)" "rusk e 1 --date " "Should return -h/--help only"

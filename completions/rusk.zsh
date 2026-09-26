@@ -20,27 +20,6 @@ _rusk_cmd() {
     command -v rusk 2>/dev/null || echo "rusk"
 }
 
-# Get list of task IDs from rusk list output
-_rusk_get_task_ids() {
-    local rusk_cmd=$(_rusk_cmd)
-    # Check if RUSK_DB is set in command line (use full command line buffer)
-    local rusk_db=""
-    local -a buffer_words
-    buffer_words=(${(z)LBUFFER})
-    for word in "${buffer_words[@]}"; do
-        if [[ "$word" =~ ^RUSK_DB=(.+)$ ]]; then
-            rusk_db="${match[1]}"
-            break
-        fi
-    done
-    
-    if [ -n "$rusk_db" ]; then
-        env RUSK_DB="$rusk_db" "$rusk_cmd" list 2>/dev/null | grep -oE '^\s*[•✔]\s+[0-9]+' | grep -oE '[0-9]+' | sort -n
-    else
-        "$rusk_cmd" list 2>/dev/null | grep -oE '^\s*[•✔]\s+[0-9]+' | grep -oE '[0-9]+' | sort -n
-    fi
-}
-
 # True if the text would not come back as it is when put on the command line
 # bare: a shell-special character, or any whitespace but single spaces between
 # words (tabs, line breaks, runs of spaces and spaces at either end).
@@ -111,59 +90,6 @@ _rusk_get_task_text_raw() {
     [[ -n "$REPLY" ]]
 }
 
-# The text of task $1, quoted for the command line.
-_rusk_get_task_text() {
-    _rusk_get_task_text_raw "$1" && _rusk_quote_text "$REPLY"
-}
-
-# Get entered task IDs from command line
-_rusk_get_entered_ids() {
-    local -a entered_ids
-    local i
-    # Find rusk command index
-    local rusk_idx=-1
-    for ((i=1; i<=${#words[@]}; i++)); do
-        if [[ "${words[i]}" == "rusk" ]]; then
-            rusk_idx=$i
-            break
-        fi
-    done
-    # Start from word after command (rusk_idx + 2: skip "rusk" and command like "edit")
-    local start_idx=$((rusk_idx + 2))
-    for ((i=start_idx; i<${#words[@]}; i++)); do
-        if [[ "${words[i]}" =~ ^[0-9]+$ ]]; then
-            entered_ids+=("${words[i]}")
-        fi
-    done
-    echo "${entered_ids[@]}"
-}
-
-# Filter out already entered IDs from task ID list
-_rusk_filter_ids() {
-    local -a ids=("${(@f)$(_rusk_get_task_ids)}")
-    local -a entered_ids=($(_rusk_get_entered_ids))
-    
-    if [ ${#entered_ids[@]} -eq 0 ]; then
-        echo "${ids[@]}"
-        return
-    fi
-    
-    local -a filtered_ids
-    for id in "${ids[@]}"; do
-        local found=0
-        for entered in "${entered_ids[@]}"; do
-            if [ "$id" = "$entered" ]; then
-                found=1
-                break
-            fi
-        done
-        if [ $found -eq 0 ]; then
-            filtered_ids+=("$id")
-        fi
-    done
-    echo "${filtered_ids[@]}"
-}
-
 # Count how many IDs have been entered
 _rusk_count_ids() {
     local count=0
@@ -187,16 +113,6 @@ _rusk_count_ids() {
         fi
     done
     echo $count
-}
-
-# Complete task IDs with filtering
-_rusk_complete_task_ids() {
-    local -a ids=($(_rusk_filter_ids))
-    if [ ${#ids[@]} -gt 0 ]; then
-        compadd $ids
-        return 0
-    fi
-    return 1
 }
 
 # add: task text before cursor (completed words only)

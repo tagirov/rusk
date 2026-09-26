@@ -95,3 +95,21 @@ reset_counters() {
     TESTS_PASSED=0
     TESTS_FAILED=0
 }
+
+# Completion for the words given (the last one is the word under the cursor):
+# no candidate may be a task id — rusk never suggests ids
+assert_no_id_candidates() {
+    COMP_WORDS=("$@")
+    COMP_CWORD=$(( ${#COMP_WORDS[@]} - 1 ))
+    COMP_LINE="${COMP_WORDS[*]}"
+    COMPREPLY=()
+    _rusk_completion
+    local c
+    for c in "${COMPREPLY[@]}"; do
+        if [[ "$c" =~ ^[0-9]+$ ]]; then
+            assert_true 1 "No task id suggested for '${COMP_WORDS[*]}' (got: ${COMPREPLY[*]})"
+            return
+        fi
+    done
+    assert_true 0 "No task id suggested for '${COMP_WORDS[*]}'"
+}

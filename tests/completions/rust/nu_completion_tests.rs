@@ -43,10 +43,6 @@ fn test_nu_completion_script_structure() {
 
     // Check for utility functions
     assert!(
-        script.contains("def get-task-ids"),
-        "Script should have get-task-ids function"
-    );
-    assert!(
         script.contains("def get-task-text"),
         "Script should have get-task-text function"
     );

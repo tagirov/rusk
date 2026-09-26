@@ -88,10 +88,22 @@ print_test_section "Function Existence Tests"
 
 # Test: Check if helper functions exist
 print_test "Helper functions" "" "Should have helper functions"
-if functions -q __rusk_cmd; and functions -q __rusk_get_all_task_ids
+if functions -q __rusk_cmd; and functions -q __rusk_get_task_text
     assert_true 0 "Helper functions exist"
 else
     assert_true 1 "Helper functions exist"
+end
+
+# Completion for the command line given, in a fish of its own (this script
+# replaces the commandline helpers further down): no candidate may be a task
+# id — rusk never suggests ids
+function assert_no_id_candidates -a line
+    set -l got (fish -N -c "source $COMPLETION_FILE; complete -C '$line'" | string replace -r '\t.*' '')
+    if string match -qr '^[0-9]+$' -- $got
+        assert_true 1 "No task id suggested for '$line' (got: $got)"
+    else
+        assert_true 0 "No task id suggested for '$line'"
+    end
 end
 
 # ============================================================================
@@ -135,30 +147,25 @@ assert_true 0 "Add command works with alias 'a'"
 # ============================================================================
 print_test_section "EDIT Command Tests"
 
-# Test: Edit should support task ID and text completion
-print_test "Edit completion" "rusk edit" "Should support ID and text completion"
-if functions -q __rusk_get_task_ids
-    assert_true 0 "Edit command supports ID and text completion"
+# Test: Edit completes the task text next to its id
+print_test "Edit completion" "rusk edit" "Should support text completion"
+if functions -q __rusk_edit_text_slot __rusk_complete_edit_text
+    assert_true 0 "Edit command supports text completion"
 else
-    assert_true 1 "Edit command supports ID and text completion"
+    assert_true 1 "Edit command supports text completion"
 end
 
-# Test: rusk edit <tab> should suggest task IDs
-print_test "rusk edit <tab> (task ID completion)" "rusk edit" "Should suggest task IDs"
-if functions -q __rusk_get_all_task_ids
-    set TASK_IDS (__rusk_get_all_task_ids 2>/dev/null)
-    assert_true 0 "Edit command suggests task IDs"
-else
-    assert_true 1 "Edit command suggests task IDs"
-end
+# Test: rusk edit <tab> suggests no task IDs
+print_test "rusk edit <tab>" "rusk edit" "Should not suggest task IDs"
+assert_no_id_candidates "rusk edit "
 
 # Test: rusk edit 1 -<tab> should suggest flags
 print_test "rusk edit 1 -<tab> (flag completion)" "rusk edit 1 -" "Should suggest --date, -d, --help, -h"
 assert_true 0 "Edit command suggests flags after ID"
 
 # Test: rusk e <tab> (alias test)
-print_test "rusk e <tab> (alias completion)" "rusk e" "Should suggest task IDs (using alias 'e')"
-assert_true 0 "Edit command works with alias 'e'"
+print_test "rusk e <tab> (alias completion)" "rusk e" "Should not suggest task IDs (alias 'e')"
+assert_no_id_candidates "rusk e "
 
 # ============================================================================
 # MARK COMMAND TESTS
@@ -181,9 +188,10 @@ else
     assert_true 1 "Mark command suggests help flags"
 end
 
-# Test: rusk mark 1 <tab> — still flags when current word empty (no ID completion)
-print_test "rusk mark 1 <tab> (flag completion after ID)" "rusk mark 1" "Should suggest -h, --help when appropriate"
-assert_true 0 "Mark after ID uses flag completion path"
+# Test: rusk mark <tab> and rusk mark 1 <tab> suggest no task IDs
+print_test "rusk mark <tab>, rusk mark 1 <tab>" "rusk mark 1" "Should not suggest task IDs"
+assert_no_id_candidates "rusk mark "
+assert_no_id_candidates "rusk mark 1 "
 
 # Test: rusk m <tab> (alias test)
 print_test "rusk m <tab> (alias completion)" "rusk m" "Should suggest flags (using alias 'm')"
@@ -214,9 +222,10 @@ end
 print_test "rusk del -<tab> (flag completion)" "rusk del -" "Should suggest flags (--done, --help, -h)"
 assert_true 0 "Del command suggests flags including --done"
 
-# Test: rusk del 1 2 <tab> — flags when current word empty (no ID completion)
-print_test "rusk del 1 2 <tab> (flag completion after IDs)" "rusk del 1 2" "Should suggest flags when appropriate"
-assert_true 0 "Del after IDs uses flag completion path"
+# Test: rusk del <tab> and rusk del 1 2 <tab> suggest no task IDs
+print_test "rusk del <tab>, rusk del 1 2 <tab>" "rusk del 1 2" "Should not suggest task IDs"
+assert_no_id_candidates "rusk del "
+assert_no_id_candidates "rusk del 1 2 "
 
 # Test: rusk d <tab> (alias test)
 print_test "rusk d <tab> (alias completion)" "rusk d" "Should suggest flags (using alias 'd')"
@@ -305,15 +314,6 @@ assert_true 0 "Completions command works with alias 'c'"
 # FUNCTIONALITY TESTS
 # ============================================================================
 print_test_section "Functionality Tests"
-
-# Test: __rusk_get_all_task_ids works
-print_test "Get task IDs" "" "Should return task IDs"
-set TASK_IDS (__rusk_get_all_task_ids 2>/dev/null)
-if test -n "$TASK_IDS" -o -z "$TASK_IDS"
-    assert_true 0 "get_all_task_ids function works"
-else
-    assert_true 1 "get_all_task_ids function works"
-end
 
 get_test_summary
 exit $status

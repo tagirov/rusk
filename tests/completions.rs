@@ -3,9 +3,6 @@
 // Shared test helpers, declared once so submodules can `use crate::common`.
 mod common;
 
-#[path = "completions/rust/completion_tests.rs"]
-mod completion_tests;
-
 #[path = "completions/rust/completions_install_tests.rs"]
 mod completions_install_tests;
 

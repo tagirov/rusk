@@ -160,26 +160,6 @@ function _rusk_emit_flag_completions {
     }
 }
 
-# Get list of task IDs from rusk list output
-function _rusk_get_task_ids {
-    $rusk_cmd = _rusk_get_cmd
-    try {
-        $output = & $rusk_cmd list 2>$null
-        if ($output) {
-            $ids = @()
-            foreach ($line in $output) {
-                if ($line -match '[•✔]' -and $line -match '^\s+[•✔]\s+(\d+)\s+') {
-                    $id = [int]$matches[1]
-                    $ids += $id
-                }
-            }
-            $ids | Sort-Object | ForEach-Object { $_.ToString() }
-        }
-    } catch {
-        return @()
-    }
-}
-
 # The text of a task from `rusk list --for-completion-lines`. Each task is one line,
 # `<id><TAB><text>`, with \\, \n, \r and \t escaped in the text; no other
 # backslash sequence occurs, so [regex]::Unescape gives the text back.
@@ -232,15 +212,6 @@ function _rusk_get_entered_ids {
         }
     }
     return $enteredIds
-}
-
-# Filter out already entered IDs from task ID list
-function _rusk_filter_ids {
-    param($ids, $enteredIds)
-    if ($enteredIds.Count -eq 0) {
-        return $ids
-    }
-    return $ids | Where-Object { $enteredIds -notcontains [int]$_ }
 }
 
 # Check if previous token is a value-taking flag (-d/--date, -a/--after; immediate previous token only)
@@ -324,38 +295,6 @@ function _rusk_edit_has_task_id {
         $prev = $w
     }
     return $false
-}
-
-# Complete task IDs with filtering and descriptions
-function _rusk_complete_task_ids {
-    param($tokens, $wordToComplete)
-    $ids = _rusk_get_task_ids
-    if (-not $ids) {
-        return @()
-    }
-    
-    $enteredIds = _rusk_get_entered_ids $tokens $wordToComplete
-    $filteredIds = _rusk_filter_ids $ids $enteredIds
-    
-    if ([string]::IsNullOrEmpty($wordToComplete)) {
-        $filtered = $filteredIds
-    } else {
-        $filtered = $filteredIds | Where-Object { $_ -like "$wordToComplete*" }
-    }
-    
-    if ($filtered) {
-        return $filtered | ForEach-Object {
-            $taskText = _rusk_get_task_text $_
-            $description = if ($taskText) {
-                $text = if ($taskText.Length -gt 40) { $taskText.Substring(0, 40) + "..." } else { $taskText }
-                "Task ID $_`: $text"
-            } else {
-                "Task ID $_"
-            }
-            [System.Management.Automation.CompletionResult]::new($_, $_, [System.Management.Automation.CompletionResultType]::ParameterValue, $description)
-        }
-    }
-    return @()
 }
 
 Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {

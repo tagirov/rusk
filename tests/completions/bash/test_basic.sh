@@ -30,10 +30,10 @@ fi
 source "$COMPLETION_FILE"
 
 # Test 4: Check if helper functions exist
-if declare -f _rusk_get_task_ids >/dev/null 2>&1; then
-    echo "✓ Helper function _rusk_get_task_ids exists"
+if declare -f _rusk_get_task_text >/dev/null 2>&1; then
+    echo "✓ Helper function _rusk_get_task_text exists"
 else
-    echo "⚠ Helper function _rusk_get_task_ids not found (may use different naming)"
+    echo "⚠ Helper function _rusk_get_task_text not found (may use different naming)"
 fi
 
 # Test 5: Check if completion is registered

@@ -1,0 +1,92 @@
+# What each completion script offers for a command line — the same in every
+# shell (bash, zsh, fish, nu, PowerShell), checked by
+# `tests/completions/rust/table_tests.rs`. One case per line:
+#
+#     <command line>|<candidates, in any order>[|<shells>]
+#
+# The word under the cursor is what follows the last space of the line (a
+# line that ends with a space completes an empty word). A case that names
+# shells replaces the general one of that line for them; a candidate that
+# holds spaces is written in double quotes. Rusk never offers task ids; a
+# word that is an id followed by a space gets the flags. The database the
+# scripts read holds one task: `1 buy milk`.
+rusk |a add c completions d del e edit g gen help l list m mark r restore s search serve sync
+# fish and nu list the flags of rusk itself along with the commands.
+rusk |-h --help -V --version a add c completions d del e edit g gen help l list m mark r restore s search serve sync|fish,nu
+rusk -|-h --help -V --version
+rusk --|--help --version
+rusk a|a add
+rusk s|s search serve sync
+rusk he|help
+rusk help |add completions del edit gen list mark restore search serve sync
+rusk help s|search serve sync
+rusk add |-h --help
+rusk add -|-h --help
+rusk a |-h --help
+rusk add x |-h --help -d --date -a --after
+rusk add x -|-h --help -d --date -a --after
+rusk add x --date |-h --help
+rusk add x -d tomorrow |-h --help -a --after
+rusk add x -a 1 -d tomorrow |-h --help
+rusk edit |-h --help
+rusk e |-h --help
+rusk edit 1 |-h --help -d --date -a --after
+# fish inserts one token per Tab: the id first, then the text on its own.
+rusk edit 1 |"buy milk"|fish
+rusk edit 1 -d tomorrow |-h --help -a --after
+rusk edit 1 -|-h --help -d --date -a --after
+rusk mark |-h --help -p --priority
+rusk m |-h --help -p --priority
+rusk mark 1 |-h --help -p --priority
+rusk del |-h --help --done -y --yes
+rusk d |-h --help --done -y --yes
+rusk del -|-h --help --done -y --yes
+# `--done` takes no ids.
+rusk del 1 2 |-h --help -y --yes
+rusk list |-h --help -c --compact --no-compact
+rusk l |-h --help -c --compact --no-compact
+rusk list -|-h --help -c --compact --no-compact
+rusk search -|-h --help --id
+rusk restore |-h --help
+rusk r |-h --help
+rusk gen -|-h --help -o --output
+rusk serve -|-h --help --host --port
+rusk sync |-h --help push pull
+rusk completions |-h --help install show
+rusk c |-h --help install show
+rusk completions install |-h --help bash zsh fish nu powershell
+rusk completions show |-h --help bash zsh fish nu powershell
+rusk completions install bash |-h --help zsh fish nu powershell
+# A command typed in full is a command: Tab ends the word, and the next Tab
+# offers what follows it.
+rusk add|add
+rusk list|list
+rusk e|e edit
+rusk edit|edit
+rusk help|help
+rusk sync|sync
+rusk completions|completions
+# `rusk help` takes a command, and a command of a command; nothing more.
+rusk help add |
+rusk help sync |push pull
+rusk help completions |install show
+rusk help sync push |
+rusk help add x|
+# The text of a task is not a command.
+rusk add h|
+rusk search h|
+rusk add x h|
+# A flag given with its value in one word is on the line too.
+rusk add x --date=tomorrow |-h --help -a --after
+rusk add x -dtomorrow |-h --help -a --after
+rusk edit 1 --after=2 |-h --help -d --date
+rusk edit 1 -a2 -d_ |-h --help
+# After `--` every word is text.
+rusk add x -- |
+rusk edit 1 -- |
+rusk add -- -|
+# After a shell, the others are offered, for `install` and `show` alike.
+rusk completions show zsh |-h --help bash fish nu powershell
+rusk completions install bash zsh fish nu powershell |-h --help
+# fish offers the text of the task next to its id after `--` as well.
+rusk edit 1 -- |"buy milk"|fish

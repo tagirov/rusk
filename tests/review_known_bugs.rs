@@ -6680,3 +6680,92 @@ fn r23_icalendar_keeps_identities_and_reads_what_clients_write() {
     assert_eq!((tasks[2].id, tasks[2].text.as_str()), (3, "standup"));
     assert_eq!((tasks[4].text.as_str(), tasks[4].after.as_slice()), ("Book hotel", &[][..]));
 }
+
+// ---------------------------------------------------------------------------
+// R26 — completion scripts, documentation, tests, build
+// ---------------------------------------------------------------------------
+//
+// The completion scripts are checked in `tests/completions/` (one table of
+// cases for all five shells, the installer); here, the areas REVIEW №147
+// found without a test that no other cluster covered since.
+
+/// REVIEW №147: nothing read `keywords` from a config file.
+#[test]
+fn r26_keywords_come_from_the_config() {
+    let sb = Sandbox::with_db(
+        r#"[{"id":1,"text":"HOT deal"},{"id":2,"text":"FIXME later"},{"id":3,"text":"hot or not"}]"#,
+    );
+    let config = sb.path().join("keywords.cfg");
+    fs::write(&config, "keywords = HOT\nkeyword = red\n").unwrap();
+    let out = sb
+        .cmd()
+        .env("RUSK_CONFIG", &config)
+        .env_remove("RUSK_NO_COLOR")
+        .env("CLICOLOR_FORCE", "1")
+        .arg("list")
+        .output()
+        .unwrap();
+    let list = stdout_of(&out);
+    // The keyword of the config, painted red; the defaults are replaced,
+    // and a keyword is one in its own case only: no color code (`…m`) right
+    // in front of those.
+    assert!(list.contains("\x1b[31mHOT\x1b[0m deal"), "{list:?}");
+    assert!(!list.contains("mFIXME") && list.contains("FIXME later"), "{list:?}");
+    assert!(!list.contains("mhot") && list.contains("hot or not"), "{list:?}");
+    // Without the line, FIXME is a keyword: the check above can fail.
+    fs::write(&config, "keyword = red\n").unwrap();
+    let out = sb.cmd().env("RUSK_CONFIG", &config).env_remove("RUSK_NO_COLOR").env("CLICOLOR_FORCE", "1").arg("list").output().unwrap();
+    assert!(stdout_of(&out).contains("\x1b[31mFIXME\x1b[0m later"), "{:?}", stdout_of(&out));
+}
+
+/// REVIEW №147: nothing used a running `rusk serve` as the database
+/// itself (`rusk_db = http://…`), only as a sync remote.
+#[test]
+#[cfg(all(feature = "web", feature = "backend-http"))]
+fn r26_a_served_database_is_one_to_read_and_write() {
+    if std::process::Command::new("curl").arg("--version").output().is_err() {
+        eprintln!("skipping r26_a_served_database_is_one_to_read_and_write: curl not found");
+        return;
+    }
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, "", &[]);
+    let remote = Backend::parse(&format!("http://127.0.0.1:{}", server.port)).unwrap();
+    let mut tasks = remote.load().unwrap();
+    assert_eq!(ids_and_texts(&tasks).len(), 3);
+    tasks[0].done = true;
+    tasks.push(Task {
+        id: 4,
+        text: "from the http backend".into(),
+        date: None,
+        done: false,
+        priority: false,
+        after: vec![1],
+    });
+    remote.save(&tasks).unwrap();
+    let served = db_tasks(&sb);
+    assert_eq!(served.len(), 4);
+    assert_eq!(text_of(&served, 4), "from the http backend");
+    assert_eq!(remote.load().unwrap(), tasks);
+}
+
+/// REVIEW №147 (review of R26): `RUSK_DB=http://…` as the command reads
+/// it (`Backend::resolve`). A debug build pins its database to the test
+/// path, so only a release build shows it: `cargo test --release`.
+#[test]
+#[cfg(all(feature = "web", feature = "backend-http", not(debug_assertions)))]
+fn r26_rusk_db_names_a_served_database() {
+    if std::process::Command::new("curl").arg("--version").output().is_err() {
+        eprintln!("skipping r26_rusk_db_names_a_served_database: curl not found");
+        return;
+    }
+    let server_side = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&server_side, "", &[]);
+    let client = Sandbox::new();
+    let url = format!("http://127.0.0.1:{}", server.port);
+    let out = client.cmd().env("RUSK_DB", &url).args(["add", "over", "http"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let out = client.cmd().env("RUSK_DB", &url).arg("list").output().unwrap();
+    assert!(stdout_of(&out).contains("over http"), "{}", stdout_of(&out));
+    assert_eq!(db_tasks(&server_side).len(), 4);
+    assert!(!client.db_path().exists(), "the client wrote a local database");
+}

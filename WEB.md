@@ -169,15 +169,20 @@ YYYY-MM-DD at line 1 column 25`).
 |---|---|---|
 | `GET /api/tasks` | — | full task list |
 | `GET /api/tasks/{id}` | — | one task |
-| `POST /api/tasks` | `{"text": "...", "date": "2026-08-01" \| null}` | `201` + created task, listed in the place of its id |
-| `PATCH /api/tasks/{id}` | any subset of `{text, date, done, priority}`; `"date": null` clears | `200` + updated task |
+| `POST /api/tasks` | `{"text": "...", "date": "2026-08-01" \| null, "after": [1, 2]}` (`date` and `after` optional) | `201` + created task, listed in the place of its id |
+| `PATCH /api/tasks/{id}` | any subset of `{text, date, done, priority, after}`; `"date": null` clears, `after` replaces the whole list (`[]` clears) | `200` + updated task |
 | `DELETE /api/tasks/{id}` | — | `204` |
 | `DELETE /api/tasks/done` | — | `{"deleted": n}` |
 | `PUT /api/tasks` | full task array | replaces the whole list (used by sync); `{"count": n, "tasks": [...]}`, the list as the server's database holds it |
 
-A text is stored without whitespace at its edges, as the CLI stores it; a
-new task takes the lowest free id and goes in front of the first task with a
-higher one, so a reused id is not listed at the end.
+A task is sent as the JSON format stores it: `id`, `text`, `date`
+(`YYYY-MM-DD` or `null`), `done`, `priority` and `after`, the ids of the tasks
+it waits for (`--after`; left out when there are none). `after` may name
+only other tasks that exist and must not close a loop (a task that waits for
+itself, or for one that waits for it); else a `400` says what is wrong. A
+text is stored without whitespace at its edges, as the
+CLI stores it; a new task takes the lowest free id and goes in front of the
+first task with a higher one, so a reused id is not listed at the end.
 
 `PUT` stores the list exactly as sent, so it has to follow the rules every
 list read from a database is held to (README, "Notes on the text formats"):

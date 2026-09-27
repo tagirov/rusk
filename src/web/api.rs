@@ -187,7 +187,8 @@ pub fn get_task(tm: &TaskManager, id: TaskId) -> ApiResponse {
     }
 }
 
-/// POST /api/tasks — `{"text": "...", "date": "YYYY-MM-DD" | null}`
+/// POST /api/tasks — `{"text": "...", "date": "YYYY-MM-DD" | null, "after": [ids]}`
+/// (`date` and `after` optional).
 pub fn create_task(tm: &mut TaskManager, body: &str, if_match: Option<&str>) -> ApiResponse {
     let new: NewTask = match parse_body(body, "invalid task") {
         Ok(v) => v,
@@ -215,7 +216,7 @@ pub fn create_task(tm: &mut TaskManager, body: &str, if_match: Option<&str>) -> 
     finish(created, |task| ApiResponse::task(201, &task))
 }
 
-/// PATCH /api/tasks/{id} — any subset of `{text, date, done, priority}`.
+/// PATCH /api/tasks/{id} — any subset of `{text, date, done, priority, after}`.
 pub fn update_task(
     tm: &mut TaskManager,
     id: TaskId,

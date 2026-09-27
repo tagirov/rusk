@@ -80,6 +80,24 @@ reset_counters() {
     TESTS_FAILED=0
 }
 
+# The candidates the script offers for the words given (the last one is the
+# word under the cursor), in `reply`: what it hands to `compadd`, which works
+# only inside the completion system.
+completion_candidates() {
+    local -a words candidates
+    words=("$@")
+    local CURRENT=${#words}
+    local LBUFFER="${words[*]}"
+    compadd() {
+        local -a a=("$@")
+        local i=${a[(i)--]}
+        if (( i <= ${#a} )); then candidates+=("${(@)a[i+1,-1]}"); else candidates+=("${(@)a:#-*}"); fi
+    }
+    _rusk 2>/dev/null
+    unfunction compadd
+    reply=("${candidates[@]}")
+}
+
 # Completion for the words given (the last one is the word under the cursor):
 # no candidate may be a task id — rusk never suggests ids. `compadd` works only
 # inside the completion system, so what the script hands to it is collected.

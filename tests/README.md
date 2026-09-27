@@ -15,6 +15,7 @@ tests/
 │   └── ...
 ├── cli_tests.rs                    # CLI command tests (TaskManager API)
 ├── cli_utils_tests.rs              # CLI utility function tests (wrap, trim, word nav)
+├── config_tests.rs                 # The config file: parsing, variables, theme, warnings, RUSK_CONFIG
 ├── lib_tests.rs                    # Core library function tests
 ├── database_corruption_tests.rs    # Database corruption handling tests
 ├── directory_structure_tests.rs    # Directory creation, default path, RUSK_DB in test mode
@@ -26,9 +27,10 @@ tests/
 ├── persistence_tests.rs            # Data persistence and save/load tests
 ├── restore_tests.rs                # Backup restore functionality tests
 ├── review_urgent_tests.rs          # Regression tests for the urgent REVIEW.md fixes (№1, №6, №7, №154, №161)
-├── review_known_bugs.rs            # REVIEW.md repros by refactor cluster: #[ignore]d while open, regressions once closed (R1–R22, R24)
+├── review_known_bugs.rs            # REVIEW.md repros by refactor cluster: #[ignore]d while open, regressions once closed (R1–R26)
 ├── unchanged_detection_tests.rs    # Unchanged task detection tests
-└── completions.rs                  # Completion test entry point
+├── web_tests.rs                    # `rusk serve` over HTTP: pages, the API, auth, sync against it
+└── completions.rs                  # Completion test entry point (tests/completions/rust/)
 ```
 
 ## Running Tests
@@ -339,6 +341,12 @@ These tests are designed to run in CI/CD pipelines:
   (`TaskManager::open_at`; a debug binary ignores `RUSK_DB`); the codecs'
   pure parts are unit-tested in `src/codec/` (`markdown`, `ics`, `ndjson`)
   and the report of a broken JSON file in `src/backend/file.rs`.
+  R26's completion table (`tests/completions/cases.txt`) runs in bash, zsh,
+  fish, nu and PowerShell, whichever are installed, through
+  `tests/completions/rust/table_tests.rs`, in a `Sandbox`; a script that
+  prints anything while completing fails it (see tests/completions/README.md).
+  `r26_rusk_db_names_a_served_database` runs under `cargo test --release`
+  only, like `r25_a_release_binary_is_never_in_test_mode`.
   R25's config parser is unit-tested in `src/config.rs` (comments, quotes,
   bytes, `default`, the template), the date parser in `src/parser/date.rs`
   (the shape and range of a year, months first), stored dates outside the

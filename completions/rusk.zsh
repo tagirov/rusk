@@ -208,56 +208,54 @@ _rusk_edit_help_after_date_only() {
     return 1
 }
 
+# The value flags of add/edit not on the line yet, in `reply`: -d/--date
+# and -a/--after can each be given once, also as `--date=X` or `-dX`.
+_rusk_unused_value_flags() {
+    reply=()
+    local rusk_i=-1 j a p="" have_d=0 have_a=0
+    for ((j=1; j<=${#words[@]}; j++)); do
+        if [[ "${words[j]}" == "rusk" ]]; then
+            rusk_i=$j
+            break
+        fi
+    done
+    if [ $rusk_i -ge 0 ]; then
+        for ((j=rusk_i+2; j<CURRENT; j++)); do
+            a="${words[j]}"
+            [[ -n "$a" ]] || continue
+            if [[ "$p" == "-d" || "$p" == "--date" || "$p" == "-a" || "$p" == "--after" ]]; then
+                p="$a"
+                continue
+            fi
+            case "$a" in
+                -d|--date|--date=*|-d?*) have_d=1 ;;
+                -a|--after|--after=*|-a?*) have_a=1 ;;
+            esac
+            p="$a"
+        done
+    fi
+    (( have_d )) || reply+=(-d --date)
+    (( have_a )) || reply+=(-a --after)
+}
+
 _rusk_zsh_compadd_edit_flags() {
     if _rusk_edit_has_task_id; then
-        local rusk_i=-1
-        local j
-        for ((j=1; j<=${#words[@]}; j++)); do
-            if [[ "${words[j]}" == "rusk" ]]; then
-                rusk_i=$j
-                break
-            fi
-        done
-        local have_d=0
-        local have_a=0
-        local p=""
-        if [ $rusk_i -ge 0 ]; then
-            local a
-            for ((j=rusk_i+2; j<CURRENT; j++)); do
-                a="${words[j]}"
-                [[ -n "$a" ]] || continue
-                if [[ "$p" == "-d" || "$p" == "--date" || "$p" == "-a" || "$p" == "--after" ]]; then
-                    p="$a"
-                    continue
-                fi
-                if [[ "$a" == "-d" || "$a" == "--date" ]]; then
-                    have_d=1
-                fi
-                if [[ "$a" == "-a" || "$a" == "--after" ]]; then
-                    have_a=1
-                fi
-                p="$a"
-            done
-        fi
-        local -a _rusk_edit_flags
-        _rusk_edit_flags=()
-        [ "$have_d" -eq 0 ] && _rusk_edit_flags+=(-d --date)
-        [ "$have_a" -eq 0 ] && _rusk_edit_flags+=(-a --after)
-        _rusk_edit_flags+=(-h --help)
-        _rusk_zsh_compadd_flags -- "${_rusk_edit_flags[@]}"
+        local -a reply
+        _rusk_unused_value_flags
+        compadd -- "${reply[@]}" -h --help
     else
-        _rusk_zsh_compadd_flags -- -h --help
+        compadd -- -h --help
     fi
 }
 
-# When the word under cursor is the subcommand (e.g. rusk a|), compadd would filter out -h/--help; clear prefix briefly.
-_rusk_zsh_compadd_flags() {
-    local _rusk_cwsave="${words[CURRENT]}"
-    if [[ -n "$cur" ]] && [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; then
-        words[CURRENT]=""
-    fi
-    compadd "$@"
-    words[CURRENT]="$_rusk_cwsave"
+# Whether a `--` comes before the word under the cursor: every word after
+# it is text, with nothing to offer.
+_rusk_after_double_dash() {
+    local j
+    for ((j=rusk_idx+2; j<CURRENT; j++)); do
+        [[ "${words[j]}" == "--" ]] && return 0
+    done
+    return 1
 }
 
 _rusk_main() {
@@ -271,19 +269,17 @@ _rusk_main() {
         fi
     done
     
-    # Complete first token after "rusk" unless it is already a full subcommand/alias
+    # The first word after "rusk" is a command (or a flag of rusk itself),
+    # a command typed in full too: Tab ends the word, the next Tab offers
+    # what follows it.
     if [ $rusk_idx -ge 0 ] && [ -n "$CURRENT" ] && [ "$CURRENT" -eq $((rusk_idx + 1)) ] 2>/dev/null; then
-        local cw="${words[CURRENT]}"
-        # Only full subcommand names: short aliases still complete to long names, not -h/--help.
-        case "$cw" in
-            add|edit|mark|del|list|search|restore|gen|serve|sync|completions)
-                ;;
-            *)
-                compadd add edit mark del list search restore gen serve sync completions a e m d l s r g c
-                return
-                ;;
+        case "${words[CURRENT]}" in
+            -*) compadd -- -h --help -V --version ;;
+            *) compadd add edit mark del list search restore gen serve sync completions help a e m d l s r g c ;;
         esac
+        return
     fi
+    _rusk_after_double_dash && return
     
     # Get command (word after rusk)
     local cmd=""
@@ -307,11 +303,13 @@ _rusk_main() {
                 if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
                     compadd -- -h --help
                 fi
-            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; }; then
+            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
                 if _rusk_add_has_task_text; then
-                    _rusk_zsh_compadd_flags -- -d --date -a --after -h --help
+                    local -a reply
+                    _rusk_unused_value_flags
+                    compadd -- "${reply[@]}" -h --help
                 else
-                    _rusk_zsh_compadd_flags -- -h --help
+                    compadd -- -h --help
                 fi
             fi
             ;;
@@ -343,40 +341,40 @@ _rusk_main() {
                         return 0
                     fi
                 fi
-            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; }; then
+            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
                 _rusk_zsh_compadd_edit_flags
             fi
             # No task ID completion for edit
             ;;
             
         mark|m|del|d)
-            if [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; }; then
+            if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
                 if [[ "$cmd" == "del" || "$cmd" == "d" ]]; then
                     # `--done` takes no ids: offered only before any
                     if [ "$(_rusk_count_ids)" -eq 0 ]; then
-                        _rusk_zsh_compadd_flags -- --done --yes -y --help -h
+                        compadd -- --done --yes -y --help -h
                     else
-                        _rusk_zsh_compadd_flags -- --yes -y --help -h
+                        compadd -- --yes -y --help -h
                     fi
                 else
-                    _rusk_zsh_compadd_flags -- -p --priority -h --help
+                    compadd -- -p --priority -h --help
                 fi
             fi
             ;;
             
         list|l)
-            if [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; }; then
-                _rusk_zsh_compadd_flags -- -c --compact --no-compact -h --help
+            if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+                compadd -- -c --compact --no-compact -h --help
             fi
             ;;
         search|s)
-            if [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; }; then
-                _rusk_zsh_compadd_flags -- --id -h --help
+            if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+                compadd -- --id -h --help
             fi
             ;;
         restore|r)
-            if [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; }; then
-                _rusk_zsh_compadd_flags -- -h --help
+            if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+                compadd -- -h --help
             fi
             ;;
 
@@ -386,8 +384,8 @@ _rusk_main() {
                 if [[ "$cur" != -* ]] && (( $+functions[_files] )); then
                     _files 2>/dev/null
                 fi
-            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; }; then
-                _rusk_zsh_compadd_flags -- -o --output -h --help
+            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+                compadd -- -o --output -h --help
             fi
             ;;
 
@@ -395,8 +393,8 @@ _rusk_main() {
             if [[ "$prev" == "--host" || "$prev" == "--port" ]]; then
                 # Free-form value: no candidates
                 :
-            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; }; then
-                _rusk_zsh_compadd_flags -- --host --port -h --help
+            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+                compadd -- --host --port -h --help
             fi
             ;;
 
@@ -413,7 +411,6 @@ _rusk_main() {
                     compadd -- --force -h --help
                 fi
             else
-                # Like `rusk completions`: plain compadd, no command-token prefix reset
                 compadd -- push pull -h --help
             fi
             ;;
@@ -422,7 +419,7 @@ _rusk_main() {
             local saw_inst=0
             # Do not redeclare `local i` here: a second `local i` in the same function can make
             # zsh print the previous value to stdout during completion (corrupts the command line).
-            for ((i=rusk_idx+2; i<=${#words[@]}; i++)); do
+            for ((i=rusk_idx+2; i<CURRENT; i++)); do
                 if [[ "${words[i]}" == "install" || "${words[i]}" == "show" ]]; then
                     saw_inst=1
                     break
@@ -473,10 +470,21 @@ _rusk_main() {
                     compadd -- "${remaining_shells[@]}"
                 fi
             else
-                # Do not use _rusk_zsh_compadd_flags here: its command-token prefix reset is
-                # intended for dash-flags and can interfere with `rusk completions`.
                 compadd -- install show -h --help
             fi
+            ;;
+
+        help)
+            # `rusk help <command> [<subcommand>]`, nothing more.
+            case $((CURRENT - rusk_idx)) in
+                2) compadd add edit mark del list search restore gen serve sync completions ;;
+                3)
+                    case "${words[rusk_idx + 2]}" in
+                        sync) compadd push pull ;;
+                        completions) compadd install show ;;
+                    esac
+                    ;;
+            esac
             ;;
     esac
 }

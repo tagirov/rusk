@@ -3,6 +3,10 @@ name = "rusk"
 version = "0.7.3"
 authors = ["github.com/tagirov/rusk/graphs/contributors"]
 edition = "2024"
+# let-chains (`if let … && let …`) are stable from 1.88, `File::try_lock`
+# from 1.89 (REVIEW №143); clippy's `incompatible_msrv` lint checks the std
+# APIs the code uses against it.
+rust-version = "1.89"
 description = "Minimal cross-platform terminal task manager"
 
 [lib]

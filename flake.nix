@@ -6,7 +6,8 @@
   # Nix fetches them and pins exact revisions in flake.lock,
   # so the build is reproducible: everyone gets the same nixpkgs.
   inputs = {
-    # nixpkgs-unstable is required because of edition 2024 (needs rustc >= 1.85)
+    # nixpkgs-unstable: rusk needs rustc >= 1.89 (edition 2024, let-chains,
+    # File::try_lock; `rust-version` in Cargo.toml)
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
   };
 

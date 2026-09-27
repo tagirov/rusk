@@ -110,6 +110,9 @@ function _rusk_cursor_after_whitespace {
         $line = [string]$ext.Text
         if ([string]::IsNullOrEmpty($line)) { return $false }
         $start = [int]$ext.StartOffset
+        # The command's extent ends with its last token: a cursor past it
+        # stands after the whitespace that follows (`rusk e ` + Tab).
+        if ($cursorPosition -gt [int]$ext.EndOffset) { return $true }
         $idx = $cursorPosition - $start
         if ($idx -le 0) { return $false }
         if ($idx -gt $line.Length) { $idx = $line.Length }
@@ -119,18 +122,9 @@ function _rusk_cursor_after_whitespace {
     }
 }
 
-# Prefix for flag completion when the current token is the subcommand alias (e.g. `rusk e|`)
-function _rusk_flag_completion_prefix {
-    param([string]$wordToComplete, $tokens, [string]$command, [string]$cur)
-    if (($tokens.Count -eq 2) -and ($cur -eq $command)) {
-        return ''
-    }
-    return $wordToComplete
-}
-
 function _rusk_emit_flag_completions {
     param([string[]]$flags, [string]$wordToComplete, $tokens, [string]$command, [string]$cur)
-    $pref = _rusk_flag_completion_prefix $wordToComplete $tokens $command $cur
+    $pref = $wordToComplete
     $filtered = if ([string]::IsNullOrEmpty($pref)) {
         $flags
     } else {
@@ -303,7 +297,8 @@ function _rusk_edit_has_task_id {
 Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
     param($wordToComplete, $commandAst, $cursorPosition)
 
-    $tokens = $commandAst.CommandElements
+    # The words up to the cursor: what follows it is not what is completed.
+    $tokens = @($commandAst.CommandElements | Where-Object { $_.Extent.StartOffset -lt $cursorPosition })
     $command = $null
     $prev = $null
     $cur = $wordToComplete
@@ -335,7 +330,7 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
 
     # Complete commands (when only "rusk" is typed)
     if ($tokens.Count -eq 1) {
-        $commands = @('add', 'a', 'edit', 'e', 'mark', 'm', 'del', 'd', 'list', 'l', 'search', 's', 'restore', 'r', 'gen', 'g', 'serve', 'sync', 'completions', 'c')
+        $commands = @('add', 'a', 'edit', 'e', 'mark', 'm', 'del', 'd', 'list', 'l', 'search', 's', 'restore', 'r', 'gen', 'g', 'serve', 'sync', 'completions', 'c', 'help')
         if ([string]::IsNullOrEmpty($wordToComplete)) {
             $filtered = $commands
         } else {
@@ -349,22 +344,28 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
         return @()
     }
 
-    # First arg after rusk: complete unless it's already a full subcommand name (aliases expand via Tab, not to -h/--help).
-    $fullSubcommands = @('add', 'edit', 'mark', 'del', 'list', 'search', 'restore', 'gen', 'serve', 'sync', 'completions')
-    $allSubcommands = @('add', 'a', 'edit', 'e', 'mark', 'm', 'del', 'd', 'list', 'l', 'search', 's', 'restore', 'r', 'gen', 'g', 'serve', 'sync', 'completions', 'c')
-    if ($tokens.Count -eq 2) {
+    # The first word after rusk is a command (or a flag of rusk itself), a
+    # command typed in full too: Tab ends the word, the next Tab offers what
+    # follows it (`rusk e ` + Tab: the flags of edit).
+    $allSubcommands = @('add', 'a', 'edit', 'e', 'mark', 'm', 'del', 'd', 'list', 'l', 'search', 's', 'restore', 'r', 'gen', 'g', 'serve', 'sync', 'completions', 'c', 'help')
+    $afterSpace = _rusk_cursor_after_whitespace $commandAst $cursorPosition
+    if ($tokens.Count -eq 2 -and -not $afterSpace) {
         $first = _rusk_token_text $tokens[1]
-        if (-not [string]::IsNullOrEmpty($first) -and ($fullSubcommands -notcontains $first)) {
-            # `rusk e ` + Tab: empty word after space → flags, not edit/e again
-            if (-not (_rusk_cursor_after_whitespace $commandAst $cursorPosition)) {
-                $prefix = if (-not [string]::IsNullOrEmpty($wordToComplete)) { $wordToComplete } else { $first }
-                $filtered = $allSubcommands | Where-Object { $_ -like "$prefix*" }
-                if ($filtered) {
-                    return $filtered | ForEach-Object {
-                        [System.Management.Automation.CompletionResult]::new($_, $_, [System.Management.Automation.CompletionResultType]::ParameterValue, $_)
-                    }
-                }
+        if ($first.StartsWith('-')) {
+            return @('-h', '--help', '-V', '--version') | Where-Object { $_ -like "$first*" } | ForEach-Object {
+                [System.Management.Automation.CompletionResult]::new($_, $_, [System.Management.Automation.CompletionResultType]::ParameterName, $_)
             }
+        }
+        return $allSubcommands | Where-Object { $_ -like "$first*" } | ForEach-Object {
+            [System.Management.Automation.CompletionResult]::new($_, $_, [System.Management.Automation.CompletionResultType]::ParameterValue, $_)
+        }
+    }
+
+    # After `--` every word is text, with nothing to offer.
+    $last = if ($afterSpace) { $tokens.Count } else { $tokens.Count - 1 }
+    for ($i = 2; $i -lt $last; $i++) {
+        if ((_rusk_token_text $tokens[$i]) -eq '--') {
+            return @()
         }
     }
 
@@ -375,10 +376,10 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
             $lineHasAfterFlag = ($wordToComplete -in @('-a', '--after'))
             for ($i = 2; $i -lt $tokens.Count; $i++) {
                 $v = _rusk_token_text $tokens[$i]
-                if ($v -eq '-d' -or $v -eq '--date') {
+                if ($v -eq '-d' -or $v -eq '--date' -or $v -like '--date=*' -or $v -cmatch '^-d.') {
                     $lineHasDateFlag = $true
                 }
-                if ($v -eq '-a' -or $v -eq '--after') {
+                if ($v -eq '-a' -or $v -eq '--after' -or $v -like '--after=*' -or $v -cmatch '^-a.') {
                     $lineHasAfterFlag = $true
                 }
             }
@@ -388,7 +389,7 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
                 }
                 return @()
             }
-            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur) -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
+            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur)) {
                 $hasText = _rusk_add_has_prior_task_text $tokens $wordToComplete
                 $flags = if ($hasText) {
                     $f = @()
@@ -428,15 +429,15 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
                 }
             }
 
-            if ([string]::IsNullOrEmpty($cur) -or $cur -like '-*' -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
+            if ([string]::IsNullOrEmpty($cur) -or $cur -like '-*') {
                 $lineHasDateFlag = ($wordToComplete -in @('-d', '--date'))
                 $lineHasAfterFlag = ($wordToComplete -in @('-a', '--after'))
                 for ($i = 2; $i -lt $tokens.Count; $i++) {
                     $v = _rusk_token_text $tokens[$i]
-                    if ($v -eq '-d' -or $v -eq '--date') {
+                    if ($v -eq '-d' -or $v -eq '--date' -or $v -like '--date=*' -or $v -cmatch '^-d.') {
                         $lineHasDateFlag = $true
                     }
-                    if ($v -eq '-a' -or $v -eq '--after') {
+                    if ($v -eq '-a' -or $v -eq '--after' -or $v -like '--after=*' -or $v -cmatch '^-a.') {
                         $lineHasAfterFlag = $true
                     }
                 }
@@ -456,7 +457,7 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
         }
 
         { $_ -in 'mark', 'm', 'del', 'd' } {
-            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur) -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
+            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur)) {
                 $df = if ($command -in @('del', 'd')) {
                     # `--done` takes no ids: offered only before any (`1,2` is one array token)
                     $hasIds = $false
@@ -473,21 +474,21 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
         }
 
         { $_ -in 'list', 'l' } {
-            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur) -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
+            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur)) {
                 return _rusk_emit_flag_completions @('--compact', '-c', '--no-compact', '--help', '-h') $wordToComplete $tokens $command $cur
             }
             return @()
         }
 
         { $_ -in 'search', 's' } {
-            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur) -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
+            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur)) {
                 return _rusk_emit_flag_completions @('--id', '--help', '-h') $wordToComplete $tokens $command $cur
             }
             return @()
         }
 
         { $_ -in 'restore', 'r' } {
-            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur) -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
+            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur)) {
                 return _rusk_emit_flag_completions @('--help', '-h') $wordToComplete $tokens $command $cur
             }
             return @()
@@ -498,7 +499,7 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
                 # Output value is a file path: return nothing so PowerShell falls back to file completion
                 return @()
             }
-            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur) -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
+            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur)) {
                 return _rusk_emit_flag_completions @('--output', '-o', '--help', '-h') $wordToComplete $tokens $command $cur
             }
             return @()
@@ -509,7 +510,7 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
                 # Free-form value: no candidates
                 return @()
             }
-            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur) -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
+            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur)) {
                 return _rusk_emit_flag_completions @('--host', '--port', '--help', '-h') $wordToComplete $tokens $command $cur
             }
             return @()
@@ -552,6 +553,23 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
             return $subcmdResults
         }
 
+        { $_ -in 'help' } {
+            # `rusk help <command> [<subcommand>]`, nothing more.
+            $topics = switch ($last) {
+                2 { @('add', 'edit', 'mark', 'del', 'list', 'search', 'restore', 'gen', 'serve', 'sync', 'completions') }
+                3 {
+                    switch (_rusk_token_text $tokens[2]) {
+                        'sync' { @('push', 'pull') }
+                        'completions' { @('install', 'show') }
+                        default { @() }
+                    }
+                }
+                default { @() }
+            }
+            return $topics | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+                [System.Management.Automation.CompletionResult]::new($_, $_, [System.Management.Automation.CompletionResultType]::ParameterValue, $_)
+            }
+        }
         { $_ -in 'completions', 'c' } {
             $hasInstShow = $false
             for ($i = 2; $i -lt $tokens.Count; $i++) {
@@ -566,9 +584,6 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
                     return _rusk_emit_flag_completions @('--help', '-h') $wordToComplete $tokens $command $cur
                 }
                 $subPrefix = $wordToComplete
-                if ($tokens.Count -eq 2 -and (_rusk_token_text $tokens[1]) -eq $wordToComplete) {
-                    $subPrefix = ''
-                }
                 $subcmds = if ([string]::IsNullOrEmpty($subPrefix)) {
                     @('install', 'show')
                 } else {

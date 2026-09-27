@@ -10,6 +10,9 @@ use crate::common;
 fn with_isolated_home(cmd: &mut Command, home: &Path) {
     cmd.env("HOME", home);
     cmd.env("USERPROFILE", home);
+    // The shells' configuration directory follows it (REVIEW №65); the
+    // developer's own must not be written to.
+    cmd.env("XDG_CONFIG_HOME", home.join(".config"));
     // Never read or auto-create the developer's real config file.
     cmd.env("RUSK_CONFIG", "");
     #[cfg(windows)]
@@ -840,8 +843,6 @@ fn test_nu_completion_handles_common_special_chars() {
 
 #[test]
 fn test_completion_install_creates_file_with_correct_permissions() -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
     let temp_dir = TempDir::new()?;
     let test_path = temp_dir.path().join("test_completion");
 
@@ -853,8 +854,11 @@ fn test_completion_install_creates_file_with_correct_permissions() -> Result<()>
     assert!(test_path.is_file());
 
     // On Unix, verify permissions allow reading
+    // REVIEW №66: the import stood outside this block, and the whole test
+    // crate did not build on Windows.
     #[cfg(unix)]
     {
+        use std::os::unix::fs::PermissionsExt;
         let metadata = fs::metadata(&test_path)?;
         let permissions = metadata.permissions();
         let mode = permissions.mode();
@@ -1105,5 +1109,41 @@ fn test_all_completion_scripts_syntax() -> Result<()> {
         );
     }
 
+    Ok(())
+}
+
+/// REVIEW №65: fish, nu and PowerShell completions went under `~/.config`
+/// whatever `XDG_CONFIG_HOME` said, where fish and nu do not look then; the
+/// fish instructions named `~/.config` too.
+#[cfg(unix)]
+#[test]
+fn test_cli_completions_install_follows_xdg_config_home() -> Result<()> {
+    let rusk_bin = common::require_rusk_bin()?;
+    let temp_dir = TempDir::new()?;
+    let home = temp_dir.path().join("home");
+    let xdg = temp_dir.path().join("xdg-alt");
+
+    let mut cmd = Command::new(&rusk_bin);
+    with_isolated_home(&mut cmd, &home);
+    cmd.env("XDG_CONFIG_HOME", &xdg);
+    let output = cmd.args(["completions", "install", "fish", "nu", "powershell"]).output()?;
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+
+    for file in [
+        xdg.join("fish").join("completions").join("rusk.fish"),
+        xdg.join("nushell").join("completions").join("rusk.nu"),
+        xdg.join("powershell").join("rusk-completions.ps1"),
+    ] {
+        assert!(file.is_file(), "{} is missing", file.display());
+    }
+    assert!(!home.join(".config").exists(), "something went under ~/.config");
+    let stdout = String::from_utf8(output.stdout)?;
+    assert!(stdout.contains(&xdg.join("fish").display().to_string()), "{stdout}");
+    assert!(stdout.contains(&xdg.join("nushell").join("config.nu").display().to_string()), "{stdout}");
+    assert!(
+        stdout.contains(&xdg.join("powershell").join("Microsoft.PowerShell_profile.ps1").display().to_string()),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("~/.config"), "{stdout}");
     Ok(())
 }

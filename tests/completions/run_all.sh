@@ -6,6 +6,13 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# A home, a config and a database of their own: a `rusk` the scripts call
+# must never read or change the user's.
+SANDBOX="$(mktemp -d)"
+trap 'rm -rf "$SANDBOX"' EXIT
+export HOME="$SANDBOX" XDG_CONFIG_HOME="$SANDBOX/.config" TMPDIR="$SANDBOX"
+export RUSK_CONFIG="" RUSK_DB="$SANDBOX/tasks.json"
+
 echo "Running All Completion Tests"
 echo "============================================================"
 echo ""

@@ -55,7 +55,8 @@ If you use **Powerlevel10k instant prompt** (or similar), define `fpath=(~/.zsh/
 
 ### Fish
 ```bash
-# Get script from rusk and save it
+# Get script from rusk and save it ($XDG_CONFIG_HOME/fish/completions when
+# XDG_CONFIG_HOME is set: that is where fish looks then)
 mkdir -p ~/.config/fish/completions
 rusk completions show fish > ~/.config/fish/completions/rusk.fish
 ```
@@ -76,13 +77,16 @@ keys.
 New-Item -ItemType Directory -Force -Path "$env:APPDATA\nushell\completions"
 rusk completions show nu | Out-File -FilePath "$env:APPDATA\nushell\completions\rusk.nu" -Encoding utf8
 
-# On Linux/macOS:
+# On Linux/macOS (nu's own config directory: `$nu.default-config-dir` says
+# which — ~/.config/nushell on Linux, ~/Library/Application Support/nushell
+# on macOS, $XDG_CONFIG_HOME/nushell when that is set; `rusk completions
+# install nu` puts it there):
 mkdir -p ~/.config/nushell/completions
 rusk completions show nu > ~/.config/nushell/completions/rusk.nu
 
-# Add to your config.nu
+# Add to your config.nu (next to that `completions` directory):
 # Windows: %APPDATA%\nushell\config.nu
-# Linux/macOS: ~/.config/nushell/config.nu
+# Linux: ~/.config/nushell/config.nu
 # Add this to enable external completions:
 
 # Load rusk completions module
@@ -119,7 +123,8 @@ rusk completions show powershell | Out-File -FilePath "$env:USERPROFILE\Document
 # Add to your PowerShell profile
 Add-Content $PROFILE ". `"$env:USERPROFILE\Documents\PowerShell\rusk-completions.ps1`""
 
-# On Linux/macOS with PowerShell Core:
+# On Linux/macOS with PowerShell Core ($XDG_CONFIG_HOME/powershell when
+# XDG_CONFIG_HOME is set):
 mkdir -p ~/.config/powershell
 rusk completions show powershell > ~/.config/powershell/rusk-completions.ps1
 Add-Content $PROFILE ". ~/.config/powershell/rusk-completions.ps1"

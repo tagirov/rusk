@@ -27,17 +27,14 @@ reset_counters
 
 print_test_section "Zsh Completion Tests - Edit After ID"
 
-# Test 1: rusk e 1 <tab> (with space after ID) — -d/--date and help
+# Test 1: rusk e 1 <tab> (with space after ID) — -d/--date and help, no text
 print_test "rusk e 1 <tab> (with space after ID)" "rusk e 1" "Should return -d/--date and -h/--help for edit"
-if grep -q '_rusk_get_task_text_raw "$prev"' "$COMPLETION_FILE"; then
-    assert_true 1 "Spaced ID completion does not call task text helper (task text disabled)"
+completion_candidates rusk e 1 ""
+if (( ${reply[(Ie)-d]} && ${reply[(Ie)--date]} && ${reply[(Ie)-h]} && ${reply[(Ie)--help]} )) \
+    && [[ " ${reply[*]} " != *"dummy task text"* ]]; then
+    assert_true 0 "Completion after spaced ID offers -d/--date and -h/--help, not the text"
 else
-    if grep -qE '_rusk_zsh_compadd_flags -- -d --date' "$COMPLETION_FILE" \
-        && grep -q _rusk_zsh_compadd_edit_flags "$COMPLETION_FILE"; then
-        assert_true 0 "Edit compadd offers -d --date (non-interactive date)"
-    else
-        assert_true 1 "Edit flags should include -d --date in _rusk_zsh_compadd_edit_flags"
-    fi
+    assert_true 1 "Completion after spaced ID offers -d/--date and -h/--help, not the text (got: ${reply[*]})"
 fi
 
 # Test 2: rusk e 1<tab> (without space) - should append task text, not dates
@@ -75,17 +72,13 @@ fi
 print_test "rusk e 1 2 <tab> (multiple IDs)" "rusk e 1 2" "Should return neither task text nor task IDs"
 assert_no_id_candidates rusk e 1 2 ""
 
-# Test 4: script has multiple -h/--help compadd sites (add/edit/restore/…)
-print_test "Completion script" "rusk.zsh" "Should have several help-flag compadd branches"
-if grep -q 'edit|e)' "$COMPLETION_FILE" && grep -q 'if \[\[ -z "\$cur" \]\]; then' "$COMPLETION_FILE"; then
-    cnt=$(grep -cE 'compadd -- -h --help|_rusk_zsh_compadd_flags -- -h --help' "$COMPLETION_FILE" || echo 0)
-    if [[ "$cnt" -ge 2 ]]; then
-        assert_true 0 "Completion script has -h/--help compadd branches"
-    else
-        assert_true 1 "Expected at least two -h/--help compadd sites (count=$cnt)"
-    fi
+# Test 4: rusk e <tab> (no id yet) — the help flags only
+print_test "rusk e <tab> (no id yet)" "rusk e" "Should return -h/--help only"
+completion_candidates rusk e ""
+if (( ${#reply} == 2 && ${reply[(Ie)-h]} && ${reply[(Ie)--help]} )); then
+    assert_true 0 "Completion before an id offers the help flags only"
 else
-    assert_true 1 "Completion file should contain edit branch and empty-cur handling"
+    assert_true 1 "Completion before an id offers the help flags only (got: ${reply[*]})"
 fi
 
 get_test_summary

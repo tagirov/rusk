@@ -51,6 +51,7 @@ def get-commands [] {
     {value: "serve", aliases: [], description: "Serve the web UI"}
     {value: "sync", aliases: [], description: "Synchronize with a remote"}
     {value: "completions", aliases: ["c"], description: "Install shell completions"}
+    {value: "help", aliases: [], description: "Print help for a command"}
   ]
 }
 
@@ -409,6 +410,16 @@ def edit-has-prior-id [spans: list<string>] {
   (get-entered-ids $spans | length) > 0
 }
 
+# Whether `token` gives -d/--date, alone or with its value (`--date=X`, `-dX`).
+def is-date-flag-token [token: string] {
+  ($token in ["-d" "--date"]) or ($token | str starts-with "--date=") or ($token =~ '^-d.')
+}
+
+# Whether `token` gives -a/--after, alone or with its value (`--after=X`, `-aX`).
+def is-after-flag-token [token: string] {
+  ($token in ["-a" "--after"]) or ($token | str starts-with "--after=") or ($token =~ '^-a.')
+}
+
 # Complete add command
 def complete-add [spans: list<string>, cur: string, prev: string] {
   # After -d/--date or -a/--after: more flags only (-h/--help), including while the flag token is still current
@@ -420,8 +431,8 @@ def complete-add [spans: list<string>, cur: string, prev: string] {
   if ($cur == "") or ($cur | str starts-with "-") {
     let has_text = (add-has-prior-task-text $spans)
     let args_done = (add-completed-args-after $spans)
-    let has_date_on_line = ($args_done | any {|t| $t == "-d" or $t == "--date"}) or $cur == "-d" or $cur == "--date"
-    let has_after_on_line = ($args_done | any {|t| $t == "-a" or $t == "--after"}) or $cur == "-a" or $cur == "--after"
+    let has_date_on_line = ($args_done | any {|t| is-date-flag-token $t}) or $cur == "-d" or $cur == "--date"
+    let has_after_on_line = ($args_done | any {|t| is-after-flag-token $t}) or $cur == "-a" or $cur == "--after"
     let all_flags = if $has_text {
       (if $has_date_on_line { [] } else { (get-date-flags) })
       | append (if $has_after_on_line { [] } else { (get-after-flags) })
@@ -443,8 +454,8 @@ def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_
 
   let entered_ids = (get-entered-ids $spans)
   let args_done = (add-completed-args-after $spans)
-  let has_date_on_line = ($args_done | any {|t| $t == "-d" or $t == "--date"}) or $cur == "-d" or $cur == "--date"
-  let has_after_on_line = ($args_done | any {|t| $t == "-a" or $t == "--after"}) or $cur == "-a" or $cur == "--after"
+  let has_date_on_line = ($args_done | any {|t| is-date-flag-token $t}) or $cur == "-d" or $cur == "--date"
+  let has_after_on_line = ($args_done | any {|t| is-after-flag-token $t}) or $cur == "-a" or $cur == "--after"
   let has_id = (edit-has-prior-id $spans)
 
   let prev_ends_with_comma = (ends-with-comma $prev)
@@ -660,16 +671,14 @@ def complete-completions [spans: list<string>, cur: string, prev: string, word_c
   # Show shells if after install/show (allow multiple shells)
   # Check if we're after install/show OR if we have install/show and word_count >= 3 (meaning we might be entering a shell)
   if $is_after_install_or_show or ($has_install_show and $word_count >= 3 and ($command == "completions" or $command == "c") and not $cur_might_be_subcommand) {
-    # If shell is already selected, only show other shells (no flags, no install/show)
+    # A shell already selected: the other shells, and the help flags as in
+    # every other shell's script (no install/show)
     if $has_shell_selected {
       if ($cur | str starts-with "-") {
         return (complete-flags (get-common-flags) $cur)
       }
       # Get available shells (excluding already selected) and filter by prefix
       let available_shells = (get-available-shells $spans)
-      if ($available_shells | length) == 0 {
-        return []
-      }
       let shell_completions = ($available_shells | each {|shell|
         let shell_info = (get-shells | where {|s| $s.value == $shell} | first)
         if ($shell_info != null) {
@@ -679,7 +688,7 @@ def complete-completions [spans: list<string>, cur: string, prev: string, word_c
         }
       })
       if ($cur == "") {
-        return $shell_completions
+        return ($shell_completions | append (get-common-flags))
       } else {
         let matching = (filter-by-prefix $shell_completions $cur)
         return $matching
@@ -757,6 +766,7 @@ def parse-spans [spans: list<string>] {
     return {
       has_trailing_space: false
       filtered_spans: []
+      rusk_spans: []
       word_count: 0
       command: ""
       prev: ""
@@ -814,6 +824,7 @@ def parse-spans [spans: list<string>] {
   {
     has_trailing_space: $has_trailing_space
     filtered_spans: $filtered_spans
+    rusk_spans: $rusk_spans
     word_count: $word_count
     command: $command
     prev: ($prev | default "")
@@ -827,13 +838,6 @@ def complete-root [ctx: record] {
   if ($ctx.word_count <= 1) and ($ctx.cur | str starts-with "-") {
     let all_flags = ((get-common-flags) | append (get-version-flags))
     return (complete-flags $all_flags $ctx.cur)
-  }
-  
-  # Full subcommand name only (not short aliases): after `rusk c` + Tab offer `completions`/`c`;
-  # after `rusk c ` + Tab delegate here (root returns []) so install/show come from complete-completions.
-  let exact_subcmds = [add edit mark del list search restore gen serve sync completions]
-  if ($ctx.word_count == 1) and (not $ctx.has_trailing_space) and ($ctx.cur in $exact_subcmds) {
-    return []
   }
   
   # Complete commands when only "rusk" is typed (or partial command without trailing space)
@@ -856,28 +860,7 @@ def complete-root [ctx: record] {
     return (filter-by-prefix $all_options $ctx.cur)
   }
   
-  # Handle partial command input
-  if $ctx.word_count == 2 and not $ctx.has_trailing_space {
-    let commands = (get-commands)
-    let matching_commands = ($commands | where {|cmd|
-      ($cmd.value | str starts-with $ctx.cur) or ($cmd.aliases | any {|alias| $alias | str starts-with $ctx.cur})
-    })
-    
-    if ($matching_commands | length) > 0 {
-      return ($matching_commands | each {|cmd| {value: $cmd.value, description: $cmd.description}})
-    }
-  }
-  
   []
-}
-
-# When spans lack a trailing "" after the subcommand, cur stays on the command token; treat as empty for flags.
-def normalize-subcommand-cur [ctx: record] {
-  if ($ctx.word_count == 1) and (not $ctx.has_trailing_space) and ($ctx.cur == $ctx.command) {
-    ""
-  } else {
-    $ctx.cur
-  }
 }
 
 # Main completion function
@@ -895,7 +878,13 @@ export def rusk-completions-main [spans: list<string>] {
     return []
   }
   
-  let cur_n = (normalize-subcommand-cur $ctx)
+  let cur_n = $ctx.cur
+
+  # After `--` every word is text, with nothing to offer.
+  let before = if $ctx.has_trailing_space { $ctx.rusk_spans } else { $ctx.rusk_spans | drop 1 }
+  if ($before | any {|w| $w == "--"}) {
+    return []
+  }
   
   # Handle subcommands
   match $ctx.command {
@@ -933,6 +922,21 @@ export def rusk-completions-main [spans: list<string>] {
 
     "completions" | "c" => {
       complete-completions $spans $cur_n $ctx.prev $ctx.word_count $ctx.command
+    }
+
+    # `rusk help <command> [<subcommand>]`, nothing more.
+    "help" => {
+      let position = if $ctx.has_trailing_space { $ctx.word_count + 1 } else { $ctx.word_count }
+      let topics = match $position {
+        2 => (get-commands | where value != "help" | each {|c| {value: $c.value, description: $c.description} })
+        3 => (match ($ctx.rusk_spans | get 1) {
+          "sync" => (get-sync-subcommands)
+          "completions" => (get-completions-subcommands)
+          _ => []
+        })
+        _ => []
+      }
+      $topics | where {|t| $t.value | str starts-with $cur_n }
     }
     
     _ => {

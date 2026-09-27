@@ -201,12 +201,41 @@ _rusk_edit_help_after_date_only() {
     return 1
 }
 
-# Optional $1=1: $cur is the subcommand token — use empty compgen prefix (else "a" filters out "-h")
+# The value flags of add/edit not on the line yet: -d/--date and -a/--after
+# can each be given once, also as `--date=X` or `-dX`.
+_rusk_unused_value_flags() {
+    local have_d=0 have_a=0 p="" a j rusk_i=-1
+    for ((j=0; j<${#COMP_WORDS[@]}; j++)); do
+        if [[ "${COMP_WORDS[j]}" == "rusk" ]]; then
+            rusk_i=$j
+            break
+        fi
+    done
+    if (( rusk_i >= 0 )); then
+        for ((j=rusk_i+2; j<COMP_CWORD; j++)); do
+            a="${COMP_WORDS[j]}"
+            [[ -n "$a" ]] || continue
+            if [[ "$p" == "-d" || "$p" == "--date" || "$p" == "-a" || "$p" == "--after" ]]; then
+                p="$a"
+                continue
+            fi
+            case "$a" in
+                -d|--date|--date=*|-d?*) have_d=1 ;;
+                -a|--after|--after=*|-a?*) have_a=1 ;;
+            esac
+            p="$a"
+        done
+    fi
+    local flags=""
+    (( have_d == 0 )) && flags="-d --date"
+    (( have_a == 0 )) && flags="$flags -a --after"
+    printf '%s' "$flags"
+}
+
 _rusk_complete_add_edit_flags() {
     local gcur="$cur"
-    [[ "${1:-0}" == 1 ]] && gcur=""
     if _rusk_add_has_task_text; then
-        COMPREPLY=($(compgen -W "-d --date -a --after -h --help" -- "$gcur"))
+        COMPREPLY=($(compgen -W "$(_rusk_unused_value_flags) -h --help" -- "$gcur"))
     else
         COMPREPLY=($(compgen -W "-h --help" -- "$gcur"))
     fi
@@ -216,42 +245,8 @@ _rusk_complete_add_edit_flags() {
 # Complete flags for edit: -d/--date only after a task id (TUI: first line; CLI: -d <date>)
 _rusk_complete_edit_flags() {
     local gcur="$cur"
-    [[ "${1:-0}" == 1 ]] && gcur=""
     if _rusk_edit_has_task_id; then
-        local have_d=0
-        local have_a=0
-        local p=""
-        local rusk_i=-1
-        local j
-        for ((j=0; j<${#COMP_WORDS[@]}; j++)); do
-            if [[ "${COMP_WORDS[j]}" == "rusk" ]]; then
-                rusk_i=$j
-                break
-            fi
-        done
-        if (( rusk_i >= 0 )); then
-            local a
-            p=""
-            for ((j=rusk_i+2; j<COMP_CWORD; j++)); do
-                a="${COMP_WORDS[j]}"
-                [[ -n "$a" ]] || continue
-                if [[ "$p" == "-d" || "$p" == "--date" || "$p" == "-a" || "$p" == "--after" ]]; then
-                    p="$a"
-                    continue
-                fi
-                if [[ "$a" == "-d" || "$a" == "--date" ]]; then
-                    have_d=1
-                fi
-                if [[ "$a" == "-a" || "$a" == "--after" ]]; then
-                    have_a=1
-                fi
-                p="$a"
-            done
-        fi
-        local flags=""
-        (( have_d == 0 )) && flags="-d --date"
-        (( have_a == 0 )) && flags="$flags -a --after"
-        COMPREPLY=($(compgen -W "$flags -h --help" -- "$gcur"))
+        COMPREPLY=($(compgen -W "$(_rusk_unused_value_flags) -h --help" -- "$gcur"))
     else
         COMPREPLY=($(compgen -W "-h --help" -- "$gcur"))
     fi
@@ -261,7 +256,6 @@ _rusk_complete_edit_flags() {
 # Complete flags for del command (`--done` takes no ids: offered only before any)
 _rusk_complete_del_flags() {
     local gcur="$cur"
-    [[ "${1:-0}" == 1 ]] && gcur=""
     local flags="--yes -y --help -h"
     [ "$(_rusk_count_ids)" -eq 0 ] && flags="--done $flags"
     COMPREPLY=($(compgen -W "$flags" -- "$gcur"))
@@ -271,7 +265,6 @@ _rusk_complete_del_flags() {
 # Complete flags for mark command
 _rusk_complete_mark_flags() {
     local gcur="$cur"
-    [[ "${1:-0}" == 1 ]] && gcur=""
     COMPREPLY=($(compgen -W "-p --priority -h --help" -- "$gcur"))
     return 0
 }
@@ -279,7 +272,6 @@ _rusk_complete_mark_flags() {
 # Flags for list (compact + help)
 _rusk_complete_list_flags() {
     local gcur="$cur"
-    [[ "${1:-0}" == 1 ]] && gcur=""
     COMPREPLY=($(compgen -W "-c --compact --no-compact -h --help" -- "$gcur"))
     return 0
 }
@@ -287,7 +279,6 @@ _rusk_complete_list_flags() {
 # Flags for search (--id + help)
 _rusk_complete_search_flags() {
     local gcur="$cur"
-    [[ "${1:-0}" == 1 ]] && gcur=""
     COMPREPLY=($(compgen -W "--id -h --help" -- "$gcur"))
     return 0
 }
@@ -295,7 +286,6 @@ _rusk_complete_search_flags() {
 # Help-only flags for restore
 _rusk_complete_help_flags() {
     local gcur="$cur"
-    [[ "${1:-0}" == 1 ]] && gcur=""
     COMPREPLY=($(compgen -W "-h --help" -- "$gcur"))
     return 0
 }
@@ -303,7 +293,6 @@ _rusk_complete_help_flags() {
 # Flags for gen (-o/--output take a file path)
 _rusk_complete_gen_flags() {
     local gcur="$cur"
-    [[ "${1:-0}" == 1 ]] && gcur=""
     COMPREPLY=($(compgen -W "-o --output -h --help" -- "$gcur"))
     return 0
 }
@@ -311,7 +300,6 @@ _rusk_complete_gen_flags() {
 # Flags for serve (--host/--port take free-form values)
 _rusk_complete_serve_flags() {
     local gcur="$cur"
-    [[ "${1:-0}" == 1 ]] && gcur=""
     COMPREPLY=($(compgen -W "--host --port -h --help" -- "$gcur"))
     return 0
 }
@@ -353,6 +341,16 @@ _rusk_get_available_shells() {
     echo "${result[*]}"
 }
 
+# Whether a `--` comes before the word under the cursor: every word after
+# it is text, with nothing to offer.
+_rusk_after_double_dash() {
+    local j
+    for ((j=rusk_idx+2; j<COMP_CWORD; j++)); do
+        [[ "${COMP_WORDS[j]}" == "--" ]] && return 0
+    done
+    return 1
+}
+
 _rusk_completion() {
     local cur="${COMP_WORDS[COMP_CWORD]}"
     local prev=""
@@ -378,18 +376,21 @@ _rusk_completion() {
         cmd="${COMP_WORDS[$((rusk_idx + 1))]}"
     fi
     
-    # Complete first token after "rusk" unless it is already a full subcommand/alias (then offer flags below)
+    # The first word after "rusk" is a command (or a flag of rusk itself),
+    # a command typed in full too: Tab ends the word, the next Tab offers
+    # what follows it.
     if [ $rusk_idx -ge 0 ] && [ $COMP_CWORD -eq $((rusk_idx + 1)) ]; then
-        # Only full subcommand names: short aliases (a e m …) still get Tab → long name, not flags (-h/--help).
         case "$cur" in
-            add|edit|mark|del|list|search|restore|gen|serve|sync|completions)
+            -*)
+                COMPREPLY=($(compgen -W "-h --help -V --version" -- "$cur"))
                 ;;
             *)
-                COMPREPLY=($(compgen -W "add edit mark del list search restore gen serve sync completions a e m d l s r g c" -- "$cur"))
-                return 0
+                COMPREPLY=($(compgen -W "add edit mark del list search restore gen serve sync completions help a e m d l s r g c" -- "$cur"))
                 ;;
         esac
+        return 0
     fi
+    _rusk_after_double_dash && return 0
     
     # Complete subcommands
     case "$cmd" in
@@ -398,12 +399,8 @@ _rusk_completion() {
                 if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
                     COMPREPLY=($(compgen -W "-h --help" -- "$cur"))
                 fi
-            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; }; then
-                if [[ -n "$cur" ]] && [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; then
-                    _rusk_complete_add_edit_flags 1
-                else
-                    _rusk_complete_add_edit_flags
-                fi
+            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+                _rusk_complete_add_edit_flags
             fi
             ;;
             
@@ -421,58 +418,34 @@ _rusk_completion() {
                         return 0
                     fi
                 fi
-            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; }; then
-                if [[ -n "$cur" ]] && [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; then
-                    _rusk_complete_edit_flags 1
-                else
-                    _rusk_complete_edit_flags
-                fi
+            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+                _rusk_complete_edit_flags
             fi
             ;;
             
         mark|m|del|d)
-            if [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; }; then
-                if [[ -n "$cur" ]] && [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; then
-                    if [[ "$cmd" == "del" || "$cmd" == "d" ]]; then
-                        _rusk_complete_del_flags 1
-                    else
-                        _rusk_complete_mark_flags 1
-                    fi
+            if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+                if [[ "$cmd" == "del" || "$cmd" == "d" ]]; then
+                    _rusk_complete_del_flags
                 else
-                    if [[ "$cmd" == "del" || "$cmd" == "d" ]]; then
-                        _rusk_complete_del_flags
-                    else
-                        _rusk_complete_mark_flags
-                    fi
+                    _rusk_complete_mark_flags
                 fi
             fi
             ;;
             
         list|l)
-            if [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; }; then
-                if [[ -n "$cur" ]] && [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; then
-                    _rusk_complete_list_flags 1
-                else
-                    _rusk_complete_list_flags
-                fi
+            if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+                _rusk_complete_list_flags
             fi
             ;;
         search|s)
-            if [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; }; then
-                if [[ -n "$cur" ]] && [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; then
-                    _rusk_complete_search_flags 1
-                else
-                    _rusk_complete_search_flags
-                fi
+            if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+                _rusk_complete_search_flags
             fi
             ;;
         restore|r)
-            if [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; }; then
-                if [[ -n "$cur" ]] && [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; then
-                    _rusk_complete_help_flags 1
-                else
-                    _rusk_complete_help_flags
-                fi
+            if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+                _rusk_complete_help_flags
             fi
             ;;
 
@@ -480,12 +453,8 @@ _rusk_completion() {
             if [[ "$prev" == "-o" || "$prev" == "--output" ]]; then
                 # Output value is a file path: offer filesystem completion
                 COMPREPLY=($(compgen -f -- "$cur"))
-            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; }; then
-                if [[ -n "$cur" ]] && [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; then
-                    _rusk_complete_gen_flags 1
-                else
-                    _rusk_complete_gen_flags
-                fi
+            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+                _rusk_complete_gen_flags
             fi
             ;;
 
@@ -493,12 +462,8 @@ _rusk_completion() {
             if [[ "$prev" == "--host" || "$prev" == "--port" ]]; then
                 # Free-form value: no candidates
                 :
-            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; }; then
-                if [[ -n "$cur" ]] && [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; then
-                    _rusk_complete_serve_flags 1
-                else
-                    _rusk_complete_serve_flags
-                fi
+            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+                _rusk_complete_serve_flags
             fi
             ;;
 
@@ -515,40 +480,43 @@ _rusk_completion() {
                     COMPREPLY=($(compgen -W "--force -h --help" -- "$cur"))
                 fi
             else
-                local gcur="$cur"
-                if [[ -n "$cur" ]] && [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; then
-                    gcur=""
-                fi
-                COMPREPLY=($(compgen -W "push pull -h --help" -- "$gcur"))
+                COMPREPLY=($(compgen -W "push pull -h --help" -- "$cur"))
             fi
             ;;
 
         completions|c)
-            local saw_inst=0
-            for ((i=rusk_idx+2; i<${#COMP_WORDS[@]}; i++)); do
+            local sub=""
+            for ((i=rusk_idx+2; i<COMP_CWORD; i++)); do
                 if [[ "${COMP_WORDS[i]}" == "install" || "${COMP_WORDS[i]}" == "show" ]]; then
-                    saw_inst=1
+                    sub="${COMP_WORDS[i]}"
                     break
                 fi
             done
-            if [[ $saw_inst -eq 1 ]]; then
+            if [[ -n "$sub" ]]; then
                 local shells=$(_rusk_get_available_shells)
                 if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
-                    if [[ -n "$shells" ]]; then
-                        COMPREPLY=($(compgen -W "$shells -h --help" -- "$cur"))
-                    else
-                        COMPREPLY=($(compgen -W "-h --help" -- "$cur"))
-                    fi
+                    COMPREPLY=($(compgen -W "$shells -h --help" -- "$cur"))
                 elif [[ -n "$shells" ]]; then
                     COMPREPLY=($(compgen -W "$shells" -- "$cur"))
                 fi
             else
-                local gcur="$cur"
-                if [[ -n "$cur" ]] && [[ "$cur" == "$cmd" ]] && [[ "$COMP_CWORD" -eq $((rusk_idx + 1)) ]]; then
-                    gcur=""
-                fi
-                COMPREPLY=($(compgen -W "install show -h --help" -- "$gcur"))
+                COMPREPLY=($(compgen -W "install show -h --help" -- "$cur"))
             fi
+            ;;
+
+        help)
+            # `rusk help <command> [<subcommand>]`, nothing more.
+            case $((COMP_CWORD - rusk_idx)) in
+                2)
+                    COMPREPLY=($(compgen -W "add edit mark del list search restore gen serve sync completions" -- "$cur"))
+                    ;;
+                3)
+                    case "${COMP_WORDS[rusk_idx + 2]}" in
+                        sync) COMPREPLY=($(compgen -W "push pull" -- "$cur")) ;;
+                        completions) COMPREPLY=($(compgen -W "install show" -- "$cur")) ;;
+                    esac
+                    ;;
+            esac
             ;;
     esac
 }

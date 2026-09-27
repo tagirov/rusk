@@ -63,11 +63,30 @@ end
 # Command Detection Functions
 # ============================================================================
 
+# The rusk command on the line (add, edit, …): the word after `rusk` (and
+# after the variables set in front of it) — not a word further on, where
+# `add` is text, or the topic of `rusk help`.
+function __rusk_command_word
+    set -l words (__rusk_get_cmdline)
+    set -l i 1
+    while test $i -le (count $words); and string match -qr '^[A-Za-z_][A-Za-z0-9_]*=' -- $words[$i]
+        set i (math $i + 1)
+    end
+    set i (math $i + 1)
+    test $i -le (count $words); or return 1
+    printf '%s\n' $words[$i]
+end
+
 # Check if we're in a specific command (with aliases)
 function __rusk_is_command
-    set -l cmd $argv[1]
-    set -l aliases $argv[2..-1]
-    __fish_seen_subcommand_from $cmd $aliases
+    set -l word (__rusk_command_word); or return 1
+    contains -- $word $argv
+end
+
+# Whether a `--` comes before the word under the cursor: every word after
+# it is text.
+function __rusk_after_double_dash
+    contains -- -- (__rusk_get_cmdline)
 end
 
 # Check if we're in completions/c command
@@ -169,6 +188,28 @@ function __rusk_add_has_prior_task_text
     return 1
 end
 
+# The value flags of add/edit not on the line yet: -d/--date and -a/--after
+# can each be given once, also as `--date=X` or `-dX`.
+function __rusk_unused_value_flags
+    set -l cmdline (__rusk_get_cmdline)
+    set -l rusk_i (contains -i -- rusk $cmdline); or return
+    set -l has_d 0
+    set -l has_a 0
+    set -l p ""
+    for a in $cmdline[(math $rusk_i + 2)..-1]
+        test -n "$a"; or continue
+        if contains -- "$p" -d --date -a --after
+            set p "$a"
+            continue
+        end
+        string match -qr -- '^(-d|--date)$|^--date=|^-d.' $a; and set has_d 1
+        string match -qr -- '^(-a|--after)$|^--after=|^-a.' $a; and set has_a 1
+        set p "$a"
+    end
+    test $has_d -eq 0; and printf '%s\n' -d --date
+    test $has_a -eq 0; and printf '%s\n' -a --after
+end
+
 # Complete flags for add command (-d/--date, -a/--after only after task text)
 function __rusk_complete_add_flags
     if __rusk_is_after_date_flag
@@ -180,13 +221,14 @@ function __rusk_complete_add_flags
     end
     set -l all_flags -h --help
     if __rusk_add_has_prior_task_text
-        set all_flags -d --date -a --after -h --help
+        set all_flags (__rusk_unused_value_flags) -h --help
     end
     __rusk_complete_flags $all_flags
 end
 
 # Check if we should complete flags for add command
 function __rusk_should_complete_add_flags
+    __rusk_after_double_dash; and return 1
     __rusk_is_command add a; or return 1
     if __rusk_is_after_date_flag
         set -l current_word (__rusk_get_current_word)
@@ -269,43 +311,7 @@ function __rusk_complete_edit_flags
     end
     set -l all_flags -h --help
     if __rusk_edit_has_task_id
-        set -l cmdline (__rusk_get_cmdline)
-        set -l n (count $cmdline)
-        set -l has_d 0
-        set -l has_a 0
-        set -l rusk_i -1
-        for i in (seq 1 $n)
-            if test "$cmdline[$i]" = rusk
-                set rusk_i $i
-                break
-            end
-        end
-        if test $rusk_i -ge 1
-            set -l p ""
-            for j in (seq (math $rusk_i + 2) (math $n - 1))
-                set -l a "$cmdline[$j]"
-                test -n "$a"; or continue
-                if contains -- "$p" -d --date -a --after
-                    set p "$a"
-                    continue
-                end
-                if test "$a" = -d; or test "$a" = --date
-                    set has_d 1
-                end
-                if test "$a" = -a; or test "$a" = --after
-                    set has_a 1
-                end
-                set p "$a"
-            end
-        end
-        set all_flags
-        if test $has_d -eq 0
-            set -a all_flags -d --date
-        end
-        if test $has_a -eq 0
-            set -a all_flags -a --after
-        end
-        set -a all_flags -h --help
+        set all_flags (__rusk_unused_value_flags) -h --help
     end
     __rusk_complete_flags $all_flags
 end
@@ -451,6 +457,7 @@ end
 
 # Flags for mark/del (no task ID completion)
 function __rusk_should_complete_mark_del_flags
+    __rusk_after_double_dash; and return 1
     __rusk_is_command mark m del d; or return 1
     set -l cw (__rusk_get_current_word)
     if __rusk_is_flag "$cw"
@@ -485,6 +492,7 @@ end
 
 # list / restore: help flags only
 function __rusk_should_complete_list_restore_flags
+    __rusk_after_double_dash; and return 1
     __rusk_is_command list l restore r; or return 1
     set -l cw (__rusk_get_current_word)
     if __rusk_is_flag "$cw"
@@ -514,6 +522,7 @@ end
 
 # search: --id + help flags (query is free text)
 function __rusk_should_complete_search_flags
+    __rusk_after_double_dash; and return 1
     __rusk_is_command search s; or return 1
     set -l cw (__rusk_get_current_word)
     if __rusk_is_flag "$cw"
@@ -562,6 +571,7 @@ end
 
 # gen: option flags (-o/--output value gets file completion via a separate -F rule)
 function __rusk_should_complete_gen_flags
+    __rusk_after_double_dash; and return 1
     __rusk_is_command gen g; or return 1
     if __rusk_is_after_output_flag
         return 1
@@ -587,6 +597,7 @@ end
 
 # serve: option flags (no completion for --host/--port values)
 function __rusk_should_complete_serve_flags
+    __rusk_after_double_dash; and return 1
     __rusk_is_command serve; or return 1
     if __rusk_is_after_serve_value_flag
         return 1
@@ -638,6 +649,7 @@ end
 
 # push/pull not entered yet: offer subcommands (plus -h/--help via flag rule)
 function __rusk_should_complete_sync_subcommands
+    __rusk_after_double_dash; and return 1
     __rusk_is_sync_command; or return 1
     __rusk_has_push_or_pull; and return 1
     set -l cw (__rusk_get_current_word)
@@ -649,6 +661,7 @@ end
 
 # Help flags at the `rusk sync` level (empty word or flag token)
 function __rusk_should_complete_sync_help
+    __rusk_after_double_dash; and return 1
     __rusk_is_sync_command; or return 1
     __rusk_has_push_or_pull; and return 1
     set -l cw (__rusk_get_current_word)
@@ -660,6 +673,7 @@ end
 
 # --force/-h/--help after push/pull
 function __rusk_should_complete_sync_direction_flags
+    __rusk_after_double_dash; and return 1
     __rusk_is_sync_command; or return 1
     __rusk_has_push_or_pull; or return 1
     set -l cw (__rusk_get_current_word)
@@ -667,6 +681,28 @@ function __rusk_should_complete_sync_direction_flags
         return 0
     end
     test -z "$cw"
+end
+
+# ============================================================================
+# Help Command Functions
+# ============================================================================
+
+# `rusk help <command> [<subcommand>]`: what the word under the cursor may be.
+function __rusk_complete_help
+    __rusk_after_double_dash; and return
+    set -l words (__rusk_get_cmdline)
+    set -l i (contains -i -- help $words); or return
+    switch (math (count $words) - $i)
+        case 0
+            printf '%s\n' add edit mark del list search restore gen serve sync completions
+        case 1
+            switch $words[(math $i + 1)]
+                case sync
+                    printf '%s\n' push pull
+                case completions
+                    printf '%s\n' install show
+            end
+    end
 end
 
 # ============================================================================
@@ -709,6 +745,7 @@ end
 
 # Check if we should complete shells (after install/show)
 function __rusk_should_complete_shells
+    __rusk_after_double_dash; and return 1
     __rusk_is_completions_command; or return 1
     __rusk_has_install_or_show; or return 1
     
@@ -722,6 +759,7 @@ end
 
 # -h/--help while typing a flag token under `rusk completions ...`
 function __rusk_should_complete_completions_help
+    __rusk_after_double_dash; and return 1
     __rusk_is_completions_command; or return 1
     set -l cw (__rusk_get_current_word)
     __rusk_is_flag "$cw"; or return 1
@@ -730,6 +768,7 @@ end
 
 # Empty current word: offer -h/--help next to install/show or shell names
 function __rusk_should_complete_completions_help_empty
+    __rusk_after_double_dash; and return 1
     __rusk_is_completions_command; or return 1
     set -l cw (__rusk_get_current_word)
     test -z "$cw"; or return 1
@@ -741,6 +780,9 @@ end
 # ============================================================================
 
 # Root commands and aliases
+# No file names: rusk takes task text, ids and words of its own. The value
+# of `gen -o` is the one path, and its rule says so (-F).
+complete -c rusk -f
 complete -c rusk -f -n '__fish_use_subcommand' -a 'add' -d 'Add a new task'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'edit' -d 'Edit tasks by id(s)'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'mark' -d 'Mark tasks as done/undone'
@@ -752,6 +794,8 @@ complete -c rusk -f -n '__fish_use_subcommand' -a 'gen' -d 'Generate a read-only
 complete -c rusk -f -n '__fish_use_subcommand' -a 'serve' -d 'Serve the web UI'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'sync' -d 'Synchronize with a remote'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'completions' -d 'Install shell completions'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'help' -d 'Print help for a command'
+complete -c rusk -f -n '__rusk_is_command help' -a '(__rusk_complete_help)'
 
 # Aliases share the command description so the fish pager groups each
 # alias with its command on one aligned row (e.g. "a  add    Add a new task").

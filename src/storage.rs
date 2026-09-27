@@ -87,6 +87,34 @@ pub fn next_free_id(tasks: &[Task]) -> Result<TaskId> {
     Ok(id)
 }
 
+/// Adds `task` to the list. A list in id order — as it is while rusk alone
+/// adds to it — stays in id order, so a new task that takes the id a deleted
+/// one left free is shown in that one's place, not at the end (REVIEW №133).
+/// A list someone has put in an order of their own (a hand-edited file)
+/// keeps it, and the new task goes at the end.
+pub fn insert_by_id(tasks: &mut Vec<Task>, task: Task) {
+    let in_id_order = tasks.windows(2).all(|pair| pair[0].id < pair[1].id);
+    let at = match in_id_order {
+        true => tasks.iter().position(|t| t.id > task.id).unwrap_or(tasks.len()),
+        false => tasks.len(),
+    };
+    tasks.insert(at, task);
+}
+
+/// A task text as it is stored: without whitespace at its edges, which the
+/// list does not show and which would otherwise tell apart texts that look
+/// the same (REVIEW №115). Whitespace inside is the user's.
+pub fn clean_text(text: &str) -> &str {
+    text.trim()
+}
+
+/// Whether storing `new` (cleaned) changes the text `stored`. A difference
+/// in whitespace at the edges alone is none: a text stored before texts
+/// were cleaned keeps its spaces until its words change.
+pub fn text_changes(stored: &str, new: &str) -> bool {
+    clean_text(stored) != clean_text(new)
+}
+
 /// Validates a `--after` dependency list against `tasks`: every id must
 /// exist, self-references and cycles are rejected. Returns the list
 /// deduplicated in input order. `own_id` is the task being edited (`None`
@@ -176,7 +204,7 @@ pub fn remove_done(tasks: &mut Vec<Task>) -> usize {
 }
 
 fn eprint_db_location(location: &str) {
-    eprintln!("{}", format!("Database path: {location}").blue());
+    crate::errln!("{}", format!("Database path: {location}").blue());
 }
 
 struct DbReporter {
@@ -324,22 +352,24 @@ impl TaskManager {
         self.backend.describe()
     }
 
-    pub fn add_task(&mut self, text: Vec<String>, date: Option<String>) -> Result<()> {
+    /// Adds a task and returns its id.
+    pub fn add_task(&mut self, text: Vec<String>, date: Option<String>) -> Result<TaskId> {
         self.add_task_with_after(text, date, Vec::new())
     }
 
     /// Like [`add_task`](Self::add_task) with a `--after` dependency list
-    /// (validated against the current database).
+    /// (validated against the current database). A date of `_` is no date,
+    /// as everywhere else a date is given.
     pub fn add_task_with_after(
         &mut self,
         text: Vec<String>,
         date: Option<String>,
         after: Vec<TaskId>,
-    ) -> Result<()> {
+    ) -> Result<TaskId> {
         let text = text.join(" ");
         let date = match date {
-            None => None,
-            Some(d) => Some(parse_cli_date_for_edit(&d, None)?),
+            Some(d) if !is_cli_date_clear_value(&d) => Some(parse_cli_date_for_edit(&d, None)?),
+            _ => None,
         };
         self.add_task_full(text, date, after)
     }
@@ -349,34 +379,38 @@ impl TaskManager {
         &mut self,
         text: String,
         date: Option<chrono::NaiveDate>,
-    ) -> Result<()> {
+    ) -> Result<TaskId> {
         self.add_task_full(text, date, Vec::new())
     }
 
     /// The full add: already-parsed date plus a dependency list. The id is
     /// picked, and the dependencies are validated, against the database as
-    /// it is at the moment of the save.
+    /// it is at the moment of the save. Returns the id.
     pub fn add_task_full(
         &mut self,
         text: String,
         date: Option<chrono::NaiveDate>,
         after: Vec<TaskId>,
-    ) -> Result<()> {
-        if text.trim().is_empty() {
+    ) -> Result<TaskId> {
+        let text = clean_text(&text);
+        if text.is_empty() {
             anyhow::bail!("Task text cannot be empty");
         }
         self.update(|tasks| {
             let after = validate_after(tasks, None, &after)?;
             let id = next_free_id(tasks)?;
-            tasks.push(Task {
-                id,
-                text: text.clone(),
-                date,
-                done: false,
-                priority: false,
-                after,
-            });
-            Ok(())
+            insert_by_id(
+                tasks,
+                Task {
+                    id,
+                    text: text.to_string(),
+                    date,
+                    done: false,
+                    priority: false,
+                    after,
+                },
+            );
+            Ok(id)
         })
     }
 
@@ -495,9 +529,9 @@ impl TaskManager {
         date: Option<String>,
         after: Option<Vec<TaskId>>,
     ) -> Result<(Vec<TaskId>, Vec<TaskId>, Vec<TaskId>)> {
-        let text = text.map(|words| words.join(" "));
+        let text = text.map(|words| clean_text(&words.join(" ")).to_string());
         // The same rule as for a new task (`rusk edit 1 "$EMPTY"`).
-        if text.as_deref().is_some_and(|t| t.trim().is_empty()) {
+        if text.as_deref().is_some_and(str::is_empty) {
             anyhow::bail!("Task text cannot be empty");
         }
 
@@ -522,7 +556,7 @@ impl TaskManager {
                 let mut was_changed = false;
 
                 if let Some(new_text) = &text
-                    && task.text != *new_text
+                    && text_changes(&task.text, new_text)
                 {
                     task.text = new_text.clone();
                     was_changed = true;
@@ -579,7 +613,7 @@ impl TaskManager {
             if (task.text.as_str(), task.date) != seen {
                 return Err(TaskChanged { id, deleted: false }.into());
             }
-            task.text = new.0.to_string();
+            task.text = clean_text(new.0).to_string();
             task.date = new.1;
             Ok(())
         })
@@ -720,6 +754,34 @@ mod tests {
         // REVIEW №14: a repeated id or a 0 ended the search on a taken id.
         assert_eq!(super::next_free_id(&with_ids(&[1, 1, 2])).unwrap(), 3);
         assert_eq!(super::next_free_id(&with_ids(&[0, 1])).unwrap(), 2);
+    }
+
+    #[test]
+    fn a_new_task_goes_where_its_id_puts_it_in_a_list_in_id_order() {
+        let ids = |tasks: &[crate::model::Task]| tasks.iter().map(|t| t.id).collect::<Vec<_>>();
+        let new = |id: TaskId| crate::model::Task {
+            id,
+            text: format!("task {id}"),
+            date: None,
+            done: false,
+            priority: false,
+            after: Vec::new(),
+        };
+        let with = |ids: &[TaskId]| -> Vec<crate::model::Task> { ids.iter().map(|&id| new(id)).collect() };
+
+        let mut tasks = with(&[1, 3, 4]);
+        super::insert_by_id(&mut tasks, new(2));
+        assert_eq!(ids(&tasks), [1, 2, 3, 4]);
+        super::insert_by_id(&mut tasks, new(9));
+        assert_eq!(ids(&tasks), [1, 2, 3, 4, 9]);
+        let mut tasks = with(&[]);
+        super::insert_by_id(&mut tasks, new(1));
+        assert_eq!(ids(&tasks), [1]);
+
+        // An order of the user's own is kept.
+        let mut tasks = with(&[5, 1, 3]);
+        super::insert_by_id(&mut tasks, new(2));
+        assert_eq!(ids(&tasks), [5, 1, 3, 2]);
     }
 
     #[test]

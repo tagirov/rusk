@@ -343,22 +343,26 @@ pub fn run(opts: ServeOptions) -> Result<()> {
         .to_ip()
         .map(|a| a.to_string())
         .unwrap_or_else(|| format!("{}:{}", opts.host, opts.port));
-    println!("rusk serve listening on http://{addr}");
-    println!(
+    // The server goes on serving whether or not anybody reads this: an
+    // output that fails is no reason to stop it.
+    crate::outln!("rusk serve listening on http://{addr}").ok();
+    crate::outln!(
         "Database: {}",
         crate::backend::Backend::resolve()
             .map(|b| b.describe())
             .unwrap_or_else(|e| format!("unavailable ({e:#})"))
-    );
-    println!(
+    )
+    .ok();
+    crate::outln!(
         "Auth: {}",
         if opts.token.is_some() {
             "token required"
         } else {
             "off (loopback only)"
         }
-    );
-    println!("Press Ctrl+C to stop.");
+    )
+    .ok();
+    crate::outln!("Press Ctrl+C to stop.").ok();
 
     for mut request in server.incoming_requests() {
         let reply = route(&mut request, &opts);

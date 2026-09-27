@@ -16,6 +16,8 @@ src/
 ├── revision.rs          # Content identities: file fingerprint, task-list revision (ETag, sync hash)
 ├── width.rs             # Text measured in terminal cells: grapheme clusters, wide chars, cut points
 ├── printable.rs         # Task text on its way to a terminal: control characters escaped
+├── output.rs            # stdout/stderr of the commands: out!/outln!/errln!, a closed pipe (Closed), the color decision (Colors)
+├── search.rs            # rusk search: case and whitespace folded alike on both sides, matches as byte ranges
 ├── codec/               # File formats, chosen by the db extension
 │   ├── mod.rs           # DbFormat: detection, encode/decode dispatch (records as written)
 │   ├── csv.rs           # RFC 4180, spreadsheet interop
@@ -42,8 +44,8 @@ src/
 ├── cli/
 │   ├── mod.rs           # HandlerCLI struct, submodule declarations
 │   ├── handlers.rs      # Command handlers: add, del, mark, edit, list, restore
-│   ├── formatter.rs     # Text wrapping (by cells), ANSI stripping, terminal width, compact first-line trim
-│   ├── dialogs.rs       # Confirmation prompts (crossterm raw mode)
+│   ├── formatter.rs     # The list (format_task_list): rows as byte ranges (by cells), search highlight, compact row; ANSI stripping, terminal width
+│   ├── dialogs.rs       # Confirmation prompts (crossterm raw mode, only while a key is read)
 │   └── editor/          # Interactive full-screen editor (crossterm): task text + first-line date
 │       ├── mod.rs       # Session loop: setup → poll → dispatch → render; save/cancel exits
 │       ├── state.rs     # EditorState: buffer, cursor, selection, snapshots
@@ -151,7 +153,16 @@ A database location whose format/backend feature is compiled out fails with
 an error naming the missing feature instead of mis-parsing the file.
 
 Without `interactive`: edit commands only work with inline text (`rusk edit 1 new text`),
-delete skips confirmation. Terminal width falls back to 80 columns.
+`rusk add` and `rusk edit <id>` without text name the missing feature, delete skips
+confirmation. Terminal width falls back to 80 columns. The help names only what the build
+has (`args::root_after_long_help`, the add/edit texts): no editor, SQLite, ssh or sync
+variables where they are compiled out.
+
+`rusk del` asks before it deletes (`dialogs::read_confirmation`), on a terminal only: with
+stdin or stdout not a terminal it refuses before asking anything and names `--yes`, which
+deletes without asking in every build. Either way the deletion goes through
+`TaskManager::delete_confirmed`, so a task that changed in the meantime is reported, not
+deleted.
 
 With `interactive`, `rusk edit <id>` opens the full-screen editor for task text and an
 optional due date on the first line: `Enter` inserts a newline, `Ctrl+S` saves, `Esc` skips,
@@ -224,8 +235,9 @@ User input → clap (args.rs) → main.rs (config::load → init) dispatch
         sqlite: rusqlite ←→ .db file
         http:   curl ←→ GET/PUT /api/tasks of a running rusk serve
         ssh:    ssh ←→ remote file (codec by remote extension)
-    → formatter/editor/dialogs → stdout (colors from config::theme; task text through
-      printable::escape first, so a control character in it is shown, not obeyed)
+    → formatter/editor/dialogs → output (out!/outln!) → stdout (colors from config::theme;
+      task text through printable::escape first, so a control character in it is shown,
+      not obeyed)
 
 rusk serve: browser ←→ tiny_http loop (web/server.rs)
     → api.rs handlers → fresh TaskManager per request ←→ database
@@ -441,6 +453,43 @@ shown after the text as `(19,22)` and are stripped automatically when the
 referenced tasks are deleted — and, for lists edited outside rusk, when they
 are read (see Persistence). The ordering is advisory — a hint for agents
 and tooling (`TaskManager::unfinished_deps`); `rusk mark` is never blocked.
+
+## Output
+
+What a command prints goes through `output` (`out!` / `outln!`), never `println!`, which
+panics when a write fails. A failed write is an error like any other: a reader that stopped
+reading is `output::Closed`, on which `main` exits quietly with 0 (`rusk list | head`), and
+anything else (a full disk) is reported, exit 1. A command changes what it changes first and
+reports it after, so an output that fails never leaves a change half done; where a message
+has to come on the way (`restore`'s copy of the current database, the `serve` banner), its
+failure is ignored. Messages on stderr (`errln!`) cannot fail the command.
+
+Colors are decided once at start-up (`output::Colors::decide`), for `colored` and for clap
+(`ColorChoice::Always`/`Never`: clap paints `--help` and argument errors on its own and would
+otherwise decide per stream by rules of its own): `RUSK_NO_COLOR`, a non-empty `NO_COLOR` or
+`no_color = true` turn them off and nothing turns them back on for the run; otherwise
+`CLICOLOR_FORCE` (not empty, not `0`) turns them on, `CLICOLOR=0` or `TERM=dumb` off, and a
+terminal on stdout decides.
+
+The list is laid out by `HandlerCLI::format_task_list`, a pure function of the tasks and the
+width. Wrapping (`wrap_rows`) yields rows as byte ranges of the escaped text, so a search
+match — a byte range from `search::Query::find_all` — is painted wherever its words land:
+across a row break, in both pieces of a cut word, over the one space printed for a run of
+whitespace. `search` folds case per character on both sides (ς and σ, ß and ss), matches
+any run of whitespace with any other, and begins and ends a match between grapheme clusters
+only; accents are not folded. The compact row
+(`compact_row`) is the first row of the first line with sentence punctuation cut (not
+quotes: a closing one belongs to an opening one) and ends in `…` when the task goes on.
+
+Reports on a task start with `<what>: <id>:` and the text below; `mark` names what its flag
+became (done, undone, priority, priority removed); `edit` prints dates as the list does
+(`1-jan-27`) and "cleared" only when a value went away. In a list in id order a new task is put
+in front of the first task with a higher id (`storage::insert_by_id`), so an id reused after a
+delete is listed in its place; a list in an order of its own gets it at the end. Task text is
+stored without whitespace at its edges (`storage::clean_text`: CLI, editor and web API alike),
+and a new text that differs from the stored one only there is no change
+(`storage::text_changes`). Every interactive part — the editors, the `del` prompt — needs a
+terminal on stdin and stdout (`HandlerCLI::on_a_terminal`) and says so without one.
 
 ## Configuration
 

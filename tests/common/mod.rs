@@ -204,6 +204,11 @@ impl Sandbox {
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("RUST_TEST_THREADS", "1")
             .env("RUSK_NO_COLOR", "1")
+            // Colors are the test's to turn on (CLICOLOR_FORCE), not the
+            // environment's that `cargo test` happens to run in.
+            .env_remove("NO_COLOR")
+            .env_remove("CLICOLOR")
+            .env_remove("CLICOLOR_FORCE")
             .env_remove("RUSK_SYNC_REMOTE")
             .env_remove("RUSK_SYNC_TOKEN")
             .env_remove("RUSK_DB_TOKEN")

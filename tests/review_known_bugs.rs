@@ -19,7 +19,8 @@
 // in the completion scripts), R12 (lost updates), R14 (one atomic write
 // routine), R15 (the ssh protocol), R16 (web UI: one way to change a task;
 // its browser half is checked black-box, see REVIEW.md), R18 (the lifecycle
-// of a SQLite connection) — that is, all of them. R6 and R8 need a pty
+// of a SQLite connection) — all of R1-R18 — and of the clusters for the
+// rest of REVIEW.md: R19 (output, terminals and messages). R6 and R8 need a pty
 // for most of their repros: what Command can drive is here, the draft rules
 // are unit-tested in `src/cli/editor/draft.rs`, and the rest is driven by a
 // pty script against a release binary (see REVIEW.md).
@@ -921,6 +922,8 @@ fn r3_a_repaired_list_is_announced_until_it_is_saved() {
     assert!(String::from_utf8_lossy(&out.stdout).contains("Added task: 4"), "{out:?}");
     let tasks = db_tasks(&sb);
     let ids: Vec<u64> = tasks.iter().map(|t| t["id"].as_u64().unwrap()).collect();
+    // Not in id order (the repair put 3 before 2): the new task goes at the
+    // end, as in any list with an order of its own (REVIEW №133).
     assert_eq!(ids, [1, 3, 2, 5, 4]);
     assert_eq!(text_of(&tasks, 3), "beta");
     assert_eq!(text_of(&tasks, 2), "buy presents");
@@ -945,8 +948,9 @@ fn r3_dependencies_are_only_on_other_tasks_that_exist() {
         assert!(tm.tasks()[0].after.is_empty());
         tm.add_task(vec!["unrelated new task".into()], None).unwrap();
         let on_disk = backend(&md).load().unwrap();
-        assert_eq!(ids_and_texts(&on_disk), [(2, "blocked"), (1, "unrelated new task")]);
-        assert!(on_disk[0].after.is_empty(), "the old dependency now means the new task");
+        // The new task takes id 1, in front of task 2 (REVIEW №133).
+        assert_eq!(ids_and_texts(&on_disk), [(1, "unrelated new task"), (2, "blocked")]);
+        assert!(on_disk[1].after.is_empty(), "the old dependency now means the new task");
         assert!(!fs::read_to_string(&md).unwrap().contains("after:"));
 
         let md = dir.path().join("self.md");
@@ -1245,12 +1249,12 @@ fn r3_what_rusk_writes_it_reads_back() {
         "@2026-01-01",
         " @2026-01-01",
     ];
+    // Saved as they are: `rusk add` would trim " @2026-01-01" (REVIEW
+    // №115), and it is the formats that are checked here.
+    let tasks: Vec<Task> = (1..).zip(texts).map(|(id, text)| task(id, text)).collect();
     for name in formats {
         let path = dir.path().join(name);
-        let mut tm = TaskManager::new_empty_with_path(path.clone());
-        for text in texts {
-            tm.add_task(vec![text.into()], None).unwrap();
-        }
+        backend(&path).save(&tasks).unwrap();
         let back = backend(&path).load().unwrap();
         let expected: Vec<(u32, &str)> = (1..).zip(texts).collect();
         assert_eq!(ids_and_texts(&back), expected, "{name}: {}", fs::read_to_string(&path).unwrap());
@@ -4450,4 +4454,515 @@ fn r18_deleted_text_does_not_stay_in_the_file() {
     let holds = |path: &Path| fs::read(path).unwrap().windows(14).any(|w| w == b"SECRETPASSWORD");
     assert!(!holds(&db), "the deleted text is still in the database file");
     assert!(!holds(&dir.path().join("tasks.db.backup")), "the deleted text is in the backup");
+}
+
+// ---------------------------------------------------------------------------
+// R19 — output, terminals and messages of the CLI
+// ---------------------------------------------------------------------------
+//
+// What a command prints may go to a reader that stops reading (`| head`), to
+// a full disk, to a script without a terminal or to a terminal that asked
+// for no colors; and what it says has to be what it did. The pure parts —
+// the search folding, the wrapped layout with its highlights, the compact
+// line, the color policy — are unit-tested next to their code; what only a
+// terminal shows (an empty NO_COLOR in a pty, "Edited task" after a failed
+// save in the editor) was checked in a pty against a release binary (see
+// REVIEW.md).
+
+/// `cmd` run with its standard output a pipe that nobody reads: every write
+/// fails with EPIPE, as under `rusk list | head -2` once `head` is done.
+#[cfg(unix)]
+fn with_closed_stdout(cmd: &mut std::process::Command) -> std::process::Output {
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    cmd.stdout(writer).output().unwrap()
+}
+
+/// `cmd` in a session of its own, stdin at EOF: no terminal to ask on, not
+/// even the controlling one crossterm falls back on (`/dev/tty`).
+#[cfg(unix)]
+fn without_terminal(cmd: &mut std::process::Command) -> &mut std::process::Command {
+    use std::os::unix::process::CommandExt;
+    // SAFETY: setsid(2) is async-signal-safe.
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    cmd.stdin(std::process::Stdio::null())
+}
+
+/// First line of what `rusk <args>` printed; the run must succeed.
+fn first_line_of(sb: &Sandbox, args: &[&str]) -> String {
+    let out = sb.cmd().args(args).output().unwrap();
+    assert!(out.status.success(), "{args:?}: {}", stderr_of(&out));
+    stdout_of(&out).lines().next().unwrap_or_default().to_string()
+}
+
+/// Ids `rusk search --id <query>` prints.
+fn search_ids(sb: &Sandbox, query: &str) -> Vec<String> {
+    let out = sb.cmd().args(["search", "--id", query]).output().unwrap();
+    assert!(out.status.success(), "{query:?}: {}", stderr_of(&out));
+    stdout_of(&out).lines().map(str::to_string).collect()
+}
+
+/// Text column of the task rows of `rusk list` (ids below 10, no dates).
+fn listed_texts(out: &std::process::Output) -> Vec<String> {
+    list_lines(out)
+        .iter()
+        .skip(1)
+        .map(|line| line.chars().skip(19).collect())
+        .collect()
+}
+
+/// `rusk search <query>` with colors forced on.
+fn search_colored(sb: &Sandbox, query: &[&str]) -> String {
+    let out = sb
+        .cmd()
+        .env_remove("RUSK_NO_COLOR")
+        .env_remove("NO_COLOR")
+        .env("CLICOLOR_FORCE", "1")
+        .arg("search")
+        .args(query)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{query:?}: {}", stderr_of(&out));
+    stdout_of(&out)
+}
+
+/// The parts of `line` printed in the search highlight (theme
+/// `search_match`: bold yellow by default), in order.
+fn highlights(line: &str) -> Vec<String> {
+    const START: &str = "\x1b[1;33m";
+    let mut found = Vec::new();
+    let mut rest = line;
+    while let Some(at) = rest.find(START) {
+        let lit = &rest[at + START.len()..];
+        let end = lit.find("\x1b[0m").expect("an unterminated highlight");
+        found.push(lit[..end].to_string());
+        rest = &lit[end..];
+    }
+    found
+}
+
+/// REVIEW №40: `rusk list | head -2` ended in "failed printing to stdout:
+/// Broken pipe", a panic with exit 101 — `mark`, `edit`, `add` and
+/// `gen -o -` too, after their change was already saved. A reader that
+/// stops reading wants no more; that is no failure of the command.
+#[test]
+#[cfg(unix)]
+fn r19_a_reader_that_goes_away_ends_the_command_quietly() {
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let mut runs: Vec<&[&str]> = vec![
+        &["list"],
+        &["search", "task"],
+        &["mark", "2"],
+        &["edit", "3", "renamed"],
+        &["add", "fourth"],
+    ];
+    if cfg!(feature = "web") {
+        runs.push(&["gen", "-o", "-"]);
+    }
+    for args in runs {
+        let out = with_closed_stdout(sb.cmd().args(args));
+        let err = stderr_of(&out);
+        assert!(!err.contains("panicked"), "{args:?}: {err}");
+        assert_eq!(out.status.code(), Some(0), "{args:?}: {err}");
+        assert!(err.trim().is_empty(), "{args:?}: {err}");
+    }
+    // What was asked for was done all the same.
+    let tasks = db_tasks(&sb);
+    assert!(done_of(&tasks, 2));
+    assert_eq!(text_of(&tasks, 3), "renamed");
+    assert_eq!(text_of(&tasks, 4), "fourth");
+}
+
+/// An output that cannot take the text (a full disk) is an error of the
+/// command, named as such — not a panic.
+#[test]
+#[cfg(target_os = "linux")]
+fn r19_output_that_cannot_be_written_is_an_error() {
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let full = fs::OpenOptions::new().write(true).open("/dev/full").unwrap();
+    let out = sb.cmd().arg("list").stdout(full).output().unwrap();
+    let err = stderr_of(&out);
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert!(!err.contains("panicked"), "{err}");
+    assert!(err.contains("standard output"), "{err}");
+    assert!(err.contains("No space left on device"), "{err}");
+}
+
+/// REVIEW №69: `rusk del` without a terminal printed its question, then
+/// died with "Failed to enable raw mode" (piping `y` into it as well), and
+/// there was no way to delete from a script.
+#[test]
+#[cfg(all(unix, feature = "interactive"))]
+fn r19_del_without_a_terminal_asks_for_yes_instead() {
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    sb.cmd().args(["mark", "3"]).output().unwrap();
+    for args in [&["del", "1"][..], &["del", "--done"], &["del", "1,9"]] {
+        let out = without_terminal(sb.cmd().args(args)).output().unwrap();
+        let err = stderr_of(&out);
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {err}");
+        assert!(err.contains("--yes"), "{args:?}: {err}");
+        assert!(!err.contains("raw mode"), "{args:?}: {err}");
+        // No question that nobody can answer.
+        assert!(!stdout_of(&out).contains("[y/N]"), "{args:?}: {}", stdout_of(&out));
+    }
+    assert_eq!(db_tasks(&sb).len(), 3, "nothing may be deleted");
+
+    // Nothing to confirm, nothing to ask.
+    let out = without_terminal(sb.cmd().args(["del", "9"])).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(stdout_of(&out).contains("not found"), "{}", stdout_of(&out));
+}
+
+/// `--yes` deletes without asking — in every build, so a script works with
+/// any of them.
+#[test]
+#[cfg(unix)]
+fn r19_del_yes_deletes_without_asking() {
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    sb.cmd().args(["mark", "3"]).output().unwrap();
+    let out = without_terminal(sb.cmd().args(["del", "1", "--yes"])).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(stdout_of(&out).contains("Deleted 1 task"), "{}", stdout_of(&out));
+    let out = without_terminal(sb.cmd().args(["del", "--done", "-y"])).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(stdout_of(&out).contains("Deleted 1 done task"), "{}", stdout_of(&out));
+    let tasks = db_tasks(&sb);
+    assert_eq!(tasks.len(), 1, "{tasks:?}");
+    assert_eq!(text_of(&tasks, 2), "second task");
+}
+
+/// REVIEW №36: `rusk search` listed a match but lit it up only where one
+/// printed line held all of it — not across the wrap, not in a word cut in
+/// two, not over a run of spaces the list prints as one.
+#[test]
+fn r19_search_highlights_what_it_found_wherever_it_is_printed() {
+    let sb = Sandbox::new();
+    for text in [
+        // 57 cells for text on 80 columns: the row breaks after "alpha".
+        format!("{} alpha beta gamma", "x".repeat(50)),
+        "double  space alpha  beta here".to_string(),
+        // One word of 110 cells, cut after "nee".
+        format!("{}needle{}", "a".repeat(54), "b".repeat(50)),
+    ] {
+        let out = sb.cmd().args(["add", &text]).output().unwrap();
+        assert!(out.status.success(), "{}", stderr_of(&out));
+    }
+    for query in [&["alpha", "beta"][..], &["alpha  beta"], &["ALPHA", "  Beta "]] {
+        let out = search_colored(&sb, query);
+        let lit: Vec<String> = out.lines().flat_map(highlights).collect();
+        assert_eq!(lit, ["alpha", "beta", "alpha beta"], "{query:?}: {out}");
+    }
+    let out = search_colored(&sb, &["needle"]);
+    let lit: Vec<String> = out.lines().flat_map(highlights).collect();
+    assert_eq!(lit, ["nee", "dle"], "{out}");
+}
+
+/// REVIEW №37: the query was lowercased as a string (a final Σ became ς)
+/// and the text char by char (σ): a Greek word in capitals did not find
+/// itself.
+#[test]
+fn r19_search_folds_the_query_and_the_text_alike() {
+    let sb = Sandbox::new();
+    for text in ["ΟΔΟΣ ΕΡΜΟΥ", "οδός ερμού", "Hauptstraße 5"] {
+        let out = sb.cmd().args(["add", text]).output().unwrap();
+        assert!(out.status.success(), "{}", stderr_of(&out));
+    }
+    assert_eq!(search_ids(&sb, "ΟΔΟΣ"), ["1"]);
+    assert_eq!(search_ids(&sb, "οδοσ"), ["1"]);
+    assert_eq!(search_ids(&sb, "ΟΔΌΣ"), ["2"]);
+    assert_eq!(search_ids(&sb, "οδός"), ["2"]);
+    assert_eq!(search_ids(&sb, "HAUPTSTRASSE"), ["3"]);
+}
+
+/// REVIEW №74: `mark` named the state a task ended in, done before
+/// priority: taking the priority off said "undone", and on a done task both
+/// `-p` toggles said "done".
+#[test]
+fn r19_mark_says_what_it_changed() {
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    for (args, said) in [
+        (&["mark", "1", "-p"][..], "Marked task as priority: 1"),
+        (&["mark", "1", "-p"], "Removed priority from task: 1"),
+        (&["mark", "2"], "Marked task as done: 2"),
+        (&["mark", "2", "-p"], "Marked task as priority: 2"),
+        (&["mark", "2", "-p"], "Removed priority from task: 2"),
+        (&["mark", "2"], "Marked task as undone: 2"),
+    ] {
+        let line = first_line_of(&sb, args);
+        assert!(line.starts_with(said), "{args:?}: {line}");
+    }
+}
+
+/// REVIEW №78: `rusk add --help` offers `-d _` to clear a date, and
+/// `rusk add text -d _` failed with "Invalid date '_'". For a new task it
+/// means what it means everywhere: no date.
+#[test]
+fn r19_add_takes_underscore_for_no_date() {
+    let sb = Sandbox::new();
+    let out = sb.cmd().args(["add", "buy", "milk", "-d", "_"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let tasks = db_tasks(&sb);
+    assert_eq!(text_of(&tasks, 1), "buy milk");
+    assert_eq!(date_of(&tasks, 1), serde_json::Value::Null);
+}
+
+/// REVIEW №101, what R1 left: a backup that cannot be read is reported as
+/// the backup (R1), and the report says the database was left alone.
+#[test]
+fn r19_a_broken_backup_says_the_database_is_untouched() {
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    fs::write(sb.db_path().with_extension("json.backup"), "[{\"id\":1,").unwrap();
+    let out = sb.cmd().arg("restore").output().unwrap();
+    let err = stderr_of(&out);
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert!(err.contains("nothing was restored"), "{err}");
+    assert!(err.contains("database is unchanged"), "{err}");
+    assert_eq!(sb.read_db(), THREE_TASKS_DB);
+}
+
+/// REVIEW №115: `rusk add "  buy   milk  "` stored the spaces that the list
+/// does not show, and then search and "already has this content" went by
+/// them: "buy milk" found nothing.
+#[test]
+fn r19_text_is_stored_trimmed_and_searched_by_words() {
+    let sb = Sandbox::new();
+    let out = sb.cmd().args(["add", "  buy   milk  "]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert_eq!(text_of(&db_tasks(&sb), 1), "buy   milk");
+    assert_eq!(search_ids(&sb, "buy milk"), ["1"]);
+    assert_eq!(search_ids(&sb, " BUY\tmilk "), ["1"]);
+
+    let before = sb.read_db();
+    let line = first_line_of(&sb, &["edit", "1", "buy   milk "]);
+    assert!(line.starts_with("Task unchanged: 1"), "{line}");
+    assert_eq!(sb.read_db(), before);
+
+    // Review of R19: a text stored with spaces at its edges before texts
+    // were cleaned keeps them while its words stay the same.
+    let sb = Sandbox::with_db(r#"[{"id":1,"text":"  buy milk  "}]"#);
+    let before = sb.read_db();
+    let line = first_line_of(&sb, &["edit", "1", "  buy milk  "]);
+    assert!(line.starts_with("Task unchanged: 1"), "{line}");
+    assert_eq!(sb.read_db(), before);
+}
+
+/// REVIEW №122: the compact view cut closing quotes (the opening one was
+/// left dangling), turned a line of punctuation into an empty row and kept
+/// the CJK sentence ends it was meant to cut.
+#[test]
+fn r19_compact_view_trims_sentence_ends_only() {
+    let cases = [
+        ("Read the book \"Dune\"", "Read the book \"Dune\""),
+        ("Read «Le Petit Prince».", "Read «Le Petit Prince»"),
+        ("...", "..."),
+        ("rockin' the boys' “quoted”", "rockin' the boys' “quoted”"),
+        ("Buy milk.", "Buy milk"),
+        ("牛乳を買う。", "牛乳を買う"),
+        ("本当に？", "本当に"),
+        ("注意：", "注意"),
+    ];
+    let sb = Sandbox::new();
+    for (text, _) in cases {
+        let out = sb.cmd().args(["add", text]).output().unwrap();
+        assert!(out.status.success(), "{}", stderr_of(&out));
+    }
+    let out = sb.cmd().args(["list", "-c"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let expected: Vec<&str> = cases.iter().map(|(_, shown)| *shown).collect();
+    assert_eq!(listed_texts(&out), expected);
+}
+
+/// REVIEW №133: a new task gets the lowest free id but was put at the end:
+/// with task 2 deleted, the next one was listed 1, 3, 4, 2.
+#[test]
+fn r19_a_task_with_a_reused_id_is_listed_in_its_place() {
+    let sb = Sandbox::with_db(r#"[{"id":1,"text":"t1"},{"id":3,"text":"t3"},{"id":4,"text":"t4"}]"#);
+    let line = first_line_of(&sb, &["add", "t5"]);
+    assert!(line.starts_with("Added task: 2"), "{line}");
+    assert_eq!(search_ids(&sb, "t"), ["1", "2", "3", "4"]);
+    let out = sb.cmd().args(["list", "-c"]).output().unwrap();
+    assert_eq!(listed_texts(&out), ["t1", "t5", "t3", "t4"]);
+
+    // Review of R19: a list in an order of the user's own keeps it, and a
+    // new task goes at the end, as it always did.
+    let sb = Sandbox::with_db(r#"[{"id":5,"text":"t5"},{"id":1,"text":"t1"},{"id":3,"text":"t3"}]"#);
+    first_line_of(&sb, &["add", "new"]);
+    assert_eq!(search_ids(&sb, "t"), ["5", "1", "3"]);
+    let out = sb.cmd().args(["list", "-c"]).output().unwrap();
+    assert_eq!(listed_texts(&out), ["t5", "t1", "t3", "new"]);
+}
+
+/// REVIEW №134: clearing a date or a dependency list the task did not have
+/// reported "cleared ( was: empty )".
+#[test]
+fn r19_edit_reports_a_clear_only_when_something_was_cleared() {
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let out = stdout_of(&sb.cmd().args(["edit", "2", "renamed", "-d", "_"]).output().unwrap());
+    assert!(!out.contains("cleared") && out.contains(" - date: empty"), "{out}");
+    let out = stdout_of(&sb.cmd().args(["edit", "2", "renamed2", "-a", "_"]).output().unwrap());
+    assert!(!out.contains("cleared") && out.contains(" - after: empty"), "{out}");
+    let out = stdout_of(&sb.cmd().args(["edit", "1", "-d", "_"]).output().unwrap());
+    assert!(out.contains(" - date: cleared (was: 1-jan-27)"), "{out}");
+}
+
+/// REVIEW №135: `edit` printed dates as 01-01-2027 where `add` and the list
+/// say 1-jan-27, and the first line of `mark` and `edit` ended in ": ".
+#[test]
+fn r19_messages_print_dates_and_ids_one_way() {
+    let sb = Sandbox::new();
+    assert_eq!(first_line_of(&sb, &["add", "one", "-d", "31-12-2026"]), "Added task: 1: (31-dec-26)");
+    let out = stdout_of(&sb.cmd().args(["edit", "1", "-d", "1-1-2027"]).output().unwrap());
+    assert!(out.contains(" - date: 1-jan-27 (was: 31-dec-26)"), "{out}");
+    assert_eq!(first_line_of(&sb, &["mark", "1"]), "Marked task as done: 1:");
+    assert_eq!(first_line_of(&sb, &["edit", "1", "two"]), "Edited task: 1:");
+    assert_eq!(first_line_of(&sb, &["edit", "1", "two"]), "Task unchanged: 1:");
+}
+
+/// REVIEW №141: without the `interactive` feature, `rusk add` without text
+/// failed with "Task text cannot be empty" and dropped a `-d` in silence.
+#[test]
+#[cfg(not(feature = "interactive"))]
+fn r19_add_without_text_names_the_missing_feature() {
+    let sb = Sandbox::new();
+    for args in [&["add"][..], &["add", "-d", "2d"]] {
+        let out = sb.cmd().args(args).output().unwrap();
+        let err = stderr_of(&out);
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {err}");
+        assert!(err.contains("'interactive' feature"), "{args:?}: {err}");
+    }
+    assert_eq!(sb.read_db(), "");
+}
+
+/// REVIEW №142: `--help` offered the editor, SQLite, ssh and the sync
+/// variables whether or not the build had them.
+#[test]
+fn r19_help_offers_only_what_this_build_has() {
+    let sb = Sandbox::new();
+    let help = |args: &[&str]| -> String {
+        let out = sb.cmd().args(args).arg("--help").output().unwrap();
+        assert!(out.status.success(), "{args:?}: {}", stderr_of(&out));
+        stdout_of(&out)
+    };
+    let root = help(&[]);
+    let all = format!("{root}{}{}", help(&["add"]), help(&["edit"]));
+    let del = help(&["del"]);
+    for (built, text, words) in [
+        (cfg!(feature = "interactive"), &all, &["editor", "TUI", "EDITOR.md"][..]),
+        (cfg!(feature = "interactive"), &del, &["confirmed on the terminal"]),
+        (!cfg!(feature = "interactive"), &del, &["has no terminal UI"]),
+        (cfg!(feature = "backend-sqlite"), &root, &[" .db/.sqlite"]),
+        (cfg!(feature = "backend-ssh"), &root, &["user@host"]),
+        (cfg!(feature = "backend-http"), &root, &["https://", "RUSK_DB_TOKEN"]),
+        (cfg!(feature = "sync"), &root, &["RUSK_SYNC_REMOTE", "RUSK_SYNC_TOKEN"]),
+        // With a space before: "CONFIG.md" is no format.
+        (cfg!(feature = "fmt-markdown"), &root, &[" .md"]),
+        (cfg!(feature = "fmt-todotxt"), &root, &[" .txt"]),
+        (cfg!(feature = "fmt-ndjson"), &root, &[" .ndjson"]),
+        (cfg!(feature = "fmt-ics"), &root, &[" .ics"]),
+        (cfg!(feature = "completions"), &root, &["rusk completions install"]),
+    ] {
+        for word in words {
+            assert_eq!(text.contains(word), built, "{word:?} in the help of this build:\n{text}");
+        }
+    }
+}
+
+/// REVIEW №166: clap painted `--help` and argument errors on its own,
+/// blind to RUSK_NO_COLOR and `no_color = true`; and a non-empty NO_COLOR
+/// now wins over CLICOLOR_FORCE for rusk's own output as it does for clap's.
+#[test]
+fn r19_no_color_reaches_help_and_argument_errors() {
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let config = sb.path().join("no-color.cfg");
+    fs::write(&config, "no_color = true\n").unwrap();
+    let colored = |cmd: &mut std::process::Command, args: &[&str]| -> bool {
+        let out = cmd.env("CLICOLOR_FORCE", "1").args(args).output().unwrap();
+        out.stdout.contains(&0x1b) || out.stderr.contains(&0x1b)
+    };
+    let runs: [&[&str]; 3] = [&["mark", "1", "--bogus"], &["mark", "-h"], &["mark", "abc"]];
+    for args in runs {
+        // Forced colors do reach every one of these otherwise.
+        assert!(colored(sb.cmd().env_remove("RUSK_NO_COLOR").env_remove("NO_COLOR"), args), "{args:?}");
+        assert!(!colored(sb.cmd().env("RUSK_NO_COLOR", "1").env_remove("NO_COLOR"), args), "{args:?}");
+        assert!(
+            !colored(sb.cmd().env_remove("RUSK_NO_COLOR").env_remove("NO_COLOR").env("RUSK_CONFIG", &config), args),
+            "{args:?} with no_color = true"
+        );
+        assert!(!colored(sb.cmd().env_remove("RUSK_NO_COLOR").env("NO_COLOR", "1"), args), "{args:?}");
+    }
+}
+
+/// REVIEW №168: with `compact = true` in the config, nothing brought back
+/// the full view for one run.
+#[test]
+fn r19_no_compact_overrides_the_config_for_one_run() {
+    let sb = Sandbox::new();
+    let config = sb.path().join("compact.cfg");
+    fs::write(&config, "compact = true\n").unwrap();
+    let out = sb.cmd().args(["add", "first line.\nsecond line"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let list = |args: &[&str]| -> String {
+        let out = sb.cmd().env("RUSK_CONFIG", &config).args(args).output().unwrap();
+        assert!(out.status.success(), "{args:?}: {}", stderr_of(&out));
+        stdout_of(&out)
+    };
+    assert!(!list(&["list"]).contains("second line"));
+    assert!(list(&["list", "--no-compact"]).contains("second line"));
+    // The last of the two wins.
+    assert!(!list(&["list", "--no-compact", "-c"]).contains("second line"));
+    assert!(list(&["list", "-c", "--no-compact"]).contains("second line"));
+}
+
+/// Review of R19: the help of `-d -h` said `Usage: add` for `rusk add`.
+#[test]
+fn r19_help_for_a_date_value_names_the_command() {
+    let sb = Sandbox::new();
+    for (args, usage) in [(&["add", "-d", "-h"][..], "Usage: rusk add"), (&["edit", "1", "-d", "-h"], "Usage: rusk edit")] {
+        let out = sb.cmd().args(args).output().unwrap();
+        assert!(out.status.success(), "{args:?}: {}", stderr_of(&out));
+        assert!(stdout_of(&out).contains(usage), "{args:?}: {}", stdout_of(&out));
+    }
+}
+
+/// Review of R19: installing completions for two shells when the second
+/// cannot be installed said nothing about the first one, which was.
+#[test]
+#[cfg(feature = "completions")]
+fn r19_a_failed_completion_install_names_what_was_installed() {
+    let sb = Sandbox::new();
+    let home = sb.path().join("home");
+    fs::create_dir_all(home.join(".config")).unwrap();
+    fs::write(home.join(".config").join("fish"), "not a directory").unwrap();
+    let out = sb.cmd().args(["completions", "install", "bash", "fish"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "{}", stderr_of(&out));
+    assert!(stdout_of(&out).contains("Bash completion installed to:"), "{}", stdout_of(&out));
+    assert!(stderr_of(&out).contains("Failed to create directory"), "{}", stderr_of(&out));
+}
+
+/// REVIEW №169: the compact view cut a long first line and hid the other
+/// lines of a task without a mark: a shortened task looked like a whole one.
+#[test]
+fn r19_compact_view_marks_a_task_it_shortened() {
+    let sb = Sandbox::new();
+    for text in [
+        "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen",
+        "short first\nsecond line",
+        "Step one:\nstep two",
+        "whole.",
+    ] {
+        let out = sb.cmd().args(["add", text]).output().unwrap();
+        assert!(out.status.success(), "{}", stderr_of(&out));
+    }
+    let out = sb.cmd().args(["list", "-c"]).output().unwrap();
+    let texts = listed_texts(&out);
+    assert!(texts[0].starts_with("one two three") && texts[0].ends_with('…'), "{texts:?}");
+    assert_eq!(texts[1..], ["short first…", "Step one…", "whole"]);
+    for line in list_lines(&out) {
+        assert!(cells(&line) <= 80, "{} cells: {line}", cells(&line));
+    }
 }

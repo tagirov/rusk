@@ -162,7 +162,7 @@ fn read_event() -> Result<Option<Event>> {
 /// terminal back and saved what it could.
 pub(super) fn exit_after_signal(signum: i32, note: Option<&str>) -> ! {
     if let Some(note) = note {
-        eprintln!("{note}");
+        crate::errln!("{note}");
     }
     std::process::exit(128 + signum)
 }

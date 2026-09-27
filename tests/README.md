@@ -25,7 +25,7 @@ tests/
 ├── persistence_tests.rs            # Data persistence and save/load tests
 ├── restore_tests.rs                # Backup restore functionality tests
 ├── review_urgent_tests.rs          # Regression tests for the urgent REVIEW.md fixes (№1, №6, №7, №154, №161)
-├── review_known_bugs.rs            # REVIEW.md repros by refactor cluster: #[ignore]d while open, regressions once closed (R1–R18, all closed)
+├── review_known_bugs.rs            # REVIEW.md repros by refactor cluster: #[ignore]d while open, regressions once closed (R1–R19)
 ├── unchanged_detection_tests.rs    # Unchanged task detection tests
 └── completions.rs                  # Completion test entry point
 ```
@@ -290,8 +290,17 @@ These tests are designed to run in CI/CD pipelines:
   does not drive the terminal, R8 the draft
   lifecycle, R9 restore, R10/R13 reading a location value, R11 quoting in
   the completion scripts, R12 lost updates, R14 atomic writes, R15 the ssh
-  protocol, R16 web UI and R18 the SQLite connection) stay in the file as its
-  regression suite.
+  protocol, R16 web UI, R18 the SQLite connection and R19 output, terminals
+  and messages) stay in the file as its regression suite.
+  R19 closes stdout under a command with `std::io::pipe` (reader dropped
+  before the spawn, so every write gets EPIPE), writes it to `/dev/full`, and
+  takes a terminal away with `setsid` (no controlling terminal for crossterm to
+  fall back on); its pure parts are unit-tested in `src/output.rs` (the color
+  decision, closed-pipe errors), `src/search.rs` (folding, byte ranges) and
+  `src/cli/formatter.rs` (rows as ranges, highlights, the compact row). What
+  needs a pty — an empty `NO_COLOR` on a terminal, clap's colors, the `del`
+  prompt, the editor's report after a failed save — was checked against a
+  release binary (see the R19 status in REVIEW.md).
   R3's rules themselves are unit-tested in `src/model.rs` (`normalize`), the
   CSV rows and lines in `src/codec/csv.rs`. R4's measuring is unit-tested in
   `src/width.rs` and its editor half in `src/cli/editor/view.rs`; what a

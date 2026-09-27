@@ -10,17 +10,23 @@ Date value for -d / --date (see `rusk add --help`):
   Relative    Offset from today's local date. Chain segments with no spaces.
               Suffixes: d=days, w=weeks, m=months, q=quarters (3 months), y=years.
               Examples: 2d, 2w, 5m, 3q, 2y, 10d5w, 12d2q1y.
-  Clear       Pass _ to remove the date from a task (e.g. -d _).
+  Clear       Pass _ for no date (e.g. -d _): it removes the date of a task being edited.
   Subcommand  Pass -h or --help as the date value for this command's help (e.g. -d -h).\n";
 
-pub const EDIT_SUBCOMMAND_LONG_HELP: &str = "\
+/// The part of `rusk edit --help` about the interactive editor.
+const EDIT_TUI_LONG_HELP: &str = "\
 Interactive edit (`rusk edit <id>`) uses the TUI: the due date (if any) is only the \
 first whitespace-delimited token at the start of the first line of the task text \
 (absolute, relative from today, leading `+` on a relative offset from the task's \
 current due date — today if none — or `_` to clear). A valid date token is highlighted in color; \
 see Ctrl+G / F1 in the editor for the full date syntax. \
 One-shot date or text+date without opening the TUI: `rusk edit <id> -d <date>` (same \
-relative rules as in the TUI; `_` clears). `-d` / `--date` needs a value and may be given \
+relative rules as in the TUI; `_` clears). ";
+
+/// The part of `rusk edit --help` for every build.
+const EDIT_ONE_SHOT_LONG_HELP: &str = "\
+`-d` / `--date` needs a value (a date, `+2w` relative to the task's current due date, or \
+`_` to clear it) and may be given \
 once. The ids are one comma-separated list (`1,2,3`); the first word after it that is not \
 glued to it by a comma starts the text, so `rusk edit 3 1,000 units` edits task 3 only. \
 When everything after the ids is numbers (`rusk edit 1,2 3`), nothing is changed: those \
@@ -29,20 +35,219 @@ of numbers goes, and any word that starts with `-` (`rusk edit 1 -- -x means exc
 before `--`, such a word is an option, and `-h` prints this help without changing anything. \
 For new tasks, use `rusk add -d`.\n";
 
-/// Root `--help` tail (after subcommands/options). Omits `completions` when that feature is off so
-/// distro builds (`--no-default-features`) match the available CLI and static files in `completions/`.
-#[cfg(feature = "completions")]
-const CLI_ROOT_AFTER_LONG_HELP: &str = "Running `rusk` without a COMMAND is equivalent to `rusk list`. Use `rusk list -c` / `--compact` for a compact single-line view.\n\nDue dates: `rusk add -d ...` for new tasks, `rusk add` with no text for the TUI, or the interactive editor (`rusk edit <id>`) — first line at the start, see `rusk edit --help` and EDITOR.md. Pass `_` to clear where `-d` is supported. See `rusk add --help` for date syntax.\n\nConfiguration file (theme colors, defaults; see CONFIG.md): auto-created at ~/.config/rusk/cfg (Linux) or the platform config dir. Environment variables win over config values.\n\nEnvironment:\n  RUSK_DB           Optional database location: a file or directory path (the extension picks the\n                    format: .csv, .md, .txt, .ndjson, .ics, .db/.sqlite), https://host (rusk serve\n                    API) or user@host:/path (ssh).\n  RUSK_DB_TOKEN     Optional Bearer token for http(s) database locations.\n  RUSK_CONFIG       Optional path to the configuration file; empty value disables the config.\n  RUSK_NO_COLOR     Disable ANSI colors when set to any non-empty value (NO_COLOR is also respected).\n  RUSK_SYNC_REMOTE  Optional `rusk sync` remote (overrides sync_remote from the config).\n  RUSK_SYNC_TOKEN   Optional Bearer token for http(s) sync remotes.\n\nShell tab completion:\n  rusk completions install <shell> [<shell> ...]\n  rusk completions show <shell>\n";
+/// `rusk edit --help` after the options.
+fn edit_after_long_help() -> String {
+    if cfg!(feature = "interactive") {
+        format!("{EDIT_TUI_LONG_HELP}{EDIT_ONE_SHOT_LONG_HELP}")
+    } else {
+        EDIT_ONE_SHOT_LONG_HELP.to_string()
+    }
+}
 
-#[cfg(not(feature = "completions"))]
-const CLI_ROOT_AFTER_LONG_HELP: &str = "Running `rusk` without a COMMAND is equivalent to `rusk list`. Use `rusk list -c` / `--compact` for a compact single-line view.\n\nDue dates: `rusk add -d ...` for new tasks, `rusk add` with no text for the TUI, or the interactive editor (`rusk edit <id>`) — first line at the start, see `rusk edit --help` and EDITOR.md. Pass `_` to clear where `-d` is supported. See `rusk add --help` for date syntax.\n\nConfiguration file (theme colors, defaults; see CONFIG.md): auto-created at ~/.config/rusk/cfg (Linux) or the platform config dir. Environment variables win over config values.\n\nEnvironment:\n  RUSK_DB           Optional database location: a file or directory path (the extension picks the\n                    format: .csv, .md, .txt, .ndjson, .ics, .db/.sqlite), https://host (rusk serve\n                    API) or user@host:/path (ssh).\n  RUSK_DB_TOKEN     Optional Bearer token for http(s) database locations.\n  RUSK_CONFIG       Optional path to the configuration file; empty value disables the config.\n  RUSK_NO_COLOR     Disable ANSI colors when set to any non-empty value (NO_COLOR is also respected).\n  RUSK_SYNC_REMOTE  Optional `rusk sync` remote (overrides sync_remote from the config).\n  RUSK_SYNC_TOKEN   Optional Bearer token for http(s) sync remotes.\n";
+/// What `rusk_db` / `RUSK_DB` can name in this build, as a sentence.
+fn db_locations() -> String {
+    let formats: Vec<&str> = [
+        (true, ".csv"),
+        (cfg!(feature = "fmt-markdown"), ".md"),
+        (cfg!(feature = "fmt-todotxt"), ".txt"),
+        (cfg!(feature = "fmt-ndjson"), ".ndjson"),
+        (cfg!(feature = "fmt-ics"), ".ics"),
+        (cfg!(feature = "backend-sqlite"), ".db/.sqlite"),
+    ]
+    .into_iter()
+    .filter_map(|(built, ext)| built.then_some(ext))
+    .collect();
+    let mut kinds = vec![format!(
+        "a file or directory path (JSON, or the format its extension names: {})",
+        formats.join(", ")
+    )];
+    if cfg!(feature = "backend-http") {
+        kinds.push("https://host (rusk serve API)".to_string());
+    }
+    if cfg!(feature = "backend-ssh") {
+        kinds.push("user@host:/path (ssh)".to_string());
+    }
+    match kinds.split_last() {
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} or {last}", rest.join(", ")),
+        None => String::new(),
+    }
+}
+
+/// One `NAME  description` entry of the environment list, the description
+/// wrapped under its column.
+fn env_entry(name: &str, description: &str) -> String {
+    const COLUMN: usize = 20;
+    const WIDTH: usize = 100;
+    let lines = crate::cli::HandlerCLI::wrap_text_by_words(description, WIDTH - COLUMN);
+    let mut entry = format!("  {name:<width$}", width = COLUMN - 2);
+    for (i, line) in lines.iter().enumerate() {
+        if i > 0 {
+            entry.push_str(&" ".repeat(COLUMN));
+        }
+        entry.push_str(line);
+        entry.push('\n');
+    }
+    entry
+}
+
+/// Root `--help` tail (after subcommands/options). It names only what this
+/// build has (REVIEW №142): a distro build without the editor, SQLite, ssh,
+/// sync or completions (`--no-default-features`) does not offer them.
+fn root_after_long_help() -> String {
+    let mut help = String::from(
+        "Running `rusk` without a COMMAND is equivalent to `rusk list`. Use `rusk list -c` / \
+         `--compact` for a compact single-line view.\n\n",
+    );
+    help.push_str(if cfg!(feature = "interactive") {
+        "Due dates: `rusk add -d ...` for new tasks, `rusk add` with no text for the TUI, or the \
+         interactive editor (`rusk edit <id>`) — first line at the start, see `rusk edit --help` \
+         and EDITOR.md. Pass `_` to clear where `-d` is supported. See `rusk add --help` for \
+         date syntax.\n\n"
+    } else {
+        "Due dates: `rusk add -d ...` for new tasks, `rusk edit <id> -d ...` for existing ones. \
+         Pass `_` to clear where `-d` is supported. See `rusk add --help` for date syntax.\n\n"
+    });
+    help.push_str(
+        "Configuration file (theme colors, defaults; see CONFIG.md): auto-created at \
+         ~/.config/rusk/cfg (Linux) or the platform config dir. Environment variables win over \
+         config values.\n\nEnvironment:\n",
+    );
+    help.push_str(&env_entry(
+        "RUSK_DB",
+        &format!("Optional database location: {}.", db_locations()),
+    ));
+    if cfg!(feature = "backend-http") {
+        help.push_str(&env_entry("RUSK_DB_TOKEN", "Optional Bearer token for http(s) database locations."));
+    }
+    help.push_str(&env_entry(
+        "RUSK_CONFIG",
+        "Optional path to the configuration file; empty value disables the config.",
+    ));
+    help.push_str(&env_entry(
+        "RUSK_NO_COLOR",
+        "Disable ANSI colors when set to any non-empty value (NO_COLOR is also respected).",
+    ));
+    if cfg!(feature = "sync") {
+        help.push_str(&env_entry(
+            "RUSK_SYNC_REMOTE",
+            "Optional `rusk sync` remote (overrides sync_remote from the config).",
+        ));
+        help.push_str(&env_entry("RUSK_SYNC_TOKEN", "Optional Bearer token for http(s) sync remotes."));
+    }
+    if cfg!(feature = "completions") {
+        help.push_str(
+            "\nShell tab completion:\n  rusk completions install <shell> [<shell> ...]\n  \
+             rusk completions show <shell>\n",
+        );
+    }
+    help
+}
+
+const DEL_LONG_ABOUT: &str = if cfg!(feature = "interactive") {
+    "Delete tasks by ID, or all completed ones with --done. Each \
+deletion is confirmed on the terminal first; --yes deletes without asking, which is how a script \
+deletes (there is no terminal to ask on).\n\n\
+Examples:\n  \
+rusk del 3\n  \
+rusk del 1,2,3\n  \
+rusk del --done\n  \
+rusk del 3 --yes                  # no question asked"
+} else {
+    "Delete tasks by ID, or all completed ones with --done. This build has no terminal UI and \
+deletes without asking; --yes is accepted, so a script runs the same with any build.\n\n\
+Examples:\n  \
+rusk del 3\n  \
+rusk del 1,2,3\n  \
+rusk del --done"
+};
+
+const DEL_YES_HELP: &str = if cfg!(feature = "interactive") {
+    "Delete without asking for confirmation (needed where there is no terminal to ask on, e.g. in a script)"
+} else {
+    "Delete without asking for confirmation (this build never asks)"
+};
+
+/// `rusk add`: the editor is there only in a build with it (REVIEW №141).
+const ADD_ABOUT: &str = if cfg!(feature = "interactive") {
+    "Add a new task (without TEXT opens the interactive editor)"
+} else {
+    "Add a new task"
+};
+
+const ADD_LONG_ABOUT: &str = if cfg!(feature = "interactive") {
+    "Add a new task. With TEXT: one-shot. Without TEXT: opens the interactive \
+editor (set or clear a due date on the first line). Optional `-d` pre-seeds the first line \
+when there is no TEXT. Optional `-a` lists tasks this one depends on: they are shown after \
+the text, e.g. `text (19,22)` — the task should be done no earlier than them (an ordering \
+hint for agents and tooling; `rusk mark` itself is never blocked).\n\n\
+Examples:\n  \
+rusk add buy groceries\n  \
+rusk add report -d 31-12-2025\n  \
+rusk add deploy -a 19,22          # depends on tasks 19 and 22\n  \
+rusk add                          # interactive editor\n  \
+rusk add -d 2w                    # editor with the date pre-seeded"
+} else {
+    "Add a new task. Optional `-d` sets its due date. Optional `-a` lists tasks this one \
+depends on: they are shown after the text, e.g. `text (19,22)` — the task should be done no \
+earlier than them (an ordering hint for agents and tooling; `rusk mark` itself is never \
+blocked).\n\n\
+Examples:\n  \
+rusk add buy groceries\n  \
+rusk add report -d 31-12-2025\n  \
+rusk add deploy -a 19,22          # depends on tasks 19 and 22"
+};
+
+const ADD_TEXT_HELP: &str = if cfg!(feature = "interactive") {
+    "Task text (one or more words). Omit to open the full-screen multi-line editor (requires a TTY; see EDITOR.md)"
+} else {
+    "Task text (one or more words)"
+};
+
+const EDIT_ABOUT: &str = if cfg!(feature = "interactive") {
+    "Edit tasks by ID (without new text opens the interactive editor)"
+} else {
+    "Edit tasks by ID: new text, due date or dependencies"
+};
+
+const EDIT_LONG_ABOUT: &str = if cfg!(feature = "interactive") {
+    "Edit tasks by ID. Without new text, opens the interactive editor (set or \
+clear a due date on the first line). With text, sets task text in one shot. Optional `-d <date>` \
+(non-TUI) sets the due date; optional `-a <ids>` (non-TUI) sets the dependency list (`_` clears it). \
+Everything after `--` is text, word for word (words that start with `-`, a text of numbers).\n\n\
+Examples:\n  \
+rusk e 1                          # interactive editor\n  \
+rusk e 1 -d 2w\n  \
+rusk e 3 new text -d 15-06-2025\n  \
+rusk e 1 -d _                     # clear the due date\n  \
+rusk e 1 -a 19,22                 # depends on tasks 19 and 22\n  \
+rusk e 1 -a _                     # clear the dependency list\n  \
+rusk e 1 -- -x means exclude      # a text with words that start with a dash"
+} else {
+    "Edit tasks by ID: with text, sets the task text. Optional `-d <date>` sets the due date; \
+optional `-a <ids>` sets the dependency list (`_` clears either). Everything after `--` is text, \
+word for word (words that start with `-`, a text of numbers).\n\n\
+Examples:\n  \
+rusk e 1 -d 2w\n  \
+rusk e 3 new text -d 15-06-2025\n  \
+rusk e 1 -d _                     # clear the due date\n  \
+rusk e 1 -a 19,22                 # depends on tasks 19 and 22\n  \
+rusk e 1 -a _                     # clear the dependency list\n  \
+rusk e 1 -- -x means exclude      # a text with words that start with a dash"
+};
+
+const EDIT_TEXT_HELP: &str = if cfg!(feature = "interactive") {
+    "New text (the words after the IDS). Without text, opens the interactive editor. Words after `--` are text as they are"
+} else {
+    "New text (the words after the IDS). Words after `--` are text as they are"
+};
 
 #[derive(Parser)]
 #[command(
     version,
     about,
     after_help = "Without COMMAND, lists all tasks (same as `rusk list`). Use `rusk list -c` for a compact single-line view.\n\nFor details on flags, dates, and environment variables run `rusk --help` or `rusk <COMMAND> --help`.",
-    after_long_help = CLI_ROOT_AFTER_LONG_HELP
+    after_long_help = root_after_long_help()
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -53,25 +258,12 @@ pub struct Cli {
 pub enum Command {
     #[command(
         visible_alias = "a",
-        about = "Add a new task (without TEXT opens the interactive editor)",
-        long_about = "Add a new task. With TEXT: one-shot. Without TEXT: opens the interactive \
-editor (set or clear a due date on the first line). Optional `-d` pre-seeds the first line \
-when there is no TEXT. Optional `-a` lists tasks this one depends on: they are shown after \
-the text, e.g. `text (19,22)` — the task should be done no earlier than them (an ordering \
-hint for agents and tooling; `rusk mark` itself is never blocked).\n\n\
-Examples:\n  \
-rusk add buy groceries\n  \
-rusk add report -d 31-12-2025\n  \
-rusk add deploy -a 19,22          # depends on tasks 19 and 22\n  \
-rusk add                          # interactive editor\n  \
-rusk add -d 2w                    # editor with the date pre-seeded",
+        about = ADD_ABOUT,
+        long_about = ADD_LONG_ABOUT,
         after_long_help = DATE_FORMAT_LONG_HELP
     )]
     Add {
-        #[arg(
-            value_name = "TEXT",
-            help = "Task text (one or more words). Omit to open the full-screen multi-line editor (requires a TTY; see EDITOR.md)"
-        )]
+        #[arg(value_name = "TEXT", help = ADD_TEXT_HELP)]
         text: Vec<String>,
         #[arg(
             short,
@@ -93,12 +285,8 @@ rusk add -d 2w                    # editor with the date pre-seeded",
     #[command(
         visible_alias = "d",
         about = "Delete tasks by ID, or all completed ones with --done",
-        long_about = "Delete tasks by ID, or all completed ones with --done.\n\n\
-Examples:\n  \
-rusk del 3\n  \
-rusk del 1,2,3\n  \
-rusk del --done",
-        override_usage = "rusk del <IDS>\n       rusk del --done"
+        long_about = DEL_LONG_ABOUT,
+        override_usage = "rusk del [--yes] <IDS>\n       rusk del [--yes] --done"
     )]
     Del {
         #[arg(
@@ -112,6 +300,8 @@ rusk del --done",
             help = "Delete all completed tasks instead of the ones given by ID"
         )]
         done: bool,
+        #[arg(short, long, help = DEL_YES_HELP)]
+        yes: bool,
     },
     #[command(
         visible_alias = "m",
@@ -137,21 +327,10 @@ rusk mark 1 -p"
     },
     #[command(
         visible_alias = "e",
-        about = "Edit tasks by ID (without new text opens the interactive editor)",
-        long_about = "Edit tasks by ID. Without new text, opens the interactive editor (set or \
-clear a due date on the first line). With text, sets task text in one shot. Optional `-d <date>` \
-(non-TUI) sets the due date; optional `-a <ids>` (non-TUI) sets the dependency list (`_` clears it). \
-Everything after `--` is text, word for word (words that start with `-`, a text of numbers).\n\n\
-Examples:\n  \
-rusk e 1                          # interactive editor\n  \
-rusk e 1 -d 2w\n  \
-rusk e 3 new text -d 15-06-2025\n  \
-rusk e 1 -d _                     # clear the due date\n  \
-rusk e 1 -a 19,22                 # depends on tasks 19 and 22\n  \
-rusk e 1 -a _                     # clear the dependency list\n  \
-rusk e 1 -- -x means exclude      # a text with words that start with a dash",
+        about = EDIT_ABOUT,
+        long_about = EDIT_LONG_ABOUT,
         override_usage = "rusk edit [OPTIONS] <IDS> [TEXT]... [-- <TEXT>...]",
-        after_long_help = EDIT_SUBCOMMAND_LONG_HELP
+        after_long_help = edit_after_long_help()
     )]
     Edit {
         #[arg(
@@ -159,10 +338,7 @@ rusk e 1 -- -x means exclude      # a text with words that start with a dash",
             help = "Task IDs: one comma-separated list, e.g. 1,2,3"
         )]
         ids: Option<String>,
-        #[arg(
-            value_name = "TEXT",
-            help = "New text (the words after the IDS). Without text, opens the interactive editor. Words after `--` are text as they are"
-        )]
+        #[arg(value_name = "TEXT", help = EDIT_TEXT_HELP)]
         text: Vec<String>,
         /// The words after `--`: text, never ids or options.
         #[arg(last = true, value_name = "TEXT", hide = true)]
@@ -204,9 +380,16 @@ subcommand does the same. Use -c for a compact single-line view."
         #[arg(
             short = 'c',
             long,
-            help = "Compact view: show only the first line of each task (no wrap/paragraph continuations); strip trailing punctuation on that line"
+            overrides_with = "no_compact",
+            help = "Compact view: one row per task, its first line with trailing punctuation cut; `…` marks a task that goes on"
         )]
         compact: bool,
+        #[arg(
+            long,
+            overrides_with = "compact",
+            help = "Full view for this run, even with `compact = true` in the config"
+        )]
+        no_compact: bool,
     },
     #[command(
         visible_alias = "s",

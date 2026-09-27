@@ -48,7 +48,7 @@ use std::time::{Duration, SystemTime};
 /// Non-fatal warning on stderr (backup / atomic-write / git fallbacks), in
 /// the theme warning color (yellow by default).
 pub(crate) fn warn_yellow(msg: &str) {
-    eprintln!("{}", crate::config::theme().warning.paint(msg));
+    crate::errln!("{}", crate::config::theme().warning.paint(msg));
 }
 
 /// Makes the records a backend read from `location` into a task list rusk
@@ -500,7 +500,11 @@ impl Backend {
                 backup_path.display()
             );
         }
-        let backup = self.load_backup(backup_path.clone())?;
+        // Nothing has been touched yet, and the report says so (REVIEW
+        // №101): the cause first, like the other refusals of a restore.
+        let backup = self.load_backup(backup_path.clone()).map_err(|e| {
+            anyhow::anyhow!("{e:#}; nothing was restored, the database is unchanged")
+        })?;
         let saved = modified(&backup_path);
         let backup_label = match saved {
             Some(time) => format!("{} (saved {})", backup_path.display(), local_time(time)),
@@ -515,11 +519,11 @@ impl Backend {
         if exists(db_path)? {
             let current = self.load();
             if self.holds_the_backup_already(db_path, &backup_path, &backup, &current) {
-                println!(
+                crate::outln!(
                     "The database already matches the backup ({} tasks); nothing to restore",
                     backup.tasks.len()
-                );
-                println!("Backup file: {backup_label}");
+                )?;
+                crate::outln!("Backup file: {backup_label}")?;
                 return Ok(backup.tasks);
             }
             if let Some(warning) = stale_backup_warning(saved, modified(db_path)) {
@@ -541,18 +545,24 @@ impl Backend {
             })?;
             kept_now = Some(kept.clone());
             match &current {
-                Ok(_) => println!("Current database backed up to: {}", kept.display()),
+                // Said on the way, and the way goes on whether or not
+                // anybody reads it: an output that fails must not leave a
+                // restore half done.
+                Ok(_) => {
+                    crate::outln!("Current database backed up to: {}", kept.display()).ok();
+                }
                 // Why, in one line: a damaged file is not the only reason,
                 // and the full report ends in advice to do what is being
                 // done.
                 Err(error) => {
                     let report = format!("{error:#}");
-                    println!(
+                    crate::outln!(
                         "Current database cannot be read ({}); {} saved to: {}",
                         report.lines().next().unwrap_or_default().trim_end_matches('.'),
                         if raw { "raw copy" } else { "a copy" },
                         kept.display()
-                    );
+                    )
+                    .ok();
                 }
             }
             #[cfg(feature = "backend-sqlite")]
@@ -576,16 +586,16 @@ impl Backend {
                 && std::fs::remove_file(kept).is_ok()
             {
                 // Its path has just been printed.
-                println!("The database was not touched; the copy was removed again");
+                crate::outln!("The database was not touched; the copy was removed again").ok();
             }
             return Err(e.context("Failed to restore from backup"));
         }
 
-        println!(
+        crate::outln!(
             "Successfully restored {} tasks from backup",
             backup.tasks.len()
-        );
-        println!("Backup file: {backup_label}");
+        )?;
+        crate::outln!("Backup file: {backup_label}")?;
 
         Ok(backup.tasks)
     }

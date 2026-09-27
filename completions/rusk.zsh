@@ -354,9 +354,9 @@ _rusk_main() {
                 if [[ "$cmd" == "del" || "$cmd" == "d" ]]; then
                     # `--done` takes no ids: offered only before any
                     if [ "$(_rusk_count_ids)" -eq 0 ]; then
-                        _rusk_zsh_compadd_flags -- --done --help -h
+                        _rusk_zsh_compadd_flags -- --done --yes -y --help -h
                     else
-                        _rusk_zsh_compadd_flags -- --help -h
+                        _rusk_zsh_compadd_flags -- --yes -y --help -h
                     fi
                 else
                     _rusk_zsh_compadd_flags -- -p --priority -h --help
@@ -366,7 +366,7 @@ _rusk_main() {
             
         list|l)
             if [[ -z "$cur" ]] || [[ "$cur" == -* ]] || { [[ "$cur" == "$cmd" ]] && [[ -n "$CURRENT" ]] && [[ "$CURRENT" -eq $((rusk_idx + 1)) ]]; }; then
-                _rusk_zsh_compadd_flags -- -c --compact -h --help
+                _rusk_zsh_compadd_flags -- -c --compact --no-compact -h --help
             fi
             ;;
         search|s)

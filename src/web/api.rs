@@ -16,7 +16,10 @@
 
 use crate::model::normalize;
 use crate::revision::{if_match_allows, list_revision, task_revision};
-use crate::storage::{next_free_id, position_of, remove_done, remove_tasks, validate_after};
+use crate::storage::{
+    clean_text, insert_by_id, next_free_id, position_of, remove_done, remove_tasks, text_changes,
+    validate_after,
+};
 use crate::{Task, TaskId, TaskManager};
 use chrono::NaiveDate;
 use serde::Deserialize;
@@ -186,13 +189,13 @@ pub fn create_task(tm: &mut TaskManager, body: &str, if_match: Option<&str>) -> 
             validate_after(tasks, None, &new.after).map_err(|e| refuse(400, format!("{e:#}")))?;
         let task = Task {
             id: next_free_id(tasks)?,
-            text: new.text.clone(),
+            text: clean_text(&new.text).to_string(),
             date: new.date,
             done: false,
             priority: false,
             after,
         };
-        tasks.push(task.clone());
+        insert_by_id(tasks, task.clone());
         Ok(task)
     });
     finish(created, |task| ApiResponse::task(201, &task))
@@ -227,8 +230,10 @@ pub fn update_task(
         };
 
         let task = &mut tasks[idx];
-        if let Some(text) = &patch.text {
-            task.text = text.clone();
+        if let Some(text) = &patch.text
+            && text_changes(&task.text, text)
+        {
+            task.text = clean_text(text).to_string();
         }
         if let Some(date) = patch.date {
             task.date = date;
@@ -476,10 +481,11 @@ mod tests {
         // task that is gone is a failed precondition, not a 404.
         assert_eq!(delete_task(&mut tm, 2, Some(&beta_now)).status, 412);
         create_task(&mut tm, r#"{"text":"BRAND NEW"}"#, None);
-        assert_eq!(tm.tasks().last().unwrap().id, 2);
+        // Listed where the id puts it (REVIEW №133).
+        assert_eq!(tm.tasks()[1].id, 2);
         assert_eq!(update_task(&mut tm, 2, r#"{"done":true}"#, Some(&beta_now)).status, 412);
         assert_eq!(delete_task(&mut tm, 2, Some(&beta_now)).status, 412);
-        assert_eq!(tm.tasks().last().unwrap().text, "BRAND NEW");
+        assert_eq!(tm.tasks()[1].text, "BRAND NEW");
 
         // A task revision says nothing about the list.
         let brand_new = quoted(&get_task(&tm, 2).etag);
@@ -513,8 +519,9 @@ mod tests {
 
         let on_disk = TaskManager::load_tasks_from_path(&path).unwrap();
         let texts: Vec<&str> = on_disk.iter().map(|t| t.text.as_str()).collect();
-        assert_eq!(texts, ["beta", "from the cli", "from the web"]);
-        assert!(on_disk[0].priority);
+        // The reused id 1 is listed first (REVIEW №133).
+        assert_eq!(texts, ["from the web", "beta", "from the cli"]);
+        assert!(on_disk[1].priority);
     }
 
     /// REVIEW №196: a PATCH that changes nothing (the dialog saved as it

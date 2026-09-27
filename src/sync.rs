@@ -241,32 +241,30 @@ pub fn run(direction: Direction) -> Result<()> {
     let push = |tasks: &[Task]| -> Result<()> {
         remote.push(tasks)?;
         write_base(&state_file, &remote_str, &canonical_hash(tasks)?);
-        println!(
+        crate::outln!(
             "{} {} task(s) to {}",
             theme().success.paint("Pushed"),
             tasks.len(),
             remote.describe()
-        );
-        Ok(())
+        )
     };
     let pull = |tasks: Vec<Task>| -> Result<()> {
         let count = tasks.len();
         local.save(&tasks)?;
         write_base(&state_file, &remote_str, &canonical_hash(&tasks)?);
-        println!(
+        crate::outln!(
             "{} {} task(s) from {}",
             theme().success.paint("Pulled"),
             count,
             remote.describe()
-        );
-        Ok(())
+        )
     };
     let already_in_sync = || {
-        println!(
+        crate::outln!(
             "{} with {}",
             theme().success.paint("Already in sync"),
             remote.describe()
-        );
+        )
     };
 
     let forced = matches!(
@@ -298,8 +296,7 @@ pub fn run(direction: Direction) -> Result<()> {
             // Record the base so a later divergence is detected even if the
             // first contact happened with identical content.
             write_base(&state_file, &remote_str, &local_hash);
-            already_in_sync();
-            Ok(())
+            already_in_sync()
         }
         (Direction::Auto, SyncStatus::LocalAhead) => push(&local_tasks),
         (Direction::Auto, SyncStatus::RemoteAhead) => pull(remote_tasks),

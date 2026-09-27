@@ -148,26 +148,29 @@ fn test_binary_add_interactive_requires_tty() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     // With `interactive` (default), non-TTY should ask for a terminal. With `--no-default-features`
-    // the binary has no TUI, so `rusk add` with no text is rejected with an empty-text error.
-    assert!(
-        stderr.contains("terminal")
-            || stderr.contains("TTY")
-            || stderr.contains("tty")
-            || stderr.contains("Task text cannot be empty"),
-        "stderr: {stderr}"
-    );
+    // the binary has no TUI, and `rusk add` with no text names the missing feature.
+    if cfg!(feature = "interactive") {
+        assert!(stderr.contains("terminal"), "stderr: {stderr}");
+    } else {
+        assert!(stderr.contains("'interactive' feature"), "stderr: {stderr}");
+    }
 }
 
+/// `_` is no date for `rusk add` too (REVIEW №78): without text it is the
+/// editor with nothing pre-seeded, which needs a terminal like any other.
 #[test]
-fn test_binary_add_rejects_d_clear_with_no_text() {
+fn test_binary_add_d_clear_with_no_text_is_the_editor_without_a_date() {
     let sb = common::Sandbox::new();
     let out = sb.cmd().args(["add", "-d", "_"]).output().unwrap();
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.to_lowercase().contains("clear") || stderr.contains("`_`"),
-        "stderr should explain -d _ with no text: {stderr}"
-    );
+    let expected = if cfg!(feature = "interactive") {
+        "requires a terminal"
+    } else {
+        "'interactive' feature"
+    };
+    assert!(stderr.contains(expected), "stderr: {stderr}");
+    assert!(!stderr.contains("Invalid date"), "stderr: {stderr}");
 }
 
 #[test]
@@ -203,11 +206,14 @@ fn test_binary_edit_help_includes_relative_date_syntax() {
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.to_lowercase().contains("relative")
-            && stdout.contains("first line")
-            && stdout.contains("leading `+`")
-            && stdout.contains("current due date"),
-        "edit long help should document relative, + from current due date, and first line:\n{stdout}"
+        stdout.to_lowercase().contains("relative") && stdout.contains("current due date"),
+        "edit long help should document relative dates and + from the current due date:\n{stdout}"
+    );
+    // The first line of the editor only where there is one.
+    assert_eq!(
+        stdout.contains("first line") && stdout.contains("leading `+`"),
+        cfg!(feature = "interactive"),
+        "{stdout}"
     );
 }
 

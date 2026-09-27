@@ -262,7 +262,7 @@ _rusk_complete_edit_flags() {
 _rusk_complete_del_flags() {
     local gcur="$cur"
     [[ "${1:-0}" == 1 ]] && gcur=""
-    local flags="--help -h"
+    local flags="--yes -y --help -h"
     [ "$(_rusk_count_ids)" -eq 0 ] && flags="--done $flags"
     COMPREPLY=($(compgen -W "$flags" -- "$gcur"))
     return 0
@@ -280,7 +280,7 @@ _rusk_complete_mark_flags() {
 _rusk_complete_list_flags() {
     local gcur="$cur"
     [[ "${1:-0}" == 1 ]] && gcur=""
-    COMPREPLY=($(compgen -W "-c --compact -h --help" -- "$gcur"))
+    COMPREPLY=($(compgen -W "-c --compact --no-compact -h --help" -- "$gcur"))
     return 0
 }
 

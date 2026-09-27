@@ -94,8 +94,9 @@ def is-value-flag [token: string] {
 # list subcommand: compact view
 def get-list-flags [] {
   [
-    {value: "--compact", description: "Compact view: first line of each task only"}
-    {value: "-c", description: "Compact view: first line of each task only"}
+    {value: "--compact", description: "Compact view: one row per task, … when it goes on"}
+    {value: "-c", description: "Compact view: one row per task, … when it goes on"}
+    {value: "--no-compact", description: "Full view for this run, even with compact = true"}
   ]
 }
 
@@ -525,7 +526,10 @@ def complete-mark-del [cur: string, command: string, spans: list<string>] {
       let has_ids = ($spans | skip ($cmd_idx + 1) | drop 1 | any {|w| $w =~ '^[0-9,]+$' })
       if $has_ids { [] } else {
         [{value: "--done", description: "Delete all completed tasks"}]
-      } | append (get-common-flags)
+      } | append [
+        {value: "--yes", description: "Delete without asking"},
+        {value: "-y", description: "Delete without asking"}
+      ] | append (get-common-flags)
     } else {
       [
         {value: "-p", description: "Toggle the priority flag"},

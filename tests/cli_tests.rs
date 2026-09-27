@@ -112,7 +112,7 @@ fn test_cli_delete_error_no_ids_no_done() {
     tm.add_task(vec!["Task 1".to_string()], None).unwrap();
 
     // Neither ids nor --done: an error, nothing deleted.
-    let result = HandlerCLI::handle_delete_tasks(&mut tm, vec![], false);
+    let result = HandlerCLI::handle_delete_tasks(&mut tm, vec![], false, false);
     assert!(result.is_err());
     assert_eq!(tm.tasks.len(), 1); // Task should remain
 }

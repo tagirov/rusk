@@ -219,7 +219,10 @@ exists so that the next edit of that task can offer the text back.
   process changed or deleted the task while the editor was open, the database
   cannot be reached — nothing is overwritten and **the draft is still there**:
   run the command again, answer `y`, and merge your text with the task as it
-  is now.
+  is now. Where not even the draft could be written (a read-only directory
+  refuses the database and the draft alike), the error says so and carries
+  your text instead, so it is on the screen rather than lost. "Edited task"
+  is printed only once the task is stored.
 - **Recovery.** When the editor is about to open a task that has a draft, it
   says how old the draft is and what is in it:
 

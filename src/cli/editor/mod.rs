@@ -185,8 +185,8 @@ pub(crate) fn run_editor(
             Action::Save => {
                 let joined = state.joined();
                 if validate.is_some_and(|v| !joined.trim().is_empty() && !v(joined.as_str())) {
-                    print!("\x07");
-                    stdout.flush().ok();
+                    // The bell: the text does not pass `validate`.
+                    stdout.write_all(b"\x07").and_then(|()| stdout.flush()).ok();
                     continue;
                 }
                 // The draft stays until the text is somewhere safer: the
@@ -253,9 +253,10 @@ fn abort(
 ) -> Result<String> {
     draft::flush(extras, &state.lines, baseline, autosave);
     guard.finish(stdout);
-    println!("\n");
+    // Aborting already: nothing more to do about an output that fails.
+    crate::out!("\n\n").ok();
     if let Some(note) = draft_note(extras, autosave) {
-        eprintln!("{note}");
+        crate::errln!("{note}");
     }
     Err(crate::error::AppError::UserAbort.into())
 }

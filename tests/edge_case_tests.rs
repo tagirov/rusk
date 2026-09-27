@@ -227,9 +227,10 @@ fn test_edge_case_task_text_edge_cases() {
     // Test words with extra spaces
     let result = tm.add_task(vec!["  hello  ".to_string(), "  world  ".to_string()], None);
     assert!(result.is_ok());
-    // Note: join() preserves the spaces exactly as they are
-    // "  hello  " + "  world  " = "  hello     world  " (5 spaces between words)
-    assert_eq!(tm.tasks[3].text, "  hello     world  ");
+    // The words are joined as they are, and the text is stored without
+    // whitespace at its edges, which the list would not show (REVIEW №115):
+    // "  hello  " + "  world  " = "hello     world" (5 spaces between words)
+    assert_eq!(tm.tasks[3].text, "hello     world");
 
     // Test empty strings in vector (should be preserved as spaces)
     let result = tm.add_task(

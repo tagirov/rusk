@@ -10,9 +10,11 @@ pub mod error;
 mod lock;
 pub mod location;
 pub mod model;
+pub mod output;
 pub mod parser;
 pub mod printable;
 pub mod revision;
+pub mod search;
 pub mod storage;
 pub mod width;
 #[cfg(feature = "sync")]

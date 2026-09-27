@@ -112,11 +112,15 @@ or Bearer header. Dates are ISO `YYYY-MM-DD`.
 |---|---|---|
 | `GET /api/tasks` | — | full task list |
 | `GET /api/tasks/{id}` | — | one task |
-| `POST /api/tasks` | `{"text": "...", "date": "2026-08-01" \| null}` | `201` + created task |
+| `POST /api/tasks` | `{"text": "...", "date": "2026-08-01" \| null}` | `201` + created task, listed in the place of its id |
 | `PATCH /api/tasks/{id}` | any subset of `{text, date, done, priority}`; `"date": null` clears | `200` + updated task |
 | `DELETE /api/tasks/{id}` | — | `204` |
 | `DELETE /api/tasks/done` | — | `{"deleted": n}` |
 | `PUT /api/tasks` | full task array | replaces the whole list (used by sync) |
+
+A text is stored without whitespace at its edges, as the CLI stores it; a
+new task takes the lowest free id and goes in front of the first task with a
+higher one, so a reused id is not listed at the end.
 
 `PUT` stores the list exactly as sent, so it has to follow the rules every
 list read from a database is held to (README, "Notes on the text formats"):

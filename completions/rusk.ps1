@@ -147,6 +147,9 @@ function _rusk_emit_flag_completions {
             '--after' { 'Depend on tasks (comma-separated ids)' }
             '-a' { 'Depend on tasks (comma-separated ids)' }
             '--done' { 'Delete all completed tasks' }
+            '--yes' { 'Delete without asking' }
+            '-y' { 'Delete without asking' }
+            '--no-compact' { 'Full view for this run' }
             '--output' { 'Output file path' }
             '-o' { 'Output file path' }
             '--host' { 'Bind address' }
@@ -460,7 +463,7 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
                     for ($i = 2; $i -lt $tokens.Count; $i++) {
                         if ((_rusk_token_text $tokens[$i]) -match '^[\d,]+$') { $hasIds = $true }
                     }
-                    if ($hasIds) { @('--help', '-h') } else { @('--done', '--help', '-h') }
+                    if ($hasIds) { @('--yes', '-y', '--help', '-h') } else { @('--done', '--yes', '-y', '--help', '-h') }
                 } else {
                     @('--priority', '-p', '--help', '-h')
                 }
@@ -471,7 +474,7 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
 
         { $_ -in 'list', 'l' } {
             if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur) -or (($cur -eq $command) -and ($tokens.Count -eq 2))) {
-                return _rusk_emit_flag_completions @('--compact', '-c', '--help', '-h') $wordToComplete $tokens $command $cur
+                return _rusk_emit_flag_completions @('--compact', '-c', '--no-compact', '--help', '-h') $wordToComplete $tokens $command $cur
             }
             return @()
         }

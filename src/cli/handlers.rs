@@ -2,7 +2,9 @@
 use crate::parse_cli_date_for_edit;
 use crate::config::theme;
 use crate::parser::date::is_cli_date_clear_value;
+use crate::search::Query;
 use crate::{Task, TaskId, TaskManager, validate_cli_date_edit_arg};
+use crate::{out, outln};
 use anyhow::Result;
 use colored::*;
 
@@ -31,20 +33,10 @@ struct EditorSession<'a> {
     allow_skip: bool,
 }
 
-/// Narrowest id column in `rusk list`, matching the "id" header.
-const ID_COLUMN_MIN_WIDTH: usize = 2;
-/// Everything in a list line except the id: `"  "`, the status marker, `" "`,
-/// `"  "`, the 9-column date and `"  "`. Also the indent of wrapped lines.
-const LIST_PREFIX_FIXED_WIDTH: usize = 17;
-/// Rule under the list header for a two-digit id column.
-const LIST_RULE_WIDTH: usize = 46;
-/// Columns held by the short date (`14-sep-26`) in a list line.
-const DATE_COLUMN_WIDTH: usize = 9;
-
 impl HandlerCLI {
     /// `(19,22)` suffix for a task with dependencies; appended after the
     /// task text everywhere the task is shown. Ids are bold, parens are not.
-    fn after_suffix(task: &Task) -> Option<String> {
+    pub(crate) fn after_suffix(task: &Task) -> Option<String> {
         if task.after.is_empty() {
             return None;
         }
@@ -57,19 +49,22 @@ impl HandlerCLI {
         Some(format!("({})", ids.bold()))
     }
 
-    fn print_added_task(task: &Task) {
-        let prefix = if let Some(date) = task.date {
-            let colored_date = Self::colored_short_date(date, task.done);
-            format!("{} {}: ({})", theme().success.paint("Added task:"), task.id, colored_date)
-        } else {
-            format!("{} {}:", theme().success.paint("Added task:"), task.id)
+    /// `<what>: <id>:` — the line every report on a task starts with, the
+    /// task's text following on the lines below.
+    fn task_heading(what: ColoredString, id: TaskId) -> String {
+        format!("{what} {id}:")
+    }
+
+    fn print_added_task(tm: &TaskManager, id: TaskId) -> Result<()> {
+        let Some(task) = tm.find_task_by_id(id).map(|idx| &tm.tasks()[idx]) else {
+            return Ok(());
         };
+        let mut heading = Self::task_heading(theme().success.paint("Added task:"), task.id);
+        if let Some(date) = task.date {
+            heading = format!("{heading} ({})", Self::colored_short_date(date, task.done));
+        }
         let suffix = Self::after_suffix(task).map(|s| format!(" {s}"));
-        Self::print_task_text_with_wrapping_suffixed(
-            &prefix,
-            &task.text,
-            suffix.as_deref(),
-        );
+        Self::print_task_text_with_wrapping_suffixed(&heading, &task.text, suffix.as_deref())
     }
 
     /// The draft slot of one task, in the directory the drafts of this
@@ -161,13 +156,29 @@ impl HandlerCLI {
     }
 
     /// The editor keeps its draft until the text is stored, so a save that
-    /// fails leaves it exactly where the next edit will look for it. All
-    /// that is left to do here is say so.
+    /// fails leaves it exactly where the next edit will look for it — unless
+    /// the draft could not be written either (a read-only directory refuses
+    /// both; the editor has warned about it), in which case what is there is
+    /// an older draft or none. Only a draft that holds `buffer`, the text the
+    /// editor saved, is promised; otherwise the report carries the text
+    /// itself, the one copy left.
     #[cfg(feature = "interactive")]
-    fn draft_survives_failed_save(error: anyhow::Error, retry_command: &str) -> anyhow::Error {
-        anyhow::anyhow!(
-            "{error:#}. Your text was kept as a draft: run `{retry_command}` to restore it"
-        )
+    fn draft_survives_failed_save(
+        error: anyhow::Error,
+        slot: &super::editor::draft::Slot,
+        buffer: &str,
+        retry_command: &str,
+    ) -> anyhow::Error {
+        let kept = super::editor::draft::read(slot).is_some_and(|saved| saved.text == buffer);
+        if kept {
+            anyhow::anyhow!(
+                "{error:#}. Your text was kept as a draft: run `{retry_command}` to restore it"
+            )
+        } else {
+            anyhow::anyhow!(
+                "{error:#}. Your text could not be kept as a draft either; here it is:\n{buffer}"
+            )
+        }
     }
 
     pub fn handle_add_task(
@@ -176,10 +187,8 @@ impl HandlerCLI {
         date: Option<String>,
         after: Vec<crate::TaskId>,
     ) -> Result<()> {
-        tm.add_task_with_after(text, date, after)?;
-        let task = tm.tasks().last().unwrap();
-        Self::print_added_task(task);
-        Ok(())
+        let id = tm.add_task_with_after(text, date, after)?;
+        Self::print_added_task(tm, id)
     }
 
     /// Interactive TUI: no inline task text; optional `-d` pre-seeds the first line with that due date.
@@ -192,9 +201,12 @@ impl HandlerCLI {
         // Reject a bad dependency list before the editor opens, not after
         // the text has been typed.
         let after = tm.validate_after(None, &after)?;
-        let seed = match date {
-            Some(ref d) => Some(parse_cli_date_for_edit(d, None)?.format("%d-%m-%Y").to_string()),
-            None => None,
+        let seed = match date.as_deref() {
+            // `_` is "no date", which is what a new task has anyway.
+            Some(d) if !is_cli_date_clear_value(d) => {
+                Some(parse_cli_date_for_edit(d, None)?.format("%d-%m-%Y").to_string())
+            }
+            _ => None,
         };
         // There is no task yet, so every new-task draft is pinned to the
         // same empty base: a `-d` seed must not make the draft typed
@@ -219,21 +231,27 @@ impl HandlerCLI {
             anyhow::bail!("Task text cannot be empty");
         }
 
-        tm.add_task_full(stripped, parsed_date, after)
-            .map_err(|e| Self::draft_survives_failed_save(e, "rusk add"))?;
+        let slot = Self::draft_slot("new-task", "");
+        let id = tm
+            .add_task_full(stripped, parsed_date, after)
+            .map_err(|e| Self::draft_survives_failed_save(e, &slot, &edited, "rusk add"))?;
         // Stored: the draft has done its job.
-        super::editor::draft::remove(&Self::draft_slot("new-task", ""));
-        let task = tm.tasks().last().unwrap();
-        Self::print_added_task(task);
-        Ok(())
+        super::editor::draft::remove(&slot);
+        Self::print_added_task(tm, id)
     }
 
     /// `--done` deletes every completed task; otherwise `ids` says which
-    /// ones. It is one or the other.
-    pub fn handle_delete_tasks(tm: &mut TaskManager, ids: Vec<TaskId>, done: bool) -> Result<()> {
+    /// ones. It is one or the other. Each deletion is confirmed on the
+    /// terminal unless `yes` says it already is.
+    pub fn handle_delete_tasks(
+        tm: &mut TaskManager,
+        ids: Vec<TaskId>,
+        done: bool,
+        yes: bool,
+    ) -> Result<()> {
         match (done, ids.is_empty()) {
-            (true, true) => Self::delete_all_done(tm),
-            (false, false) => Self::delete_by_ids(tm, ids),
+            (true, true) => Self::delete_all_done(tm, yes),
+            (false, false) => Self::delete_by_ids(tm, ids, yes),
             (true, false) => anyhow::bail!("`--done` deletes all completed tasks and takes no task ids"),
             (false, true) => anyhow::bail!("no task ids given; e.g. `rusk del 1,2,3`, or `rusk del --done`"),
         }
@@ -250,13 +268,15 @@ impl HandlerCLI {
         }
     }
 
+    /// What the editor made of a task: the date and text to store, and the
+    /// buffer they were read from (what its draft holds).
     #[cfg(feature = "interactive")]
     fn interactive_edit_text(
         current: &str,
         task_id: TaskId,
         task_date: Option<chrono::NaiveDate>,
         allow_skip: bool,
-    ) -> Result<Option<(Option<chrono::NaiveDate>, String)>> {
+    ) -> Result<Option<(Option<chrono::NaiveDate>, String, String)>> {
         let base_prefill = Self::edit_prefill(current, task_date);
         let edited = Self::run_editor_with_draft(EditorSession {
             draft_key: &format!("task-{task_id}"),
@@ -274,23 +294,25 @@ impl HandlerCLI {
         let (parsed_date, stripped) = Self::extract_leading_date(&edited, task_date);
         // If user removed all body text but kept the date, fall back to the
         // original text so the task never becomes empty on a date-only edit.
-        let new_text = if stripped.trim().is_empty() {
-            current.to_string()
-        } else {
-            stripped
+        // A text is stored without whitespace at its edges (see
+        // `TaskManager::add_task_full`).
+        let new_text = match stripped.trim() {
+            "" => current.to_string(),
+            text => text.to_string(),
         };
         // The buffer cannot hold a tab or a CR (both are normalized on the
         // way in), so a text that differs from the stored one by nothing but
-        // that normalization is not an edit: the editor showed it as unchanged
-        // and reported no changes to discard.
+        // that normalization — or by whitespace at its edges, which a text
+        // stored before it was trimmed may have — is not an edit: the editor
+        // showed it as unchanged and reported no changes to discard.
         let normalized_current =
             super::editor::text_ops::split_multi_line_prefill(current).join("\n");
-        let new_text = if new_text != current && new_text == normalized_current {
+        let new_text = if new_text != current && new_text == normalized_current.trim() {
             current.to_string()
         } else {
             new_text
         };
-        Ok(Some((parsed_date, new_text)))
+        Ok(Some((parsed_date, new_text, edited)))
     }
 
     #[cfg(feature = "interactive")]
@@ -348,7 +370,7 @@ impl HandlerCLI {
             let current_date = tm.tasks()[idx].date;
 
             match Self::interactive_edit_text(&current_text, *id, current_date, allow_skip) {
-                Ok(Some((new_date, new_text)))
+                Ok(Some((new_date, new_text, buffer)))
                     if new_text != current_text || new_date != current_date =>
                 {
                     // Saved right away, against the database as it is now:
@@ -356,27 +378,28 @@ impl HandlerCLI {
                     // later Esc or Ctrl+C in this batch must not take a
                     // confirmed edit with it. Success is reported only
                     // once the edit is stored.
+                    let slot = Self::draft_slot(
+                        &format!("task-{id}"),
+                        &Self::edit_prefill(&current_text, current_date),
+                    );
                     tm.edit_task_as_seen(
                         *id,
                         (&current_text, current_date),
                         (&new_text, new_date),
                     )
                     .map_err(|e| {
-                        Self::draft_survives_failed_save(e, &format!("rusk edit {id}"))
+                        Self::draft_survives_failed_save(e, &slot, &buffer, &format!("rusk edit {id}"))
                     })?;
                     // Stored: the draft has done its job.
-                    super::editor::draft::remove(&Self::draft_slot(
-                        &format!("task-{id}"),
-                        &Self::edit_prefill(&current_text, current_date),
-                    ));
+                    super::editor::draft::remove(&slot);
                     any_changed = true;
-                    println!("{} {}", theme().success.paint("Edited task:"), id);
+                    outln!("{} {}", theme().success.paint("Edited task:"), id)?;
                 }
                 Ok(_) => {
-                    println!("{} {}", theme().notice.paint("Task unchanged:"), id);
+                    outln!("{} {}", theme().notice.paint("Task unchanged:"), id)?;
                 }
                 Err(e) => {
-                    if Self::handle_skip_task_error(&e, *id) {
+                    if Self::handle_skip_task_error(&e, *id)? {
                         continue;
                     }
                     return Err(e);
@@ -384,32 +407,81 @@ impl HandlerCLI {
             }
         }
 
-        Self::print_not_found_ids(&not_found);
+        Self::print_not_found_ids(&not_found)?;
         if any_changed {
             // Blank separator comes from the list header's leading newline.
-            Self::handle_list_tasks(tm.tasks(), crate::config::config().compact);
+            Self::handle_list_tasks(tm.tasks(), crate::config::config().compact)?;
         }
         Ok(())
     }
 
-    fn print_deleted(count: usize, suffix: &str) {
-        println!(
+    fn print_deleted(count: usize, suffix: &str) -> Result<()> {
+        outln!(
             "{}{}{}",
             theme().accent.paint("Deleted "),
             theme().emphasis.paint(&count.to_string()),
             theme().accent.paint(suffix)
-        );
+        )
     }
 
-    fn delete_all_done(tm: &mut TaskManager) -> Result<()> {
-        #[cfg(feature = "interactive")]
-        {
-            let done: Vec<Task> = tm.tasks().iter().filter(|t| t.done).cloned().collect();
-            if done.is_empty() {
-                println!("{}", theme().warning.paint("No done tasks to delete."));
-                return Ok(());
-            }
+    /// `rusk del` asks before it deletes, on the terminal; without one there
+    /// is nobody to answer (REVIEW №69). That is an error before anything
+    /// is asked, and it names the way to delete without asking.
+    #[cfg(feature = "interactive")]
+    fn check_can_ask() -> Result<()> {
+        if Self::on_a_terminal() {
+            return Ok(());
+        }
+        anyhow::bail!(
+            "`rusk del` asks before it deletes, and there is no terminal to ask on; \
+             pass --yes to delete without asking"
+        )
+    }
 
+    /// The tasks of `tasks` the user agrees to delete, asked one by one.
+    #[cfg(feature = "interactive")]
+    fn confirm_each(tasks: Vec<Task>) -> Result<Vec<Task>> {
+        Self::check_can_ask()?;
+        let mut confirmed = Vec::new();
+        for task in tasks {
+            let prompt = Self::print_delete_confirmation_dialog(&task.text, task.id)?;
+            if Self::read_confirmation(&prompt)? {
+                confirmed.push(task);
+            } else {
+                outln!(
+                    "{} {}{}",
+                    theme().notice.paint("Canceled deletion of task"),
+                    theme().emphasis.paint(&task.id.to_string()),
+                    theme().notice.paint(".")
+                )?;
+            }
+        }
+        Ok(confirmed)
+    }
+
+    /// A deleted task has nothing left to restore a draft into, and its id
+    /// will be handed to a new one.
+    fn forget_drafts(tasks: &[Task], outcome: &crate::storage::ConfirmedDeletion) {
+        #[cfg(feature = "interactive")]
+        for task in tasks.iter().filter(|t| outcome.deleted.contains(&t.id)) {
+            super::editor::draft::remove(&Self::draft_slot(
+                &format!("task-{}", task.id),
+                &Self::edit_prefill(&task.text, task.date),
+            ));
+        }
+        #[cfg(not(feature = "interactive"))]
+        let _ = (tasks, outcome);
+    }
+
+    fn delete_all_done(tm: &mut TaskManager, yes: bool) -> Result<()> {
+        let done: Vec<Task> = tm.tasks().iter().filter(|t| t.done).cloned().collect();
+        if done.is_empty() {
+            return outln!("{}", theme().warning.paint("No done tasks to delete."));
+        }
+
+        #[cfg(feature = "interactive")]
+        if !yes {
+            Self::check_can_ask()?;
             let confirmed = Self::read_confirmation(&format!(
                 "{}{}{} {}",
                 theme().accent.paint("Delete all done tasks ("),
@@ -418,37 +490,30 @@ impl HandlerCLI {
                 Self::yn_hint()
             ))?;
             if !confirmed {
-                println!("{}", theme().notice.paint("Canceled."));
-                return Ok(());
+                return outln!("{}", theme().notice.paint("Canceled."));
             }
-
-            // Exactly the tasks that were counted in the prompt: one that
-            // another process has reopened, rewritten or marked done while
-            // the prompt was waiting is not what the user agreed to delete.
-            let outcome =
-                tm.delete_confirmed(&done, |shown, now| now.done && now.text == shown.text)?;
-            if !outcome.deleted.is_empty() {
-                Self::print_deleted(outcome.deleted.len(), " done tasks.");
-            }
-            Self::report_unconfirmed(&outcome)
         }
-
+        // A build without a terminal UI has nothing to ask with: it deletes
+        // as told.
         #[cfg(not(feature = "interactive"))]
-        {
-            let deleted = tm.delete_all_done()?;
-            if deleted > 0 {
-                Self::print_deleted(deleted, " done tasks.");
-            } else {
-                println!("{}", theme().warning.paint("No done tasks to delete."));
-            }
-            Ok(())
+        let _ = yes;
+
+        // Exactly the tasks that were counted: one that another process has
+        // reopened, rewritten or marked done meanwhile (while the prompt was
+        // waiting) is not what the user agreed to delete.
+        let outcome =
+            tm.delete_confirmed(&done, |shown, now| now.done && now.text == shown.text)?;
+        Self::forget_drafts(&done, &outcome);
+        if !outcome.deleted.is_empty() {
+            Self::print_deleted(outcome.deleted.len(), " done tasks.")?;
         }
+        Self::report_unconfirmed(&outcome)
     }
 
-    /// Tasks that were confirmed for deletion but are no longer the tasks
-    /// the prompt showed. Already deleted ones are fine; changed ones were
-    /// kept, and that is an error: the command did not do what was asked.
-    #[cfg(feature = "interactive")]
+    /// Tasks that were to be deleted but are no longer the tasks read when
+    /// the command started (and shown by the prompt). Already deleted ones
+    /// are fine; changed ones were kept, and that is an error: the command
+    /// did not do what was asked.
     fn report_unconfirmed(outcome: &crate::storage::ConfirmedDeletion) -> Result<()> {
         let list = |ids: &[TaskId]| {
             ids.iter()
@@ -457,90 +522,59 @@ impl HandlerCLI {
                 .join(" ")
         };
         if !outcome.gone.is_empty() {
-            println!(
+            outln!(
                 "{} {}",
                 theme()
                     .warning
                     .paint("Already deleted by another process, IDs:"),
                 list(&outcome.gone)
-            );
+            )?;
         }
         match outcome.changed.as_slice() {
             [] => Ok(()),
             [id] => anyhow::bail!(
-                "task {id} was changed by another process after you confirmed; \
+                "task {id} was changed by another process meanwhile; \
                  it was not deleted — check `rusk list` and run the command again"
             ),
             ids => anyhow::bail!(
-                "tasks {} were changed by another process after you confirmed; \
+                "tasks {} were changed by another process meanwhile; \
                  they were not deleted — check `rusk list` and run the command again",
                 list(ids)
             ),
         }
     }
 
-    fn delete_by_ids(tm: &mut TaskManager, ids: Vec<TaskId>) -> Result<()> {
+    fn delete_by_ids(tm: &mut TaskManager, ids: Vec<TaskId>, yes: bool) -> Result<()> {
         let mut not_found: Vec<TaskId> = Vec::new();
+        let mut found: Vec<Task> = Vec::new();
+        for id in ids {
+            match tm.find_task_by_id(id) {
+                Some(idx) => found.push(tm.tasks()[idx].clone()),
+                None => not_found.push(id),
+            }
+        }
 
         #[cfg(feature = "interactive")]
-        {
-            let mut to_delete: Vec<Task> = Vec::new();
-            for &id in &ids {
-                let Some(idx) = tm.find_task_by_id(id) else {
-                    not_found.push(id);
-                    continue;
-                };
-                let task = &tm.tasks()[idx];
-                let prompt = Self::print_delete_confirmation_dialog(&task.text, task.id);
-                if Self::read_confirmation(&prompt)? {
-                    to_delete.push(task.clone());
-                } else {
-                    print!("{} ", theme().notice.paint("Canceled deletion of task"));
-                    print!("{}", theme().emphasis.paint(&id.to_string()));
-                    println!("{}", theme().notice.paint("."));
-                }
-            }
-
-            let mut outcome = crate::storage::ConfirmedDeletion::default();
-            if !to_delete.is_empty() {
-                // The prompts showed texts: only a task that still has the
-                // text that was confirmed is deleted.
-                outcome = tm.delete_confirmed(&to_delete, |shown, now| now.text == shown.text)?;
-                if !outcome.deleted.is_empty() {
-                    Self::print_deleted(outcome.deleted.len(), " task(s).");
-                }
-                // A task that is gone has nothing left to restore into,
-                // and its id will be handed to a new one.
-                for task in to_delete.iter().filter(|t| outcome.deleted.contains(&t.id)) {
-                    super::editor::draft::remove(&Self::draft_slot(
-                        &format!("task-{}", task.id),
-                        &Self::edit_prefill(&task.text, task.date),
-                    ));
-                }
-            }
-            Self::print_not_found_ids(&not_found);
-            Self::report_unconfirmed(&outcome)
-        }
-
+        let found = if yes || found.is_empty() {
+            found
+        } else {
+            Self::confirm_each(found)?
+        };
         #[cfg(not(feature = "interactive"))]
-        {
-            let to_delete: Vec<TaskId> = ids
-                .iter()
-                .copied()
-                .filter(|&id| tm.find_task_by_id(id).is_some())
-                .collect();
-            not_found.extend(ids.iter().filter(|id| !to_delete.contains(id)));
-            if !to_delete.is_empty() {
-                let gone = tm.delete_tasks(to_delete.clone())?;
-                let deleted_count = to_delete.len() - gone.len();
-                if deleted_count > 0 {
-                    Self::print_deleted(deleted_count, " task(s).");
-                }
-                not_found.extend(gone);
+        let _ = yes;
+
+        let mut outcome = crate::storage::ConfirmedDeletion::default();
+        if !found.is_empty() {
+            // Only a task that still has the text that was shown (and
+            // confirmed) is deleted.
+            outcome = tm.delete_confirmed(&found, |shown, now| now.text == shown.text)?;
+            Self::forget_drafts(&found, &outcome);
+            if !outcome.deleted.is_empty() {
+                Self::print_deleted(outcome.deleted.len(), " task(s).")?;
             }
-            Self::print_not_found_ids(&not_found);
-            Ok(())
         }
+        Self::print_not_found_ids(&not_found)?;
+        Self::report_unconfirmed(&outcome)
     }
 
     pub fn handle_mark_tasks(tm: &mut TaskManager, ids: Vec<TaskId>, priority: bool) -> Result<()> {
@@ -550,58 +584,53 @@ impl HandlerCLI {
             tm.mark_tasks(ids)?
         };
 
-        for (id, _) in marked {
-            if let Some(idx) = tm.find_task_by_id(id) {
-                let task = &tm.tasks()[idx];
-                let status = if task.done {
-                    "done"
-                } else if task.priority {
-                    "priority"
-                } else {
-                    "undone"
-                };
-                let prefix = format!(
-                    "{} {}: ",
-                    theme().success.paint(&format!("Marked task as {status}:")),
-                    id
-                );
-                let suffix = Self::after_suffix(task).map(|s| format!(" {s}"));
-                Self::print_task_text_with_wrapping_suffixed(
-                    &prefix,
-                    &task.text,
-                    suffix.as_deref(),
-                );
-            }
+        // What the toggle did to its flag, not where the task ended up: the
+        // list shows done before priority, and "undone" for a priority taken
+        // off told the wrong story (REVIEW №74).
+        for (id, now_set) in marked {
+            let Some(idx) = tm.find_task_by_id(id) else {
+                continue;
+            };
+            let task = &tm.tasks()[idx];
+            let what = match (priority, now_set) {
+                (false, true) => "Marked task as done:",
+                (false, false) => "Marked task as undone:",
+                (true, true) => "Marked task as priority:",
+                (true, false) => "Removed priority from task:",
+            };
+            let heading = Self::task_heading(theme().success.paint(what), id);
+            let suffix = Self::after_suffix(task).map(|s| format!(" {s}"));
+            Self::print_task_text_with_wrapping_suffixed(&heading, &task.text, suffix.as_deref())?;
         }
 
-        Self::print_not_found_ids(&not_found);
-        Ok(())
+        Self::print_not_found_ids(&not_found)
     }
 
-    /// Prints a " - {label}: {new}" report line, appending "(was: ...)" when
-    /// `old` is given. The old value "empty" gets emphasis styling only when
-    /// `emphasize_empty` is set (the changed-from-empty branch).
-    fn print_field_line(label: &str, new_display: ColoredString, old: Option<&str>, emphasize_empty: bool) {
-        let label = format!("- {label}:");
+    /// A ` - <label>: <value>` line of the `edit` report, ending in
+    /// `(was: <old>)` when the value changed.
+    fn field_line(label: &str, value: &str, old: Option<&str>) -> String {
+        let line = format!(" {} {}", theme().info.paint(&format!("- {label}:")), value.bold());
         match old {
-            None => println!(" {} {}", theme().info.paint(&label), new_display),
-            Some(old) if emphasize_empty && old == "empty" => println!(
-                " {} {} {} {} {} {}",
-                theme().info.paint(&label),
-                new_display,
-                "(".normal(),
-                theme().info.paint("was:"),
-                theme().emphasis.paint(old).bold(),
-                ")".normal()
-            ),
-            Some(old) => println!(
-                " {} {} {} {} {}",
-                theme().info.paint(&label),
-                new_display,
-                "(".normal(),
-                theme().info.paint(&format!("was: {}", old)),
-                ")".normal()
-            ),
+            None => line,
+            Some(old) => {
+                let old = if old == "empty" {
+                    theme().emphasis.paint(old).bold()
+                } else {
+                    theme().info.paint(old)
+                };
+                format!("{line} {}{}{}", theme().info.paint("(was: "), old, theme().info.paint(")"))
+            }
+        }
+    }
+
+    /// The report line for a field that `edit` was asked to set: its value,
+    /// "cleared" when a value went away, and what it was when it changed.
+    /// Clearing a value that was not there changes nothing (REVIEW №134).
+    fn changed_field_line(label: &str, old: &str, new: &str) -> String {
+        match (old, new) {
+            _ if old == new => Self::field_line(label, new, None),
+            (_, "empty") => Self::field_line(label, "cleared", Some(old)),
+            _ => Self::field_line(label, new, Some(old)),
         }
     }
 
@@ -624,16 +653,12 @@ impl HandlerCLI {
         date: Option<String>,
         after: Option<Vec<TaskId>>,
     ) -> Result<()> {
-        let mut old_dates: Vec<(TaskId, Option<chrono::NaiveDate>)> = Vec::new();
-        let mut old_afters: Vec<(TaskId, Vec<TaskId>)> = Vec::new();
-        for &id in &ids {
-            if let Some(idx) = tm.find_task_by_id(id) {
-                old_dates.push((id, tm.tasks()[idx].date));
-                old_afters.push((id, tm.tasks()[idx].after.clone()));
-            }
-        }
+        // Each task as it was, for the report of what changed.
+        let before: Vec<Task> = ids
+            .iter()
+            .filter_map(|&id| tm.find_task_by_id(id).map(|idx| tm.tasks()[idx].clone()))
+            .collect();
 
-        let is_clearing_date = date.as_deref().is_some_and(is_cli_date_clear_value);
         if let Some(d) = &date
             && !is_cli_date_clear_value(d)
         {
@@ -641,274 +666,88 @@ impl HandlerCLI {
         }
         let date_change_requested = date.is_some();
         let after_change_requested = after.is_some();
-        let is_clearing_after = after.as_deref().is_some_and(<[TaskId]>::is_empty);
 
         let (edited, unchanged, not_found) = tm.edit_tasks_with_after(ids, text, date, after)?;
         let any_edited = !edited.is_empty();
 
-        for id in edited {
-            if let Some(idx) = tm.find_task_by_id(id) {
-                let task = &tm.tasks()[idx];
-                let old_date = old_dates
-                    .iter()
-                    .find(|(i, _)| *i == id)
-                    .and_then(|(_, d)| *d);
-                let new_date = task.date;
-
-                let prefix = format!("{} {}: ", theme().success.paint("Edited task:"), id);
-                Self::print_task_text_with_wrapping(&prefix, &task.text);
-
-                if date_change_requested {
-                    if is_clearing_date {
-                        let old_date_str = Self::format_date_for_display(old_date);
-                        Self::print_field_line("date", "cleared".bold(), Some(&old_date_str), false);
-                    } else if new_date != old_date {
-                        let old_date_str = Self::format_date_for_display(old_date);
-                        let new_date_str = Self::format_date_for_display(new_date);
-                        Self::print_field_line("date", new_date_str.bold(), Some(&old_date_str), true);
-                    } else {
-                        let date_str = Self::format_date_for_display(new_date);
-                        Self::print_field_line("date", date_str.bold(), None, false);
-                    }
-                }
-
-                if after_change_requested {
-                    let old_after = old_afters
-                        .iter()
-                        .find(|(i, _)| *i == id)
-                        .map(|(_, a)| a.as_slice())
-                        .unwrap_or(&[]);
-                    if is_clearing_after {
-                        let old_str = Self::format_after_for_display(old_after);
-                        Self::print_field_line("after", "cleared".bold(), Some(&old_str), false);
-                    } else if task.after != old_after {
-                        let old_str = Self::format_after_for_display(old_after);
-                        let new_str = Self::format_after_for_display(&task.after);
-                        Self::print_field_line("after", new_str.bold(), Some(&old_str), true);
-                    } else {
-                        let after_str = Self::format_after_for_display(&task.after);
-                        Self::print_field_line("after", after_str.bold(), None, false);
-                    }
-                }
+        let reports = edited
+            .iter()
+            .map(|&id| (id, theme().success.paint("Edited task:")))
+            .chain(unchanged.iter().map(|&id| (id, theme().notice.paint("Task unchanged:"))));
+        for (id, what) in reports {
+            let Some(task) = tm.find_task_by_id(id).map(|idx| &tm.tasks()[idx]) else {
+                continue;
+            };
+            let old = before.iter().find(|t| t.id == id).unwrap_or(task);
+            let mut lines = vec![];
+            if date_change_requested {
+                lines.push(Self::changed_field_line(
+                    "date",
+                    &Self::format_date_for_display(old.date),
+                    &Self::format_date_for_display(task.date),
+                ));
+            }
+            if after_change_requested {
+                lines.push(Self::changed_field_line(
+                    "after",
+                    &Self::format_after_for_display(&old.after),
+                    &Self::format_after_for_display(&task.after),
+                ));
+            }
+            Self::print_task_text_with_wrapping(&Self::task_heading(what, id), &task.text)?;
+            for line in lines {
+                outln!("{line}")?;
             }
         }
 
-        for id in unchanged {
-            if let Some(idx) = tm.find_task_by_id(id) {
-                let task = &tm.tasks()[idx];
-                let current_date = task.date;
-
-                let prefix = format!("{} ", theme().notice.paint("Task already has this content:"));
-                Self::print_task_text_with_wrapping(&prefix, &task.text);
-
-                if date_change_requested {
-                    let date_str = Self::format_date_for_display(current_date);
-                    Self::print_field_line("date", date_str.bold(), None, false);
-                }
-                if after_change_requested {
-                    let after_str = Self::format_after_for_display(&task.after);
-                    Self::print_field_line("after", after_str.bold(), None, false);
-                }
-            }
-        }
-
-        Self::print_not_found_ids(&not_found);
+        Self::print_not_found_ids(&not_found)?;
         if any_edited {
             // Blank separator comes from the list header's leading newline.
-            Self::handle_list_tasks(tm.tasks(), crate::config::config().compact);
+            Self::handle_list_tasks(tm.tasks(), crate::config::config().compact)?;
         }
         Ok(())
     }
 
-    pub fn handle_list_tasks(tasks: &[Task], compact: bool) {
+    pub fn handle_list_tasks(tasks: &[Task], compact: bool) -> Result<()> {
         let all: Vec<&Task> = tasks.iter().collect();
-        Self::render_task_list(&all, compact, None);
+        Self::render_task_list(&all, compact, None)
     }
 
-    /// Case-insensitive phrase search: prints matching tasks in the usual list
-    /// format (always full text, never compact) with matches highlighted.
-    /// With `only_ids`, prints bare task IDs one per line (script-friendly).
-    pub fn handle_search_tasks(tasks: &[Task], query: &str, only_ids: bool) {
-        let needle: Vec<char> = query.to_lowercase().chars().collect();
+    /// Case-insensitive phrase search (see [`crate::search`]): prints
+    /// matching tasks in the usual list format (always full text, never
+    /// compact) with matches highlighted. With `only_ids`, prints bare task
+    /// IDs one per line (script-friendly).
+    pub fn handle_search_tasks(tasks: &[Task], query: &str, only_ids: bool) -> Result<()> {
+        let query = Query::new(query);
         let matched: Vec<&Task> = tasks
             .iter()
             // Matched against the text as it is shown (escaped), so what
             // search finds is what it can highlight.
-            .filter(|t| Self::find_ci(&crate::printable::escape(&t.text), &needle, 0).is_some())
+            .filter(|t| query.matches(&crate::printable::escape(&t.text)))
             .collect();
 
         if only_ids {
-            for task in &matched {
-                println!("{}", task.id);
-            }
-            return;
+            let ids: String = matched.iter().map(|task| format!("{}\n", task.id)).collect();
+            return out!("{ids}");
         }
 
         if matched.is_empty() {
-            println!("{}", theme().warning.paint("No matching tasks"));
-            return;
+            return outln!("{}", theme().warning.paint("No matching tasks"));
         }
 
-        Self::render_task_list(&matched, false, Some(&needle));
+        Self::render_task_list(&matched, false, Some(&query))
     }
 
-    fn render_task_list(tasks: &[&Task], compact: bool, highlight: Option<&[char]>) {
-        if tasks.is_empty() {
-            println!("{}", theme().warning.paint("No tasks"));
-            return;
-        }
-
-        // The id column is as wide as the widest id on screen (never narrower
-        // than the two digits the header needs), so three- and four-digit ids
-        // keep the date and the text where the header promises them and the
-        // continuation indent below matches the first line.
-        let id_width = tasks
-            .iter()
-            .map(|t| t.id.to_string().len())
-            .max()
-            .unwrap_or(ID_COLUMN_MIN_WIDTH)
-            .max(ID_COLUMN_MIN_WIDTH);
-        let id_pad = " ".repeat(id_width - ID_COLUMN_MIN_WIDTH);
-        let max_line_width = Self::get_max_line_width();
-
-        println!(
-            "\n  #  {}{}    {}       {}",
-            id_pad,
-            theme().list_header.paint("id"),
-            theme().list_header.paint("date"),
-            theme().list_header.paint("task")
-        );
-        let rule = (LIST_RULE_WIDTH + id_width - ID_COLUMN_MIN_WIDTH)
-            .min(max_line_width.saturating_sub(2));
-        println!("  {}", "─".repeat(rule));
-
-        // "  " + status + " " + id + "  " + date(9) + "  "
-        let prefix_width = LIST_PREFIX_FIXED_WIDTH + id_width;
-        let available_width = max_line_width
-            .saturating_sub(prefix_width)
-            .saturating_sub(4);
-
-        for task in tasks {
-            let status = if task.done {
-                theme().done_marker.paint("✔")
-            } else if task.priority {
-                theme().priority_marker.paint("p").bold()
-            } else {
-                "•".normal()
-            };
-
-            let date_colored = task
-                .date
-                .map(|d| Self::colored_short_date(d, task.done))
-                .unwrap_or_else(|| "".normal());
-
-            // Escaped before anything measures or highlights it: the text is
-            // data, and a control character in it must not reach the terminal.
-            let shown = crate::printable::escape(&task.text);
-            let text_for_list = if compact {
-                Self::trim_first_line_for_compact_list(shown.lines().next().unwrap_or(""))
-            } else {
-                &shown
-            };
-
-            // Dependencies land right after the text (ids bold, parens not):
-            // on the single shown line in compact mode, otherwise after the
-            // last line. Compact mode shows one line only, so the note takes
-            // its room out of the wrap budget instead of running past the
-            // terminal width.
-            let after_note = Self::after_suffix(task).map(|s| format!(" {s}"));
-            let after_width = after_note.as_deref().map_or(0, Self::display_width);
-            // A note worth more than half the line would leave a stub of a
-            // task instead of a compact line: then it goes below, like in the
-            // full view, rather than eating the text.
-            let wrap_width = if compact && after_width * 2 <= available_width {
-                available_width - after_width
-            } else {
-                available_width
-            };
-            let wrapped_lines = Self::wrap_text_by_words(text_for_list, wrap_width);
-
-            let first_line: &str = if compact {
-                wrapped_lines
-                    .first()
-                    .map(|s| Self::trim_first_line_for_compact_list(s))
-                    .unwrap_or("")
-            } else {
-                wrapped_lines.first().map(|s| s.as_str()).unwrap_or("")
-            };
-
-            // Done tasks get the id in the marker color too, matching the ✔.
-            let id_theme = if task.done {
-                theme().done_marker
-            } else {
-                theme().task_id
-            };
-
-            let last_line_idx = if compact { 0 } else { wrapped_lines.len().saturating_sub(1) };
-            let last_shown: &str = if compact {
-                first_line
-            } else {
-                wrapped_lines.last().map(|s| s.as_str()).unwrap_or("")
-            };
-            // A note that does not fit after the text gets a line of its own.
-            let note_fits = crate::width::width(last_shown) + after_width <= available_width;
-            let note_on = |i: usize| -> &str {
-                match &after_note {
-                    Some(s) if note_fits && i == last_line_idx => s.as_str(),
-                    _ => "",
-                }
-            };
-
-            // Columns are padded by hand: a styled cell carries invisible
-            // escape bytes, which `{:>width$}` would count as characters.
-            let id_txt = task.id.to_string();
-            let id_lead = " ".repeat(id_width - id_txt.len());
-            let date_txt = date_colored.to_string();
-            let date_lead = " ".repeat(
-                DATE_COLUMN_WIDTH.saturating_sub(Self::display_width(&date_txt)),
-            );
-
-            if !first_line.is_empty() || !wrapped_lines.is_empty() {
-                println!(
-                    "  {} {}{}  {}{}  {}{}",
-                    status,
-                    id_lead,
-                    id_theme.paint(&id_txt).bold(),
-                    date_lead,
-                    date_txt,
-                    Self::highlight_keywords(&Self::maybe_highlight(first_line, highlight)),
-                    note_on(0)
-                );
-            }
-
-            if !compact {
-                for (i, line) in wrapped_lines.iter().enumerate().skip(1) {
-                    println!(
-                        "{}{}{}",
-                        " ".repeat(prefix_width),
-                        Self::maybe_highlight(line, highlight),
-                        note_on(i)
-                    );
-                }
-            }
-
-            if let Some(note) = &after_note
-                && !note_fits
-            {
-                for line in Self::wrap_suffix_alone(note, available_width) {
-                    println!("{}{}", " ".repeat(prefix_width), line);
-                }
-            }
-        }
-
-        println!("\n");
+    fn render_task_list(tasks: &[&Task], compact: bool, query: Option<&Query>) -> Result<()> {
+        let listing = Self::format_task_list(tasks, compact, query, Self::get_max_line_width());
+        out!("{listing}")
     }
 
     /// `rusk list --for-completion-lines`, what the shell completion scripts
     /// read: one line per task, see [`completion_line`].
-    pub fn handle_list_tasks_for_completion(tasks: &[Task]) {
+    pub fn handle_list_tasks_for_completion(tasks: &[Task]) -> Result<()> {
         let listing: String = tasks.iter().map(completion_line).collect();
-        print!("{listing}");
+        out!("{listing}")
     }
 
     /// `rusk list --for-completion`: the listing as rusk 0.7.3 printed it, for
@@ -917,18 +756,20 @@ impl HandlerCLI {
     /// does not start with `<digits>\t` continues the text); fed the escaped
     /// one, they would store `\\` and `\n` in place of a backslash and a
     /// line break.
-    pub fn handle_list_tasks_for_old_completion(tasks: &[Task]) {
+    pub fn handle_list_tasks_for_old_completion(tasks: &[Task]) -> Result<()> {
+        let mut listing = String::new();
         for task in tasks {
             let lines: Vec<&str> = task.text.lines().collect();
             if let Some(first) = lines.first() {
-                println!("{}\t{}", task.id, first);
+                listing.push_str(&format!("{}\t{}\n", task.id, first));
                 for line in lines.iter().skip(1) {
-                    println!("{}", line);
+                    listing.push_str(&format!("{line}\n"));
                 }
             } else {
-                println!("{}\t", task.id);
+                listing.push_str(&format!("{}\t\n", task.id));
             }
         }
+        out!("{listing}")
     }
 
     pub fn handle_restore(tm: &mut TaskManager) -> Result<()> {
@@ -936,12 +777,12 @@ impl HandlerCLI {
     }
 
     #[cfg(feature = "interactive")]
-    fn handle_skip_task_error(e: &anyhow::Error, id: TaskId) -> bool {
+    fn handle_skip_task_error(e: &anyhow::Error, id: TaskId) -> Result<bool> {
         if e.downcast_ref::<crate::error::AppError>() == Some(&crate::error::AppError::SkipTask) {
-            println!("{} {}", theme().warning.paint("Skipped task:"), id);
-            true
+            outln!("{} {}", theme().warning.paint("Skipped task:"), id)?;
+            Ok(true)
         } else {
-            false
+            Ok(false)
         }
     }
 }
@@ -997,6 +838,39 @@ mod tests {
             "7\ta\\\\nb \\\\\\\\ c\\r\\nd\\n\n"
         );
         assert_eq!(completion_line(&task(9, "nul\0byte")), "9\t\n");
+    }
+
+    /// A failed save says the text was kept only if the draft is there; if
+    /// it could not be written either, the report carries the text.
+    #[cfg(feature = "interactive")]
+    #[test]
+    fn a_failed_save_tells_where_the_text_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let slot = crate::cli::editor::draft::Slot {
+            path: dir.path().join("editor-task-1.draft"),
+            key: "task-1".into(),
+            base: String::new(),
+        };
+        let failed = || anyhow::anyhow!("Failed to write the database file");
+
+        let report = |buffer: &str| {
+            format!(
+                "{:#}",
+                HandlerCLI::draft_survives_failed_save(failed(), &slot, buffer, "rusk edit 1")
+            )
+        };
+        let told = report("typed text");
+        assert!(told.contains("could not be kept as a draft") && told.ends_with("\ntyped text"), "{told}");
+
+        // A draft of an earlier session is no copy of this text.
+        crate::cli::editor::draft::write(&slot, "OLD DRAFT").unwrap();
+        let told = report("typed text");
+        assert!(told.contains("could not be kept as a draft") && told.ends_with("\ntyped text"), "{told}");
+
+        crate::cli::editor::draft::write(&slot, "typed text").unwrap();
+        let told = report("typed text");
+        assert!(told.contains("kept as a draft: run `rusk edit 1`"), "{told}");
+        assert!(!told.contains("typed text"), "{told}");
     }
 
     /// What `printf %b` makes of the field is the text again.

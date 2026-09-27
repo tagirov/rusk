@@ -1,5 +1,6 @@
 use chrono::NaiveDate;
 use rusk::cli::HandlerCLI;
+use rusk::search::Query;
 
 /// `colored::control::set_override` is process-global: tests that toggle it
 /// must not run concurrently with each other.
@@ -59,9 +60,9 @@ fn test_wrap_text_by_words_multiple_lines() {
     let text = "This is a very long sentence that should wrap across multiple lines";
     let result = HandlerCLI::wrap_text_by_words(text, 20);
     assert!(result.len() > 1);
-    // All lines should be <= 20 characters (except possibly the last)
+    // Every line fits the 20 terminal cells.
     for line in &result {
-        assert!(line.chars().count() <= 20);
+        assert!(rusk::width::width(line) <= 20, "{line:?}");
     }
 }
 
@@ -265,14 +266,15 @@ fn test_format_date_for_display_none() {
 fn test_format_date_for_display_some() {
     let date = NaiveDate::parse_from_str("15-06-2025", "%d-%m-%Y").unwrap();
     let result = HandlerCLI::format_date_for_display(Some(date));
-    assert_eq!(result, "15-06-2025");
+    // The list's form: every message prints a date the same way.
+    assert_eq!(result, "15-jun-25");
 }
 
 #[test]
 fn test_format_date_for_display_different_date() {
     let date = NaiveDate::parse_from_str("31-12-2024", "%d-%m-%Y").unwrap();
     let result = HandlerCLI::format_date_for_display(Some(date));
-    assert_eq!(result, "31-12-2024");
+    assert_eq!(result, "31-dec-24");
 }
 
 #[test]
@@ -567,67 +569,69 @@ fn test_ml_delete_word_left_at_line_start_joins_with_prev() {
     assert_eq!((row, col), (0, 3));
 }
 
-// --- `rusk search` helpers: case-insensitive find and highlight ---
+// --- `rusk search`: case-insensitive find and highlight ---
 
-fn needle(q: &str) -> Vec<char> {
-    q.to_lowercase().chars().collect()
+/// Byte ranges of what `query` finds in `hay`.
+fn find(hay: &str, query: &str) -> Vec<(usize, usize)> {
+    Query::new(query)
+        .find_all(hay)
+        .into_iter()
+        .map(|r| (r.start, r.end))
+        .collect()
 }
 
 #[test]
-fn test_find_ci_ascii_case_insensitive() {
-    assert_eq!(
-        HandlerCLI::find_ci("Buy Groceries", &needle("groc"), 0),
-        Some((4, 8))
-    );
+fn test_find_ascii_case_insensitive() {
+    assert_eq!(find("Buy Groceries", "groc"), [(4, 8)]);
 }
 
 #[test]
-fn test_find_ci_cyrillic_case_insensitive() {
+fn test_find_cyrillic_case_insensitive() {
     let hay = "мини-таблица по Омега-3";
-    let (start, end) = HandlerCLI::find_ci(hay, &needle("ОМЕГА"), 0).unwrap();
+    let (start, end) = find(hay, "ОМЕГА")[0];
     assert_eq!(&hay[start..end], "Омега");
 }
 
 #[test]
-fn test_find_ci_no_match() {
-    assert_eq!(HandlerCLI::find_ci("hello", &needle("world"), 0), None);
+fn test_find_no_match() {
+    assert_eq!(find("hello", "world"), []);
 }
 
 #[test]
-fn test_find_ci_empty_needle() {
-    assert_eq!(HandlerCLI::find_ci("hello", &[], 0), None);
+fn test_find_empty_query() {
+    assert_eq!(find("hello", ""), []);
+    assert_eq!(find("hello", "   "), []);
 }
 
 #[test]
-fn test_find_ci_from_offset_finds_next_occurrence() {
-    let hay = "abc abc";
-    assert_eq!(HandlerCLI::find_ci(hay, &needle("abc"), 0), Some((0, 3)));
-    assert_eq!(HandlerCLI::find_ci(hay, &needle("abc"), 3), Some((4, 7)));
+fn test_find_every_occurrence() {
+    assert_eq!(find("abc abc", "abc"), [(0, 3), (4, 7)]);
 }
 
 #[test]
-fn test_find_ci_phrase_with_space() {
+fn test_find_phrase_with_space() {
     let hay = "ингридиентами для сравнения";
-    let (start, end) = HandlerCLI::find_ci(hay, &needle("для сравнения"), 0).unwrap();
+    let (start, end) = find(hay, "для сравнения")[0];
     assert_eq!(&hay[start..end], "для сравнения");
 }
 
 #[test]
-fn test_highlight_matches_wraps_all_occurrences() {
+fn test_highlight_wraps_all_occurrences() {
     let _guard = COLOR_OVERRIDE_MUTEX.lock().unwrap();
     colored::control::set_override(true);
-    let out = HandlerCLI::highlight_matches("foo bar Foo", &needle("foo"));
+    let out = HandlerCLI::paint_rows("foo bar Foo", 80, Some(&Query::new("foo")));
     colored::control::unset_override();
     // Both occurrences are colored; the original casing is preserved.
-    assert_eq!(out.matches("\x1b[").count(), 4);
-    assert!(out.contains("Foo"));
-    assert!(HandlerCLI::strip_ansi_codes(&out) == "foo bar Foo");
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].matches("\x1b[").count(), 4);
+    assert!(out[0].contains("Foo"));
+    assert!(HandlerCLI::strip_ansi_codes(&out[0]) == "foo bar Foo");
 }
 
 #[test]
-fn test_highlight_matches_no_match_returns_line_unchanged() {
-    let out = HandlerCLI::highlight_matches("foo bar", &needle("baz"));
-    assert_eq!(out, "foo bar");
+fn test_highlight_no_match_returns_line_unchanged() {
+    let out = HandlerCLI::paint_rows("foo bar", 80, Some(&Query::new("baz")));
+    assert_eq!(out, ["foo bar"]);
 }
 
 #[test]

@@ -101,23 +101,32 @@ rusk add Buy milk --date tomorrow
 rusk add Follow up --date 2w
 rusk add Review --date 10d5w
 
-# View all tasks
+# View all tasks. A new task that gets the id of a deleted one is listed in
+# its place (in a hand-edited file with an order of your own: at the end)
 rusk list
 
 # or simply
 rusk
 
-# Compact view: one line per task (no wraps, trailing punctuation trimmed)
+# Compact view: one line per task (no wraps, trailing punctuation trimmed;
+# `…` marks a task that goes on)
 rusk list --compact
 
-# Search tasks by text (case-insensitive, matches highlighted)
+# Full view for one run, even with `compact = true` in the config
+rusk list --no-compact
+
+# Search tasks by text, matches highlighted. The words are one phrase: case
+# does not matter (ΟΔΟΣ finds οδος, STRASSE finds Straße), nor does the
+# whitespace between them (the list shows a run of spaces as one); accents do
+# (cafe does not find café)
 rusk search omega
 rusk s buy milk
 
 # Print only the IDs of matching tasks (script-friendly)
 rusk s --id omega
 
-# Mark a task as done
+# Mark a task as done (`mark` says what it changed: done, undone, priority
+# or priority removed)
 rusk mark 1
 
 # Mark a task as undone (toggle)
@@ -158,11 +167,16 @@ rusk edit 1 --date +2w
 rusk edit 1 -- -x means exclude
 rusk edit 1 -- 42
 
-# Delete a task
+# Delete a task: asks for confirmation on the terminal first
 rusk del 1
 
 # Delete all completed tasks
 rusk del --done
+
+# Delete without asking. Without a terminal to ask on (a script, a pipe)
+# `rusk del` refuses instead of guessing, and `--yes` is how to delete there
+rusk del 1 --yes
+rusk del --done -y
 
 # Get help
 rusk --help
@@ -277,7 +291,9 @@ rusk sync pull --force # discard local changes in favor of the remote
 - `rusk edit` in the editor saves each task as soon as you press Ctrl+S. If
   another process changed or deleted that task while the editor was open,
   nothing is overwritten: the command stops and your text is kept as a
-  draft, offered again by the next `rusk edit <id>`
+  draft, offered again by the next `rusk edit <id>` (if not even the draft
+  can be written — a read-only directory — the text is printed with the
+  error instead)
 - `rusk del` deletes what you confirmed: a task that was changed, or deleted
   and its id reused, while the prompt was waiting is reported instead
 - Anything else that writes the file (an editor, a sync tool) is noticed as
@@ -322,7 +338,9 @@ rusk c (completions)
 -d (--date)
 -a (--after)
 -c (--compact)
+   --no-compact
 -p (--priority)
+-y (--yes)
 
 ```
 
@@ -522,15 +540,27 @@ git_backend = true                      # commit every save of a local file data
 
 ### Disabling Colors
 
-Set `RUSK_NO_COLOR` to any non-empty value to disable ANSI colors in all output (dialogs, task list, errors):
+Set `RUSK_NO_COLOR` to any non-empty value to disable ANSI colors in all output (dialogs, task list, errors, `--help` and argument errors too):
 
 ```bash
 export RUSK_NO_COLOR=1
 ```
 
-The standard `NO_COLOR` environment variable (see [no-color.org](https://no-color.org)) is also respected.
-The configuration file offers the same switch as `no_color = true` (the
-environment variables win over the config).
+The standard `NO_COLOR` environment variable (see [no-color.org](https://no-color.org)) is also respected;
+like `RUSK_NO_COLOR`, it counts only when it is not empty. The configuration file offers the same switch
+as `no_color = true`. Once colors are off this way, nothing turns them back on for the run — not even
+`CLICOLOR_FORCE`, which otherwise forces colors into a pipe; `CLICOLOR=0` turns them off as well.
+
+### Output in Scripts
+
+What `rusk` prints goes to a pipe as well as to a terminal. A reader that stops
+reading (`rusk list | head -2`) ends the command quietly with exit code 0 —
+whatever the command changed is saved before anything is printed — while an
+output that cannot be written (a full disk) is an error, exit code 1.
+Questions are only asked on a terminal (standard input and output both): `rusk
+del` without one refuses and asks for `--yes`, and the editors (`rusk add`,
+`rusk edit <id>`) need one too. `TERM=dumb` turns colors off like `NO_COLOR`,
+unless `CLICOLOR_FORCE` is set.
 
 <br />
 

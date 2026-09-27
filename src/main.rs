@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use clap::{CommandFactory, Parser};
+use clap::{CommandFactory, FromArgMatches};
 #[cfg(feature = "completions")]
 use colored::*;
 use rusk::{
@@ -8,25 +8,37 @@ use rusk::{
     cli::HandlerCLI,
     config,
     error::AppError,
-    is_cli_date_help_value, parse_edit_args, parse_id_args, parse_id_list,
+    is_cli_date_help_value, output, parse_edit_args, parse_id_args, parse_id_list,
     parser::date::is_cli_date_clear_value,
     windows_console,
 };
 #[cfg(feature = "completions")]
 use rusk::{args::CompletionAction, completions::Shell};
 
+/// The command line as clap reads it, painting its help and errors the way
+/// the rest of the output is painted (see `output::Colors`).
+fn cli_command() -> clap::Command {
+    Cli::command().color(output::colors().clap())
+}
+
 fn print_subcommand_help(name: &str) -> anyhow::Result<()> {
-    let mut cmd = Cli::command();
+    let mut cmd = cli_command();
+    // Built, so the usage line names the subcommand as `rusk add`.
+    cmd.build();
     let sub = cmd
         .find_subcommand_mut(name)
         .with_context(|| format!("missing subcommand {name}"))?;
-    sub.print_long_help()?;
-    Ok(())
+    let help = sub.render_long_help();
+    if output::colors().on {
+        rusk::out!("{}", help.ansi())
+    } else {
+        rusk::out!("{help}")
+    }
 }
 
 /// Prints a CLI error with one blank line before and after (stderr).
 fn eprint_cli_error(msg: impl std::fmt::Display) {
-    eprintln!("\n{}\n", msg);
+    rusk::errln!("\n{}\n", msg);
 }
 
 /// `Error: <msg>` in the theme error color. An error may quote the database
@@ -70,6 +82,9 @@ fn after_ids_or_exit(raw: &str, clear_allowed: bool) -> Vec<TaskId> {
 fn main() {
     match run() {
         Ok(()) => {}
+        // Whoever reads the output stopped reading (`rusk list | head`):
+        // what was asked for is done, and nobody is left to tell.
+        Err(err) if output::is_closed(&err) => std::process::exit(0),
         Err(err) => match err.downcast_ref::<AppError>() {
             Some(AppError::UserCancel) | Some(AppError::SkipTask) => std::process::exit(0),
             Some(AppError::UserAbort) => std::process::exit(130),
@@ -91,25 +106,23 @@ fn run() -> Result<()> {
     let outcome = config::load();
     config::init(outcome.config);
 
-    // RUSK_NO_COLOR: disable ANSI colors when set to any non-empty value
-    // (mirrors NO_COLOR semantics, which `colored` also respects on its own).
-    // The environment wins over `no_color` from the config file; the config
-    // value can only disable colors, never re-enable them.
-    if std::env::var_os("RUSK_NO_COLOR").is_some_and(|v| !v.is_empty())
-        || config::config().no_color
-    {
-        colored::control::set_override(false);
-    }
+    // One decision for all output, clap's help and errors included; the
+    // config can only turn colors off, never back on.
+    output::set_colors(output::Colors::decide(
+        |name| std::env::var_os(name),
+        config::config().no_color,
+        std::io::IsTerminal::is_terminal(&std::io::stdout()),
+    ));
 
-    // After the color override so warnings respect no_color.
+    // After the color decision so warnings respect no_color.
     for warning in &outcome.warnings {
-        eprintln!(
+        rusk::errln!(
             "{}",
             config::theme().warning.paint(&format!("Warning: {warning}"))
         );
     }
 
-    let cli = Cli::parse();
+    let cli = Cli::from_arg_matches(&cli_command().get_matches()).unwrap_or_else(|e| e.exit());
 
     // `sync` loads the database itself (and must not create sample tasks),
     // so intercept it before any TaskManager is created.
@@ -155,16 +168,6 @@ fn run() -> Result<()> {
     // a wrong argument is reported as such, not hidden behind a database
     // that cannot be read, and a remote database is not contacted for it.
     match &cli.command {
-        Some(Command::Add {
-            text,
-            date: Some(d),
-            ..
-        }) if text.is_empty() && is_cli_date_clear_value(d) => {
-            exit_with_error(
-                "`-d _` cannot be used when adding a task with no text: there is no date to clear. \
-                 Omit `--date` or use `rusk add` with a non-empty first line in the editor; see `rusk add --help`.",
-            );
-        }
         // `-d -h` / `-a -h`: the value slot takes `-h` (the options accept
         // values that start with `-`), so the help is asked for here.
         Some(Command::Add { date, after, .. })
@@ -192,10 +195,17 @@ fn run() -> Result<()> {
     match cli.command {
         Some(Command::Add { text, date, after }) => {
             let after_ids = after.as_deref().map_or_else(Vec::new, |raw| after_ids_or_exit(raw, false));
+            #[cfg(not(feature = "interactive"))]
+            if text.is_empty() {
+                exit_with_error(
+                    "`rusk add` without text opens the editor, and this build has no \
+                     'interactive' feature. Pass the task on the command line, e.g. \
+                     `rusk add buy milk`.",
+                );
+            }
             #[cfg(feature = "interactive")]
             if text.is_empty() {
-                use std::io::IsTerminal;
-                if !std::io::stdout().is_terminal() {
+                if !HandlerCLI::on_a_terminal() {
                     exit_with_error(
                         "interactive `rusk add` requires a terminal. \
                          Pass the task on the command line, e.g. `rusk add buy milk`.",
@@ -207,7 +217,7 @@ fn run() -> Result<()> {
             let mut tm = TaskManager::new()?;
             HandlerCLI::handle_add_task(&mut tm, text, date, after_ids)?;
         }
-        Some(Command::Del { ids, done }) => {
+        Some(Command::Del { ids, done, yes }) => {
             // clap rejects `--done` together with ids.
             let ids = if done {
                 Vec::new()
@@ -218,7 +228,7 @@ fn run() -> Result<()> {
                 )
             };
             let mut tm = TaskManager::new()?;
-            HandlerCLI::handle_delete_tasks(&mut tm, ids, done)?;
+            HandlerCLI::handle_delete_tasks(&mut tm, ids, done, yes)?;
         }
         Some(Command::Mark { ids, priority }) => {
             let ids = ids_or_exit(parse_id_args(&ids), "`rusk mark 1,2,3`");
@@ -241,15 +251,19 @@ fn run() -> Result<()> {
 
             if text.is_none() && date.is_none() && after.is_none() {
                 #[cfg(not(feature = "interactive"))]
-                exit_with_error("Interactive editing requires the 'interactive' feature");
+                exit_with_error(
+                    "`rusk edit` without new text opens the editor, and this build has no \
+                     'interactive' feature. Pass the new text on the command line, e.g. \
+                     `rusk edit 1 buy oat milk`.",
+                );
                 #[cfg(feature = "interactive")]
                 {
                     // The same check `rusk add` makes: without a terminal
                     // the editor would paint into a pipe (and die of a
                     // broken one) or into /dev/null, where nobody can see
-                    // it and Esc looks like success.
-                    use std::io::IsTerminal;
-                    if !std::io::stdout().is_terminal() {
+                    // it and Esc looks like success — or, with no terminal
+                    // to read keys from, fail to set one up.
+                    if !HandlerCLI::on_a_terminal() {
                         exit_with_error(
                             "interactive `rusk edit` requires a terminal. \
                              Pass the new text on the command line, e.g. \
@@ -267,23 +281,26 @@ fn run() -> Result<()> {
             for_completion,
             for_completion_lines,
             compact,
+            no_compact,
         }) => {
             let tm = TaskManager::new()?;
             if for_completion_lines {
-                HandlerCLI::handle_list_tasks_for_completion(tm.tasks());
+                HandlerCLI::handle_list_tasks_for_completion(tm.tasks())?;
             } else if for_completion {
-                HandlerCLI::handle_list_tasks_for_old_completion(tm.tasks());
+                HandlerCLI::handle_list_tasks_for_old_completion(tm.tasks())?;
             } else {
-                HandlerCLI::handle_list_tasks(tm.tasks(), compact || config::config().compact);
+                // clap keeps only the last of `-c` and `--no-compact`.
+                let compact = compact || (!no_compact && config::config().compact);
+                HandlerCLI::handle_list_tasks(tm.tasks(), compact)?;
             }
         }
         Some(Command::Search { query, id }) => {
             let tm = TaskManager::new()?;
-            HandlerCLI::handle_search_tasks(tm.tasks(), &query.join(" "), id);
+            HandlerCLI::handle_search_tasks(tm.tasks(), &query.join(" "), id)?;
         }
         None => {
             let tm = TaskManager::new()?;
-            HandlerCLI::handle_list_tasks(tm.tasks(), config::config().compact);
+            HandlerCLI::handle_list_tasks(tm.tasks(), config::config().compact)?;
         }
         Some(Command::Restore) => unreachable!("handled before the database is loaded"),
         #[cfg(feature = "web")]
@@ -291,18 +308,18 @@ fn run() -> Result<()> {
             let tm = TaskManager::new()?;
             let html = rusk::web::render_static_page(tm.tasks())?;
             if output == "-" {
-                print!("{html}");
+                rusk::out!("{html}")?;
             } else {
                 // Atomic replace where the location allows it: a web server
                 // (or a failed write) never sees a truncated page.
                 rusk::atomic::replace_output_file(std::path::Path::new(&output), html.as_bytes())
                     .map_err(|e| anyhow::anyhow!("Failed to write '{output}': {e}"))?;
-                println!(
+                rusk::outln!(
                     "{} {} ({} tasks)",
                     config::theme().success.paint("Generated"),
                     output,
                     tm.tasks().len()
-                );
+                )?;
             }
         }
         #[cfg(feature = "web")]
@@ -331,46 +348,58 @@ fn handle_completions_install(shells: Vec<Shell>) -> Result<()> {
     let shells_count = shells.len();
     let mut installed_paths = Vec::new();
 
-    for shell in &shells {
-        let script = shell.get_script();
-        let path = shell.get_default_path()?;
-
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create directory '{}'", parent.display()))?;
+    // Said once the scripts are installed, so that an output that fails
+    // cannot stop the installation half way; and said before a failure that
+    // stops it, so that what did get installed is known.
+    let report = |installed: &[(&Shell, std::path::PathBuf)]| -> Result<()> {
+        for (shell, path) in installed {
+            rusk::outln!(
+                "{} {} {}",
+                config::theme().success.paint("✓"),
+                config::theme()
+                    .success
+                    .paint(&format!("{} completion installed to:", shell_name(shell))),
+                path.display()
+            )?;
         }
-
-        std::fs::write(&path, script)
-            .with_context(|| format!("Failed to write completion file '{}'", path.display()))?;
-
-        println!(
-            "{} {} {}",
-            config::theme().success.paint("✓"),
-            config::theme()
-                .success
-                .paint(&format!("{} completion installed to:", shell_name(shell))),
-            path.display()
-        );
-
-        installed_paths.push((shell, path));
+        Ok(())
+    };
+    for shell in &shells {
+        let installed = shell.get_default_path().and_then(|path| {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create directory '{}'", parent.display()))?;
+            }
+            std::fs::write(&path, shell.get_script())
+                .with_context(|| format!("Failed to write completion file '{}'", path.display()))?;
+            Ok(path)
+        });
+        match installed {
+            Ok(path) => installed_paths.push((shell, path)),
+            Err(e) => {
+                report(&installed_paths).ok();
+                return Err(e);
+            }
+        }
     }
+    report(&installed_paths)?;
 
     if shells_count > 1 {
-        println!();
+        rusk::outln!()?;
     }
 
     for (idx, (shell, path)) in installed_paths.iter().enumerate() {
         let instructions = shell.get_instructions(path);
         if shells_count > 1 {
-            println!(
+            rusk::outln!(
                 "{} {}:",
                 config::theme().info.paint("Setup instructions for"),
                 config::theme().info.paint(&shell_name(shell)).bold()
-            );
+            )?;
         }
-        println!("{}", config::theme().info.paint(&instructions));
+        rusk::outln!("{}", config::theme().info.paint(&instructions))?;
         if idx < installed_paths.len() - 1 {
-            println!();
+            rusk::outln!()?;
         }
     }
 
@@ -392,6 +421,5 @@ fn shell_name(shell: &Shell) -> String {
 #[cfg(feature = "completions")]
 fn handle_completions_show(shell: Shell) -> Result<()> {
     let script = shell.get_script();
-    print!("{}", script);
-    Ok(())
+    rusk::out!("{script}")
 }

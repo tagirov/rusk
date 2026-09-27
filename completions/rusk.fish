@@ -474,9 +474,9 @@ function __rusk_complete_mark_del_flags
     if contains -- $sub del d
         # `--done` takes no ids: offered only before any
         if test (count $cmdline) -ge 3; and string match -qr '^[0-9,]+$' -- $cmdline[3..-1]
-            __rusk_complete_flags -h --help
+            __rusk_complete_flags -y --yes -h --help
         else
-            __rusk_complete_flags --done -h --help
+            __rusk_complete_flags --done -y --yes -h --help
         end
     else
         __rusk_complete_flags -p --priority -h --help
@@ -506,7 +506,7 @@ function __rusk_complete_list_restore_flags
     test (count $cmdline) -ge 2; or return
     set -l sub "$cmdline[2]"
     if contains -- $sub list l
-        __rusk_complete_flags -c --compact -h --help
+        __rusk_complete_flags -c --compact --no-compact -h --help
     else
         __rusk_complete_flags -h --help
     end

@@ -9,9 +9,13 @@
 //! [`crate::location`]), except that it cannot be a local path.
 //!
 //! Conflict safety without merge machinery: a state file next to the
-//! database stores the hash of the last synced content. Comparing
-//! local/remote/base classifies the situation as in-sync, fast-forward
-//! (one side changed), or diverged (both changed — push/pull need --force).
+//! database records, for the remote it was synced with, the hash of what
+//! each side held right after that sync — each side as it reads back, since
+//! a format that cannot hold everything (todo.txt, Markdown) stores less
+//! than it was sent (REVIEW №24). A side whose hash moved since has changed:
+//! one side changed is a fast-forward, both is a divergence that needs
+//! `--force`. Without a sync on record, a side holding no tasks is seeded
+//! from the other; two sides holding different tasks need `--force`.
 //! Hashes are taken over the canonical serialization (parsed tasks
 //! re-encoded as compact JSON), so the pretty-printed local file and the
 //! compact HTTP body compare equal, as do CSV-backed databases.
@@ -19,7 +23,8 @@
 //! Both sides are read first and written later. A side that another writer
 //! changes in between is not overwritten: the backends refuse to replace
 //! what they did not read (`StaleDatabase`), and the sync is simply run
-//! again.
+//! again. `--force` reads only the side it copies from, so it can replace a
+//! side that no longer reads at all (REVIEW №70).
 
 use crate::backend::{Backend, Loaded, http::HttpBackend, ssh::SshBackend};
 use crate::config::theme;
@@ -78,10 +83,27 @@ impl Remote {
         }
     }
 
-    fn push(&self, tasks: &[Task]) -> Result<()> {
+    /// Replaces the remote with `tasks`; what it holds then (see
+    /// [`stored_form`](Self::stored_form)).
+    fn push(&self, tasks: &[Task]) -> Result<Vec<Task>> {
         match self {
-            Remote::Ssh(b) => b.save(tasks),
-            Remote::Http(b) => b.save(tasks),
+            Remote::Ssh(b) => {
+                b.save(tasks)?;
+                Ok(b.format().stored_form(tasks))
+            }
+            // The server says what its database made of the list; one that
+            // does not (before R21) is taken to hold it as it is.
+            Remote::Http(b) => Ok(b.save_held(tasks)?.unwrap_or_else(|| tasks.to_vec())),
+        }
+    }
+
+    /// What the remote holds once `tasks` are pushed to it, worked out
+    /// without pushing: a file over ssh in its format; a server, as far as
+    /// can be known here, as they are.
+    fn stored_form(&self, tasks: &[Task]) -> Vec<Task> {
+        match self {
+            Remote::Ssh(b) => b.format().stored_form(tasks),
+            Remote::Http(_) => tasks.to_vec(),
         }
     }
 }
@@ -91,22 +113,39 @@ enum SyncStatus {
     InSync,
     LocalAhead,
     RemoteAhead,
+    /// Both sides changed since the last sync.
     Diverged,
+    /// No sync on record, and both sides hold tasks, different ones.
+    Unrelated,
 }
 
-/// Classifies against the last synced hash. `base` is `None` on first sync.
-fn decide(base: Option<&str>, local: &str, remote: &str, remote_empty: bool) -> SyncStatus {
+/// What each side held right after the last sync with this remote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Base {
+    local: String,
+    remote: String,
+}
+
+/// Classifies the two sides against the last sync (`base`, `None` when
+/// there is none on record).
+fn decide(base: Option<&Base>, local: &str, remote: &str, local_side: Side, remote_side: Side) -> SyncStatus {
     if local == remote {
         return SyncStatus::InSync;
     }
     match base {
-        Some(b) if b == remote => SyncStatus::LocalAhead,
-        Some(b) if b == local => SyncStatus::RemoteAhead,
-        Some(_) => SyncStatus::Diverged,
-        // No sync history: an empty remote is safe to seed; anything else
-        // is unknown territory and needs an explicit direction.
-        None if remote_empty => SyncStatus::LocalAhead,
-        None => SyncStatus::Diverged,
+        Some(base) => match (local != base.local, remote != base.remote) {
+            // Each side as the last sync left it, only reading differently.
+            (false, false) => SyncStatus::InSync,
+            (true, false) => SyncStatus::LocalAhead,
+            (false, true) => SyncStatus::RemoteAhead,
+            (true, true) => SyncStatus::Diverged,
+        },
+        // No sync on record: a side holding no tasks is seeded from the
+        // other, either way round (REVIEW №23); two sides holding
+        // different tasks are for the user to choose between.
+        None if !remote_side.has_tasks() => SyncStatus::LocalAhead,
+        None if !local_side.has_tasks() => SyncStatus::RemoteAhead,
+        None => SyncStatus::Unrelated,
     }
 }
 
@@ -175,30 +214,117 @@ fn state_path(db_path: &Path) -> PathBuf {
     crate::backend::aux_path(db_path, "sync")
 }
 
+/// The state file: the remote it is about, and what each side held after
+/// the last sync with it. A file of an older rusk has one `hash` for both.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SyncState {
     remote: String,
-    hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    local_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    remote_hash: Option<String>,
 }
 
-/// Last-synced hash, only when it was recorded for the same remote.
-fn read_base(state_path: &Path, remote: &str) -> Option<String> {
-    let data = std::fs::read_to_string(state_path).ok()?;
-    let state: SyncState = serde_json::from_str(&data).ok()?;
-    (state.remote == remote).then_some(state.hash)
+/// The remote a state file names, spelled the way `remote` describes
+/// itself, so that `http://h:p/` and `http://h:p` are one remote (REVIEW
+/// №58).
+fn remote_key(value: &str) -> Option<String> {
+    Remote::parse(value, || Ok(None)).ok().map(|remote| remote.describe())
 }
 
-fn write_base(state_path: &Path, remote: &str, hash: &str) {
+/// What the state file says about the sync with `remote` (its key).
+#[derive(Debug, PartialEq, Eq)]
+enum History {
+    Synced(Base),
+    /// No state file: never synced from here.
+    Never,
+    /// A state file that cannot be used; why, for the messages.
+    Unusable(String),
+}
+
+fn read_history(state_path: &Path, remote: &str) -> History {
+    let data = match std::fs::read_to_string(state_path) {
+        Ok(data) => data,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return History::Never,
+        Err(e) => {
+            return History::Unusable(format!(
+                "the sync state '{}' cannot be read: {e}",
+                state_path.display()
+            ));
+        }
+    };
+    let unreadable = || {
+        History::Unusable(format!(
+            "the sync state '{}' is not one rusk wrote",
+            state_path.display()
+        ))
+    };
+    let Ok(state) = serde_json::from_str::<SyncState>(&data) else {
+        return unreadable();
+    };
+    // The key itself, or a spelling of the same remote (an older rusk wrote
+    // it as typed). The key first: not every key reads back as a remote
+    // (`user@host:~odd.json`, review of R21).
+    if state.remote != remote && remote_key(&state.remote).as_deref() != Some(remote) {
+        return History::Unusable(format!(
+            "the sync state '{}' is for another remote, {}",
+            state_path.display(),
+            crate::printable::escape(&state.remote)
+        ));
+    }
+    match (state.local_hash, state.remote_hash, state.hash) {
+        (Some(local), Some(remote), _) => History::Synced(Base { local, remote }),
+        (_, _, Some(hash)) => History::Synced(Base { local: hash.clone(), remote: hash }),
+        _ => unreadable(),
+    }
+}
+
+/// Records `base` as the state after a sync with `remote`. A failure is
+/// said, not swallowed (REVIEW №107): the sync itself went through, but the
+/// next one will not know about it.
+fn write_history(state_path: &Path, remote: &str, base: &Base) {
     let state = SyncState {
         remote: remote.to_string(),
-        hash: hash.to_string(),
+        hash: None,
+        local_hash: Some(base.local.clone()),
+        remote_hash: Some(base.remote.clone()),
     };
-    if let Ok(json) = serde_json::to_string(&state) {
-        let _ = crate::atomic::replace_aux_file(
-            state_path,
-            json.as_bytes(),
-            crate::atomic::Mode::Keep,
-        );
+    let written = serde_json::to_string(&state)
+        .map_err(std::io::Error::other)
+        .and_then(|json| {
+            crate::atomic::replace_aux_file(state_path, json.as_bytes(), crate::atomic::Mode::Keep)
+        });
+    if let Err(e) = written {
+        crate::backend::warn_yellow(&format!(
+            "Warning: this sync could not be recorded in '{}' ({e}); the next `rusk sync` \
+             will not know about it and may ask you to choose a side with --force",
+            state_path.display()
+        ));
+    }
+}
+
+/// Says so when a side does not read back what it was sent: its format
+/// cannot hold everything (a todo.txt text that starts with `x `, a
+/// Markdown text that looks like a list item).
+fn warn_if_lossy(side: &str, sent: &[Task], held: &[Task]) {
+    let held_by_id: std::collections::HashMap<crate::TaskId, &Task> =
+        held.iter().map(|task| (task.id, task)).collect();
+    let sent_ids: std::collections::HashSet<crate::TaskId> = sent.iter().map(|task| task.id).collect();
+    let changed = sent
+        .iter()
+        .filter(|task| held_by_id.get(&task.id) != Some(task))
+        .map(|task| task.id);
+    let added = held.iter().filter(|task| !sent_ids.contains(&task.id)).map(|task| task.id);
+    let differ: Vec<crate::TaskId> = changed.chain(added).collect();
+    if let Some(first) = differ.first() {
+        crate::backend::warn_yellow(&format!(
+            "Warning: {side} does not hold the tasks exactly as they were sent, as its format \
+             cannot hold everything: {} task(s) differ there (task {first} among them); the next \
+             sync goes by what it holds",
+            differ.len()
+        ));
     }
 }
 
@@ -221,6 +347,42 @@ pub fn run(direction: Direction) -> Result<()> {
             local.describe()
         );
     };
+    let key = remote.describe();
+    let state_file = state_path(&db_path);
+    let sync = Sync {
+        local: &local,
+        remote: &remote,
+        state_file: &state_file,
+        key: &key,
+    };
+
+    // `--force` needs only the side it copies from: the side it replaces
+    // may not read at all, which can be the very reason to replace it
+    // (REVIEW №70). When it does read, it is read: holding the same tasks,
+    // it is not written again (its `.backup` stays what it was), and its
+    // save checks that nobody changed it meanwhile (review of R21).
+    match direction {
+        Direction::Push { force: true } => {
+            let tasks = local.read()?.tasks;
+            if let Ok(held) = remote.fetch()
+                && canonical_hash(&held.tasks)? == canonical_hash(&tasks)?
+            {
+                return sync.already_in_sync(&tasks, &held.tasks);
+            }
+            return sync.push(&tasks);
+        }
+        Direction::Pull { force: true } => {
+            let tasks = remote.fetch()?.tasks;
+            if let Ok(held) = local.read()
+                && canonical_hash(&held.tasks)? == canonical_hash(&tasks)?
+            {
+                return sync.already_in_sync(&held.tasks, &tasks);
+            }
+            return sync.pull(tasks);
+        }
+        _ => {}
+    }
+
     let local_db = local.read()?;
     let remote_db = remote.fetch()?;
     let (local_side, remote_side) = (Side::of(&local_db), Side::of(&remote_db));
@@ -228,95 +390,158 @@ pub fn run(direction: Direction) -> Result<()> {
 
     let local_hash = canonical_hash(&local_tasks)?;
     let remote_hash = canonical_hash(&remote_tasks)?;
-    let state_file = state_path(&db_path);
-    let base = read_base(&state_file, &remote_str);
+    let history = read_history(&state_file, &key);
+    let base = match &history {
+        History::Synced(base) => Some(base),
+        History::Never | History::Unusable(_) => None,
+    };
+    let mut status = decide(base, &local_hash, &remote_hash, local_side, remote_side);
+    // The remote holds exactly what the local tasks become in its format:
+    // nothing to push, and nothing to pull that the local side lacks. A
+    // lossy remote synced by an older rusk, whose state has one hash for
+    // both sides, is in this state (review of R21).
+    if status != SyncStatus::InSync
+        && canonical_hash(&remote.stored_form(&local_tasks))? == remote_hash
+    {
+        status = SyncStatus::InSync;
+    }
 
-    let status = decide(
-        base.as_deref(),
-        &local_hash,
-        &remote_hash,
-        remote_tasks.is_empty(),
-    );
+    match wipe_guard(&status, local_side, remote_side) {
+        Some(Wipe::Remote) => bail!(
+            "{}, while {}; refusing to empty the remote. Use `rusk sync pull --force` to \
+             restore the local database from the remote, or `rusk sync push --force` to \
+             really empty the remote",
+            local_side.describe(&format!("the local database at {}", db_path.display())),
+            remote_side.describe(&remote.describe())
+        ),
+        Some(Wipe::Local) => bail!(
+            "{}, while {}; refusing to empty the local database. Use `rusk sync push --force` \
+             to restore the remote from the local database, or `rusk sync pull --force` to \
+             really empty the local database",
+            remote_side.describe(&remote.describe()),
+            local_side.describe(&format!("the local database at {}", db_path.display()))
+        ),
+        None => {}
+    }
 
-    let push = |tasks: &[Task]| -> Result<()> {
-        remote.push(tasks)?;
-        write_base(&state_file, &remote_str, &canonical_hash(tasks)?);
+    // Both ways out of a conflict, and nothing that sends the user round in
+    // a circle (REVIEW №23).
+    let choose = "keep one side: `rusk sync push --force` keeps the local tasks, \
+                  `rusk sync pull --force` the remote ones";
+    // Why the state file says nothing, when it is there but of no use.
+    let why = match &history {
+        History::Unusable(why) => format!(" ({why})"),
+        _ => String::new(),
+    };
+    match (direction, status) {
+        (_, SyncStatus::InSync) => sync.already_in_sync(&local_tasks, &remote_tasks),
+        (Direction::Auto | Direction::Push { .. }, SyncStatus::LocalAhead) => sync.push(&local_tasks),
+        (Direction::Auto | Direction::Pull { .. }, SyncStatus::RemoteAhead) => sync.pull(remote_tasks),
+        (_, SyncStatus::Diverged) => bail!(
+            "the local database and {} have both changed since the last sync; {choose}",
+            remote.describe()
+        ),
+        (_, SyncStatus::Unrelated) => bail!(
+            "the local database and {} hold different tasks and have not been synced \
+             before{why}; {choose}",
+            remote.describe()
+        ),
+        // No sync on record: a direction was named, the other side is the
+        // one without tasks (review of R21: "changed since the last sync"
+        // spoke of a sync there never was).
+        (Direction::Push { .. }, SyncStatus::RemoteAhead) if base.is_none() => bail!(
+            "{}, while {} holds tasks; they have not been synced before{why}: \
+             `rusk sync pull` (or `rusk sync`) copies those tasks here, \
+             `rusk sync push --force` empties {}",
+            local_side.describe(&format!("the local database at {}", db_path.display())),
+            remote.describe(),
+            remote.describe()
+        ),
+        (Direction::Pull { .. }, SyncStatus::LocalAhead) if base.is_none() => bail!(
+            "{}, while the local database holds tasks; they have not been synced before{why}: \
+             `rusk sync push` (or `rusk sync`) copies the local tasks there, \
+             `rusk sync pull --force` empties the local database",
+            remote_side.describe(&remote.describe())
+        ),
+        (Direction::Push { .. }, SyncStatus::RemoteAhead) => bail!(
+            "{} has changed since the last sync and the local database has not: \
+             `rusk sync pull` (or `rusk sync`) brings the change here, \
+             `rusk sync push --force` overwrites it",
+            remote.describe()
+        ),
+        (Direction::Pull { .. }, SyncStatus::LocalAhead) => bail!(
+            "the local database has changed since the last sync and {} has not: \
+             `rusk sync push` (or `rusk sync`) sends the change, \
+             `rusk sync pull --force` discards it",
+            remote.describe()
+        ),
+    }
+}
+
+/// The two sides of one `rusk sync` and where it keeps its state.
+struct Sync<'a> {
+    local: &'a Backend,
+    remote: &'a Remote,
+    state_file: &'a Path,
+    key: &'a str,
+}
+
+impl Sync<'_> {
+    /// Records that the two sides hold `local` and `remote`, the same tasks
+    /// — even when nothing moved, so that a later change is told from a
+    /// first contact.
+    fn already_in_sync(&self, local: &[Task], remote: &[Task]) -> Result<()> {
+        let base = Base {
+            local: canonical_hash(local)?,
+            remote: canonical_hash(remote)?,
+        };
+        write_history(self.state_file, self.key, &base);
+        crate::outln!(
+            "{} with {}",
+            theme().success.paint("Already in sync"),
+            self.remote.describe()
+        )
+    }
+
+    /// Replaces the remote with `tasks`, the local list, and records what
+    /// each side holds now: the remote as its format stores the list,
+    /// worked out rather than read back — another writer may have changed
+    /// it since, and that change must not pass for this sync's (review of
+    /// R21).
+    fn push(&self, tasks: &[Task]) -> Result<()> {
+        let held = self.remote.push(tasks)?;
+        warn_if_lossy(&self.remote.describe(), tasks, &held);
+        let base = Base {
+            local: canonical_hash(tasks)?,
+            remote: canonical_hash(&held)?,
+        };
+        write_history(self.state_file, self.key, &base);
         crate::outln!(
             "{} {} task(s) to {}",
             theme().success.paint("Pushed"),
             tasks.len(),
-            remote.describe()
+            self.remote.describe()
         )
-    };
-    let pull = |tasks: Vec<Task>| -> Result<()> {
-        let count = tasks.len();
-        local.save(&tasks)?;
-        write_base(&state_file, &remote_str, &canonical_hash(&tasks)?);
+    }
+
+    /// Replaces the local database with `tasks`, the remote list, and
+    /// records what each side holds now: the local one as its format stores
+    /// the list (see [`push`](Self::push)).
+    fn pull(&self, tasks: Vec<Task>) -> Result<()> {
+        self.local.save(&tasks)?;
+        let held = self.local.stored_form(&tasks);
+        warn_if_lossy("the local database", &tasks, &held);
+        let base = Base {
+            local: canonical_hash(&held)?,
+            remote: canonical_hash(&tasks)?,
+        };
+        write_history(self.state_file, self.key, &base);
         crate::outln!(
             "{} {} task(s) from {}",
             theme().success.paint("Pulled"),
-            count,
-            remote.describe()
+            tasks.len(),
+            self.remote.describe()
         )
-    };
-    let already_in_sync = || {
-        crate::outln!(
-            "{} with {}",
-            theme().success.paint("Already in sync"),
-            remote.describe()
-        )
-    };
-
-    let forced = matches!(
-        direction,
-        Direction::Push { force: true } | Direction::Pull { force: true }
-    );
-    if !forced {
-        match wipe_guard(&status, local_side, remote_side) {
-            Some(Wipe::Remote) => bail!(
-                "{}, while {}; refusing to empty the remote. Use `rusk sync pull --force` to \
-                 restore the local database from the remote, or `rusk sync push --force` to \
-                 really empty the remote",
-                local_side.describe(&format!("the local database at {}", db_path.display())),
-                remote_side.describe(&remote.describe())
-            ),
-            Some(Wipe::Local) => bail!(
-                "{}, while {}; refusing to empty the local database. Use `rusk sync push --force` \
-                 to restore the remote from the local database, or `rusk sync pull --force` to \
-                 really empty the local database",
-                remote_side.describe(&remote.describe()),
-                local_side.describe(&format!("the local database at {}", db_path.display()))
-            ),
-            None => {}
-        }
-    }
-
-    match (direction, status) {
-        (_, SyncStatus::InSync) => {
-            // Record the base so a later divergence is detected even if the
-            // first contact happened with identical content.
-            write_base(&state_file, &remote_str, &local_hash);
-            already_in_sync()
-        }
-        (Direction::Auto, SyncStatus::LocalAhead) => push(&local_tasks),
-        (Direction::Auto, SyncStatus::RemoteAhead) => pull(remote_tasks),
-        (Direction::Auto, SyncStatus::Diverged) => bail!(
-            "local and remote have both changed since the last sync; \
-             resolve with `rusk sync push --force` (keep local) \
-             or `rusk sync pull --force` (keep remote)"
-        ),
-        (Direction::Push { force: true }, _) => push(&local_tasks),
-        (Direction::Push { force: false }, SyncStatus::LocalAhead) => push(&local_tasks),
-        (Direction::Push { force: false }, _) => bail!(
-            "the remote has changes not present locally; \
-             use `rusk sync pull` first or `rusk sync push --force` to overwrite them"
-        ),
-        (Direction::Pull { force: true }, _) => pull(remote_tasks),
-        (Direction::Pull { force: false }, SyncStatus::RemoteAhead) => pull(remote_tasks),
-        (Direction::Pull { force: false }, _) => bail!(
-            "the local database has changes not present on the remote; \
-             use `rusk sync push` first or `rusk sync pull --force` to discard them"
-        ),
     }
 }
 
@@ -342,19 +567,35 @@ mod tests {
         assert!(Remote::parse(":/path", || Ok(None)).is_err());
     }
 
+    fn base(local: &str, remote: &str) -> Base {
+        Base {
+            local: local.into(),
+            remote: remote.into(),
+        }
+    }
+
     #[test]
     fn decide_matrix() {
+        use Side::{Empty, Missing, Tasks};
+        let two = Tasks(2);
         // Identical content is always in sync.
-        assert_eq!(decide(None, "a", "a", false), SyncStatus::InSync);
-        assert_eq!(decide(Some("x"), "a", "a", false), SyncStatus::InSync);
+        assert_eq!(decide(None, "a", "a", two, two), SyncStatus::InSync);
+        assert_eq!(decide(Some(&base("x", "y")), "a", "a", two, two), SyncStatus::InSync);
         // Fast-forwards.
-        assert_eq!(decide(Some("r"), "l", "r", false), SyncStatus::LocalAhead);
-        assert_eq!(decide(Some("l"), "l", "r", false), SyncStatus::RemoteAhead);
+        assert_eq!(decide(Some(&base("b", "r")), "l", "r", two, two), SyncStatus::LocalAhead);
+        assert_eq!(decide(Some(&base("l", "b")), "l", "r", two, two), SyncStatus::RemoteAhead);
         // Both sides moved.
-        assert_eq!(decide(Some("b"), "l", "r", false), SyncStatus::Diverged);
-        // First sync: empty remote is seedable, non-empty needs a decision.
-        assert_eq!(decide(None, "l", "r", true), SyncStatus::LocalAhead);
-        assert_eq!(decide(None, "l", "r", false), SyncStatus::Diverged);
+        assert_eq!(decide(Some(&base("b", "b")), "l", "r", two, two), SyncStatus::Diverged);
+        // REVIEW №24: each side as the last sync left it, though they read
+        // differently (a remote format that cannot hold everything).
+        assert_eq!(decide(Some(&base("l", "r")), "l", "r", two, two), SyncStatus::InSync);
+        // First sync: a side with no tasks is seeded, either way round
+        // (REVIEW №23); two lists of tasks need a decision.
+        assert_eq!(decide(None, "l", "r", two, Empty), SyncStatus::LocalAhead);
+        assert_eq!(decide(None, "l", "r", two, Missing), SyncStatus::LocalAhead);
+        assert_eq!(decide(None, "l", "r", Empty, two), SyncStatus::RemoteAhead);
+        assert_eq!(decide(None, "l", "r", Missing, two), SyncStatus::RemoteAhead);
+        assert_eq!(decide(None, "l", "r", two, two), SyncStatus::Unrelated);
     }
 
     #[test]
@@ -433,10 +674,64 @@ mod tests {
         let db = dir.path().join("tasks.json");
         let sp = state_path(&db);
         assert!(sp.to_string_lossy().ends_with("tasks.json.sync"));
-        assert_eq!(read_base(&sp, "r"), None);
-        write_base(&sp, "user@h:/p", "abc");
-        assert_eq!(read_base(&sp, "user@h:/p"), Some("abc".to_string()));
-        // A different remote invalidates the recorded base.
-        assert_eq!(read_base(&sp, "user@other:/p"), None);
+        assert_eq!(read_history(&sp, "user@h:/p"), History::Never);
+        write_history(&sp, "user@h:/p", &base("l", "r"));
+        assert_eq!(read_history(&sp, "user@h:/p"), History::Synced(base("l", "r")));
+        // A different remote invalidates the recorded base, and says so.
+        let History::Unusable(why) = read_history(&sp, "user@other:/p") else {
+            panic!("another remote's state was used");
+        };
+        assert!(why.contains("another remote, user@h:/p"), "{why}");
+    }
+
+    /// Review of R21: a key that does not read back as a remote (a path
+    /// that starts with `~` of its own) made the state of the very same
+    /// remote "another remote's".
+    #[test]
+    fn the_key_itself_is_the_same_remote() {
+        let dir = tempfile::tempdir().unwrap();
+        let sp = dir.path().join("tasks.json.sync");
+        let key = remote_key("user@vps:~/~odd.json").unwrap();
+        assert_eq!(key, "user@vps:~/~odd.json");
+        assert_eq!(remote_key(&key).as_deref(), Some(key.as_str()));
+        write_history(&sp, &key, &base("l", "r"));
+        assert_eq!(read_history(&sp, &key), History::Synced(base("l", "r")));
+    }
+
+    /// REVIEW №58: the state was keyed by the remote as typed, so
+    /// `http://h:p/` and `http://h:p` were two remotes.
+    #[test]
+    fn a_remote_is_one_however_it_is_spelled() {
+        let dir = tempfile::tempdir().unwrap();
+        let sp = dir.path().join("tasks.json.sync");
+        std::fs::write(&sp, r#"{"remote":"http://127.0.0.1:18700/","hash":"h"}"#).unwrap();
+        let key = remote_key("http://127.0.0.1:18700").unwrap();
+        // An older rusk's state: one hash for both sides.
+        assert_eq!(read_history(&sp, &key), History::Synced(base("h", "h")));
+    }
+
+    /// REVIEW №23: a state file that is not one rusk wrote was ignored in
+    /// silence; the conflict it leads to says why there is no base.
+    #[test]
+    fn an_unusable_state_says_why() {
+        let dir = tempfile::tempdir().unwrap();
+        let sp = dir.path().join("tasks.json.sync");
+        std::fs::write(&sp, "garbage").unwrap();
+        let History::Unusable(why) = read_history(&sp, "user@h:/p") else {
+            panic!("garbage was taken for a state");
+        };
+        assert!(why.contains("is not one rusk wrote") && why.contains("tasks.json.sync"), "{why}");
+    }
+
+    /// REVIEW №107: a state that could not be written was not said.
+    #[test]
+    #[cfg(unix)]
+    fn a_state_that_cannot_be_written_is_warned_about() {
+        let dir = tempfile::tempdir().unwrap();
+        // A directory in the way fails the write for every user.
+        let sp = dir.path().join("tasks.json.sync");
+        std::fs::create_dir(&sp).unwrap();
+        write_history(&sp, "user@h:/p", &base("l", "r"));
+        assert!(sp.is_dir(), "the write went through a directory");
     }
 }

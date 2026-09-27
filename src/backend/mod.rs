@@ -394,6 +394,22 @@ impl Backend {
         }
     }
 
+    /// What this database holds once `tasks` are saved to it (see
+    /// [`DbFormat::stored_form`](crate::codec::DbFormat::stored_form)).
+    /// SQLite holds a list as it is; what a server holds, it says itself
+    /// (see `HttpBackend::save_held`).
+    pub fn stored_form(&self, tasks: &[Task]) -> Vec<Task> {
+        match self {
+            Backend::File(b) => b.format().stored_form(tasks),
+            #[cfg(feature = "backend-sqlite")]
+            Backend::Sqlite(_) => tasks.to_vec(),
+            #[cfg(feature = "backend-http")]
+            Backend::Http(_) => tasks.to_vec(),
+            #[cfg(feature = "backend-ssh")]
+            Backend::Ssh(b) => b.format().stored_form(tasks),
+        }
+    }
+
     /// Where the database lives, for messages and logs.
     pub fn describe(&self) -> String {
         match self {

@@ -469,7 +469,8 @@ rusk serve --host 0.0.0.0"
         long_about = "Synchronize the task database with a remote: `sync_remote` in the config \
 is either user@host:/path/tasks.json (ssh) or https://host (rusk serve API). Without a \
 subcommand, fast-forwards in whichever direction changed and refuses when both sides \
-changed.\n\n\
+changed. Before the first sync, a side that holds no tasks gets the other side's; two \
+sides that hold different tasks are for you to choose between with --force.\n\n\
 Examples:\n  \
 rusk sync\n  \
 rusk sync push\n  \
@@ -498,14 +499,14 @@ rusk completions show zsh"
 #[cfg(feature = "sync")]
 #[derive(Subcommand, Clone, Copy)]
 pub enum SyncDirection {
-    #[command(about = "Upload local tasks to the remote (refuses when the remote changed since the last sync)")]
+    #[command(about = "Upload local tasks to the remote (refuses when only the remote has something new)")]
     Push {
-        #[arg(long, help = "Overwrite remote changes")]
+        #[arg(long, help = "Replace the remote with the local tasks, whatever it holds")]
         force: bool,
     },
-    #[command(about = "Replace the local database with the remote tasks (refuses when local changed since the last sync)")]
+    #[command(about = "Replace the local database with the remote tasks (refuses when only the local one has something new)")]
     Pull {
-        #[arg(long, help = "Discard local changes")]
+        #[arg(long, help = "Replace the local tasks with the remote ones, whatever they are")]
         force: bool,
     },
 }

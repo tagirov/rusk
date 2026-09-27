@@ -170,7 +170,7 @@ or Bearer header. Dates are ISO `YYYY-MM-DD`.
 | `PATCH /api/tasks/{id}` | any subset of `{text, date, done, priority}`; `"date": null` clears | `200` + updated task |
 | `DELETE /api/tasks/{id}` | — | `204` |
 | `DELETE /api/tasks/done` | — | `{"deleted": n}` |
-| `PUT /api/tasks` | full task array | replaces the whole list (used by sync) |
+| `PUT /api/tasks` | full task array | replaces the whole list (used by sync); `{"count": n, "tasks": [...]}`, the list as the server's database holds it |
 
 A text is stored without whitespace at its edges, as the CLI stores it; a
 new task takes the lowest free id and goes in front of the first task with a
@@ -225,6 +225,14 @@ rusk sync push --force # overwrite remote changes
 rusk sync pull --force # discard local changes
 ```
 
+`--force` needs only the side it copies from, so it also replaces a side that
+no longer reads at all: a remote file that is not a task list, a local JSON
+or other file database that is damaged (kept as `.backup` when `backup` is
+on). A SQLite file that is no database is refused, and a server whose own
+database is damaged has to be mended there. A side that does read and holds
+the same tasks already is not written again (its `.backup` stays), and one
+that another writer changes meanwhile is not overwritten.
+
 The remote comes from `sync_remote` in the config (or `RUSK_SYNC_REMOTE`):
 
 ```
@@ -252,21 +260,37 @@ sync_token = <the web_token of that server>
   the server. If `rusk serve` runs there, it picks up pushed files
   immediately (the server re-reads the database per request).
 - **HTTP remote**: `GET /api/tasks` and `PUT /api/tasks` via the system
-  `curl` (needed for TLS without adding heavyweight dependencies).
+  `curl` 7.55 or newer (needed for TLS without adding heavyweight
+  dependencies). The token
+  reaches curl in a file only its owner can read, created for the call (in
+  `$XDG_RUNTIME_DIR` when there is one, else the temp directory) and removed
+  after it — not on its command line, which `ps` shows every user. A Ctrl+C
+  while curl runs leaves the file; the next request removes it.
+  `https://host/` and `https://host` are the same remote.
 
 ### Conflict detection
 
-After every successful sync, rusk stores a hash of the synced content next to
-the database (`tasks.json.sync`). On the next sync it compares local, remote
-and that base:
+After every successful sync, rusk stores next to the database
+(`tasks.json.sync`) what each side held right after it — each side as its
+format stores the list, because a format that cannot hold everything (a
+Markdown text with a line that looks like a list item, a leading `!`) stores
+less than it was sent; rusk says so when that happens, and the next sync goes
+by what the side holds rather than bouncing the difference back. That is
+worked out as the list is written, not read back afterwards: a change
+another writer makes right after the sync is a change for the next one. A
+server says what its database made of a `PUT`. If the state cannot be
+written, rusk warns: the next sync will not know about this one. On the next
+sync each side is compared with what it held then:
 
 | Situation | `rusk sync` | `push` / `pull` |
 |---|---|---|
-| local == remote | records base, done | no-op |
-| only local changed | pushes | `push` works, `pull` refuses |
-| only remote changed | pulls | `pull` works, `push` refuses |
-| both changed | refuses with instructions | require `--force` |
-| one side has no tasks, the other does | refuses to empty the non-empty side | require `--force` |
+| local == remote, or neither changed | records base, done | no-op |
+| only local changed | pushes | `push` works; `pull` refuses and names `push` |
+| only remote changed | pulls | `pull` works; `push` refuses and names `pull` |
+| both changed | refuses, names `push --force` / `pull --force` | require `--force` |
+| no sync on record, one side has no tasks | seeds that side from the other | the matching one works |
+| no sync on record, both have tasks that differ | refuses, names both `--force` ways and why there is no record | require `--force` |
+| a fast-forward would empty a side holding tasks | refuses to empty it | require `--force` |
 
 A database file that is not there, and one the user really emptied, both
 come to sync as "no tasks". rusk never propagates that automatically:

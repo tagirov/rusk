@@ -330,6 +330,12 @@ impl TaskManager {
         Self::with(Vec::new(), backend)
     }
 
+    /// What the database holds once `tasks` are saved to it (see
+    /// [`Backend::stored_form`]).
+    pub fn stored_form(&self, tasks: &[Task]) -> Vec<Task> {
+        self.backend.stored_form(tasks)
+    }
+
     pub fn tasks(&self) -> &[Task] {
         &self.tasks
     }

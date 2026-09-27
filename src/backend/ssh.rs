@@ -76,8 +76,19 @@ impl SshBackend {
         })
     }
 
+    /// `host:path` as it reads back: a path from the remote home that
+    /// starts with a `~` of its own keeps the `~/` in front, or it would
+    /// read as another user's home (review of R21).
     pub fn describe(&self) -> String {
-        format!("{}:{}", self.host, self.path)
+        if self.path.starts_with('~') {
+            format!("{}:~/{}", self.host, self.path)
+        } else {
+            format!("{}:{}", self.host, self.path)
+        }
+    }
+
+    pub fn format(&self) -> DbFormat {
+        self.format
     }
 
     /// The path on the other side, without the `user@host:` part.

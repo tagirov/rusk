@@ -169,6 +169,20 @@ impl DbFormat {
         }
     }
 
+    /// What a database of this format holds once `tasks` are saved to it:
+    /// encoded, decoded and held to the rules again, as a load would — a
+    /// format that cannot hold everything (todo.txt, Markdown) stores less
+    /// than it is given. Worked out here, not read back from the file:
+    /// read back, it would hold whatever another writer made of it
+    /// meanwhile too (review of R21).
+    pub fn stored_form(self, tasks: &[Task]) -> Vec<Task> {
+        let stored = self
+            .encode(tasks)
+            .and_then(|data| self.decode(&data))
+            .and_then(|mut records| crate::model::normalize(&mut records).map(|_| records));
+        stored.unwrap_or_else(|_| tasks.to_vec())
+    }
+
     /// True when `data`, which decoded to zero tasks, really is an empty
     /// database of this format, the way rusk itself writes one. A file of
     /// nothing but blanks is one for the formats that write an empty

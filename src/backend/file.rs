@@ -68,6 +68,10 @@ impl FileBackend {
         &self.path
     }
 
+    pub fn format(&self) -> DbFormat {
+        self.format
+    }
+
     fn seen(&self) -> Seen {
         *self.seen.lock().unwrap_or_else(|e| e.into_inner())
     }

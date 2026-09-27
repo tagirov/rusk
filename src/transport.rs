@@ -299,9 +299,95 @@ impl HttpResponse {
     }
 }
 
+/// A header that curl reads from a file (`-H @file`) instead of from its
+/// command line, which every local user can read in `ps` or
+/// `/proc/<pid>/cmdline` (REVIEW №103). The file is created new and
+/// readable by its owner only, and removed again when this is dropped. (Not
+/// curl's config on its standard input: that holds the request body, and a
+/// config line of 10 MiB is curl's limit.)
+struct HeaderFile(std::path::PathBuf);
+
+/// A header file older than this was left by a process that ended while
+/// curl ran (Ctrl+C), and goes with the next request.
+const STALE_HEADER_FILE: std::time::Duration = std::time::Duration::from_secs(600);
+
+impl HeaderFile {
+    fn new(header: &str) -> Result<Self> {
+        if header.contains(['\r', '\n']) {
+            bail!("a token for the http location must not contain a line break");
+        }
+        let dir = Self::dir();
+        Self::sweep(&dir);
+        let path = dir.join(format!("rusk-header-{:016x}", crate::atomic::unique()));
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options
+            .open(&path)
+            .with_context(|| format!("failed to create '{}' for curl", path.display()))?;
+        let created = Self(path);
+        file.write_all(header.as_bytes())
+            .and_then(|()| file.write_all(b"\n"))
+            .with_context(|| format!("failed to write '{}' for curl", created.0.display()))?;
+        Ok(created)
+    }
+
+    /// Where it goes: the user's runtime directory, private to the user
+    /// and in memory on most systems, when there is one; else the temp
+    /// directory (review of R21: a temp directory that cannot be written
+    /// failed every request with a token).
+    fn dir() -> std::path::PathBuf {
+        std::env::var_os("XDG_RUNTIME_DIR")
+            .map(std::path::PathBuf::from)
+            .filter(|dir| dir.is_absolute() && dir.is_dir())
+            .unwrap_or_else(std::env::temp_dir)
+    }
+
+    /// Removes the header files a process that ended while curl ran left in
+    /// `dir` (review of R21); another user's, in a shared temp directory,
+    /// are not ours to remove and stay.
+    fn sweep(dir: &std::path::Path) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            if !entry.file_name().to_string_lossy().starts_with("rusk-header-") {
+                continue;
+            }
+            let stale = entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .ok()
+                .and_then(|modified| modified.elapsed().ok())
+                .is_some_and(|age| age > STALE_HEADER_FILE);
+            if stale {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+
+    /// The `-H` argument that names it.
+    fn arg(&self) -> std::ffi::OsString {
+        let mut arg = std::ffi::OsString::from("@");
+        arg.push(&self.0);
+        arg
+    }
+}
+
+impl Drop for HeaderFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// One curl call. `method` of `None` is a plain GET; a JSON `body` is sent
-/// with the right Content-Type; `token` becomes a Bearer header; `if_match`
-/// makes the request conditional on the server still holding that `ETag`.
+/// with the right Content-Type; `token` becomes a Bearer header, handed to
+/// curl in a file; `if_match` makes the request conditional on the server
+/// still holding that `ETag`.
 pub fn http_request(
     url: &str,
     method: Option<&str>,
@@ -320,8 +406,12 @@ pub fn http_request(
     if json_body.is_some() {
         cmd.args(["-H", "Content-Type: application/json", "--data-binary", "@-"]);
     }
-    if let Some(token) = token {
-        cmd.args(["-H", &format!("Authorization: Bearer {token}")]);
+    // Kept until curl is done with it.
+    let token_file = token
+        .map(|token| HeaderFile::new(&format!("Authorization: Bearer {token}")))
+        .transpose()?;
+    if let Some(file) = &token_file {
+        cmd.arg("-H").arg(file.arg());
     }
     if let Some(etag) = if_match {
         cmd.args(["-H", &format!("If-Match: \"{etag}\"")]);
@@ -675,6 +765,44 @@ mod tests {
             "{:?}",
             String::from_utf8_lossy(&out.stderr)
         );
+    }
+
+    /// REVIEW №103: the Bearer token was on curl's command line, readable
+    /// by every local user; it goes in a private file now.
+    #[test]
+    fn a_header_file_is_private_and_goes_away() {
+        let file = HeaderFile::new("Authorization: Bearer s3cret").unwrap();
+        let path = file.0.clone();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "Authorization: Bearer s3cret\n");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "{mode:o}");
+        }
+        assert!(file.arg().to_string_lossy().starts_with('@'));
+        drop(file);
+        assert!(!path.exists());
+        assert!(HeaderFile::new("Authorization: Bearer a\nX-Evil: 1").is_err());
+    }
+
+    /// Review of R21: a Ctrl+C while curl ran left the file with the token.
+    #[test]
+    fn a_header_file_left_behind_goes_with_the_next_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("rusk-header-0000000000000001");
+        let fresh = dir.path().join("rusk-header-0000000000000002");
+        let other = dir.path().join("notes.txt");
+        for path in [&old, &fresh, &other] {
+            std::fs::write(path, "Authorization: Bearer s3cret\n").unwrap();
+        }
+        let long_ago = std::time::SystemTime::now() - 2 * STALE_HEADER_FILE;
+        for path in [&old, &other] {
+            std::fs::File::options().write(true).open(path).unwrap().set_modified(long_ago).unwrap();
+        }
+        HeaderFile::sweep(dir.path());
+        assert!(!old.exists());
+        assert!(fresh.exists() && other.exists());
     }
 
     #[test]

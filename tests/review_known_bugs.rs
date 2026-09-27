@@ -22,7 +22,8 @@
 // of a SQLite connection) — all of R1-R18 — and of the clusters for the
 // rest of REVIEW.md: R19 (output, terminals and messages), R24 (the editor:
 // keys, words, selection, undo, the first-line date), R20 (`rusk serve`:
-// requests, tokens, hosts, headers). R6 and R8 need a pty
+// requests, tokens, hosts, headers), R21 (`rusk sync` and the transports).
+// R6 and R8 need a pty
 // for most of their repros: what Command can drive is here, the draft rules
 // are unit-tested in `src/cli/editor/draft.rs`, and the rest is driven by a
 // pty script against a release binary (see REVIEW.md).
@@ -5713,4 +5714,318 @@ fn r20_the_rest_of_the_api() {
     assert_eq!(status(&res), 405, "{res}");
     let res = http.send(&with("GET", "/api/nothing"), "");
     assert_eq!(status(&res), 404, "{res}");
+}
+
+// ---------------------------------------------------------------------------
+// R21 — `rusk sync` and the transports
+// ---------------------------------------------------------------------------
+//
+// The ssh side runs through the fake `ssh` of `tests/common` (the remote
+// command runs here, on a path of the sandbox); the http side through a
+// real `rusk serve`, or a fake `curl` that shows what it was given. The
+// decision table and the state file are unit-tested in `src/sync.rs`, the
+// header file in `src/transport.rs`.
+
+/// `rusk sync <args>` against `remote` (an ssh location) through the fake ssh.
+#[cfg(all(unix, feature = "sync"))]
+fn sync_with(sb: &Sandbox, remote: &str, args: &[&str]) -> std::process::Output {
+    sb.cmd_with_fake_ssh()
+        .env("RUSK_SYNC_REMOTE", remote)
+        .arg("sync")
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+/// An ssh remote `name` in the sandbox, and its location.
+#[cfg(all(unix, feature = "sync"))]
+fn ssh_remote(sb: &Sandbox, name: &str) -> (std::path::PathBuf, String) {
+    let path = sb.path().join("remote").join(name);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let location = format!("user@host:{}", path.display());
+    (path, location)
+}
+
+/// REVIEW №23: a first sync into an empty local database was refused as
+/// "both changed", and `sync pull` pointed at `sync push`.
+#[test]
+#[cfg(all(unix, feature = "sync"))]
+fn r21_a_first_sync_seeds_an_empty_local_database() {
+    let sb = Sandbox::new();
+    let (remote_path, remote) = ssh_remote(&sb, "tasks.json");
+    fs::write(&remote_path, THREE_TASKS_DB).unwrap();
+    let out = sync_with(&sb, &remote, &[]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(stdout_of(&out).contains("Pulled 3 task(s)"), "{}", stdout_of(&out));
+    assert_eq!(db_tasks(&sb).len(), 3);
+
+    let sb = Sandbox::new();
+    let out = sync_with(&sb, &remote, &["pull"]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert_eq!(db_tasks(&sb).len(), 3);
+}
+
+/// REVIEW №23: in a conflict, `sync push` sent the user to `sync pull` and
+/// `sync pull` back to `sync push`; a state file of garbage went unsaid.
+#[test]
+#[cfg(all(unix, feature = "sync"))]
+fn r21_a_conflict_names_the_ways_out_and_why_there_is_no_history() {
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let (remote_path, remote) = ssh_remote(&sb, "tasks.json");
+    fs::write(&remote_path, r#"[{"id":1,"text":"remote only"}]"#).unwrap();
+    fs::write(sb.db_path().with_extension("json.sync"), "garbage").unwrap();
+    for args in [&[][..], &["push"], &["pull"]] {
+        let out = sync_with(&sb, &remote, args);
+        let err = stderr_of(&out);
+        assert_eq!(out.status.code(), Some(1), "{args:?}: {err}");
+        assert!(err.contains("push --force") && err.contains("pull --force"), "{args:?}: {err}");
+        assert!(!err.contains("first"), "{args:?}: {err}");
+        assert!(err.contains("tasks.json.sync' is not one rusk wrote"), "{args:?}: {err}");
+    }
+}
+
+/// REVIEW №24: a remote in a format that cannot hold a text as it was sent
+/// (Markdown reads a line that looks like a list item as a task of its own,
+/// a leading `!` as the priority mark) read back differently, and the next
+/// `rusk sync` pulled that over the local database.
+#[test]
+#[cfg(all(unix, feature = "sync", feature = "fmt-markdown"))]
+fn r21_a_lossy_remote_does_not_bounce_back() {
+    let sb = Sandbox::with_db(
+        r#"[{"id":1,"text":"first\n- [ ] nested item"},{"id":3,"text":"! bang"}]"#,
+    );
+    let (remote_path, remote) = ssh_remote(&sb, "tasks.md");
+    let before = sb.read_db();
+    let out = sync_with(&sb, &remote, &[]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(stdout_of(&out).contains("Pushed 2 task(s)"), "{}", stdout_of(&out));
+    assert!(stderr_of(&out).contains("does not hold the tasks exactly"), "{}", stderr_of(&out));
+    let remote_after = fs::read_to_string(&remote_path).unwrap();
+
+    let out = sync_with(&sb, &remote, &[]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(stdout_of(&out).contains("Already in sync"), "{}", stdout_of(&out));
+    assert_eq!(sb.read_db(), before, "the local database was overwritten");
+    assert_eq!(fs::read_to_string(&remote_path).unwrap(), remote_after);
+
+    // A change on either side is a change again.
+    sb.cmd().args(["add", "one more"]).output().unwrap();
+    let out = sync_with(&sb, &remote, &[]);
+    assert!(stdout_of(&out).contains("Pushed 3 task(s)"), "{}", stdout_of(&out));
+}
+
+/// REVIEW №70: `--force` read both sides first, so it could not replace
+/// the one side that did not read — which is when it is needed.
+#[test]
+#[cfg(all(unix, feature = "sync"))]
+fn r21_force_replaces_a_side_that_does_not_read() {
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let (remote_path, remote) = ssh_remote(&sb, "tasks.json");
+    fs::write(&remote_path, "{garbage").unwrap();
+    let out = sync_with(&sb, &remote, &["push", "--force"]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(fs::read_to_string(&remote_path).unwrap().contains("first task"));
+
+    sb.write_db("{garbage");
+    let out = sync_with(&sb, &remote, &["pull", "--force"]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert_eq!(db_tasks(&sb).len(), 3);
+    // The database that did not read is kept as the backup.
+    assert_eq!(fs::read_to_string(sb.db_path().with_extension("json.backup")).unwrap(), "{garbage");
+}
+
+/// REVIEW №107: a `.sync` that could not be written was not said; the
+/// next sync then reported a divergence that was none.
+#[test]
+#[cfg(all(unix, feature = "sync"))]
+fn r21_a_sync_that_cannot_be_recorded_says_so() {
+    use std::os::unix::fs::PermissionsExt;
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let (_, remote) = ssh_remote(&sb, "tasks.json");
+    let dir = sb.db_path().parent().unwrap().to_path_buf();
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
+    let out = sync_with(&sb, &remote, &[]);
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+    if fs::metadata(sb.db_path().with_extension("json.sync")).is_ok() {
+        eprintln!("skipping: running as a user that ignores directory modes (root?)");
+        return;
+    }
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(stderr_of(&out).contains("could not be recorded"), "{}", stderr_of(&out));
+}
+
+/// Review of R21: what a side holds after the sync was read back from it,
+/// so a change another writer made right after the write passed for this
+/// sync's: the next sync said "Already in sync", and a later push dropped
+/// it. The fake ssh here writes the remote itself right after rusk's write.
+#[test]
+#[cfg(all(unix, feature = "sync"))]
+fn r21_a_change_made_right_after_the_sync_is_not_taken_for_it() {
+    let sb = Sandbox::with_db(r#"[{"id":1,"text":"a"}]"#);
+    let (remote_path, remote) = ssh_remote(&sb, "tasks.json");
+    let count = sb.path().join("ssh-calls");
+    let meanwhile = sb.path().join("meanwhile.json");
+    fs::write(&meanwhile, r#"[{"id":1,"text":"a"},{"id":2,"text":"b"},{"id":3,"text":"added meanwhile"}]"#).unwrap();
+    let shim = format!(
+        "#!/bin/sh\nshift\nn=$(cat '{count}' 2>/dev/null || echo 0); n=$((n + 1)); echo $n > '{count}'\n\
+         sh -c \"$1\" <&0; rc=$?\n[ \"$(cat '{armed}' 2>/dev/null)\" = $n ] && cp '{meanwhile}' '{remote}'\nexit $rc\n",
+        count = count.display(),
+        armed = sb.path().join("armed").display(),
+        meanwhile = meanwhile.display(),
+        remote = remote_path.display(),
+    );
+    let sync = |args: &[&str]| {
+        sb.cmd_with_ssh_shim(&shim)
+            .env("RUSK_SYNC_REMOTE", &remote)
+            .arg("sync")
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    assert!(sync(&[]).status.success());
+    sb.cmd().args(["add", "b"]).output().unwrap();
+    // The next sync reads the remote (call 1) and writes it (call 2); the
+    // other writer comes right after that.
+    let calls: u32 = fs::read_to_string(&count).unwrap().trim().parse().unwrap();
+    fs::write(sb.path().join("armed"), format!("{}", calls + 2)).unwrap();
+    let out = sync(&[]);
+    assert!(stdout_of(&out).contains("Pushed 2 task(s)"), "{}", stdout_of(&out));
+    assert!(!stderr_of(&out).contains("does not hold the tasks exactly"), "{}", stderr_of(&out));
+
+    let out = sync(&[]);
+    assert!(stdout_of(&out).contains("Pulled 3 task(s)"), "{}\n{}", stdout_of(&out), stderr_of(&out));
+    assert_eq!(text_of(&db_tasks(&sb), 3), "added meanwhile");
+}
+
+/// Review of R21: `--force` over a side that holds the same tasks wrote it
+/// again and replaced its `.backup`, the one copy of what came before.
+#[test]
+#[cfg(all(unix, feature = "sync"))]
+fn r21_force_over_the_same_tasks_writes_nothing() {
+    let sb = Sandbox::with_db(r#"[{"id":1,"text":"a"},{"id":2,"text":"b"}]"#);
+    let (remote_path, remote) = ssh_remote(&sb, "tasks.json");
+    fs::write(&remote_path, sb.read_db()).unwrap();
+    let backup = sb.db_path().with_extension("json.backup");
+    fs::write(&backup, r#"[{"id":1,"text":"a"},{"id":2,"text":"b"},{"id":3,"text":"c"}]"#).unwrap();
+    let remote_before = fs::read(&remote_path).unwrap();
+    for direction in ["pull", "push"] {
+        let out = sync_with(&sb, &remote, &[direction, "--force"]);
+        assert!(out.status.success(), "{}", stderr_of(&out));
+        assert!(stdout_of(&out).contains("Already in sync"), "{direction}: {}", stdout_of(&out));
+    }
+    assert!(fs::read_to_string(&backup).unwrap().contains("\"c\""), "the backup was replaced");
+    assert_eq!(fs::read(&remote_path).unwrap(), remote_before);
+}
+
+/// Review of R21: without a sync on record, `push` towards the side that
+/// has the tasks (and `pull` the other way) spoke of "the last sync", and
+/// `pull --force` was offered to "discard" a change — it empties.
+#[test]
+#[cfg(all(unix, feature = "sync"))]
+fn r21_a_first_sync_the_wrong_way_says_what_happens() {
+    let sb = Sandbox::new();
+    let (remote_path, remote) = ssh_remote(&sb, "tasks.json");
+    fs::write(&remote_path, THREE_TASKS_DB).unwrap();
+    let out = sync_with(&sb, &remote, &["push"]);
+    let err = stderr_of(&out);
+    assert!(!out.status.success());
+    assert!(err.contains("have not been synced before") && !err.contains("since the last sync"), "{err}");
+    assert!(err.contains("`rusk sync pull` (or `rusk sync`) copies those tasks here"), "{err}");
+    assert!(err.contains("`rusk sync push --force` empties"), "{err}");
+
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let (_, remote) = ssh_remote(&sb, "missing.json");
+    let out = sync_with(&sb, &remote, &["pull"]);
+    let err = stderr_of(&out);
+    assert!(!out.status.success());
+    assert!(err.contains("have not been synced before") && err.contains("empties the local database"), "{err}");
+}
+
+/// Review of R21: a lossy remote synced by an older rusk, whose state has
+/// one hash for both sides, bounced back once after the upgrade.
+#[test]
+#[cfg(all(unix, feature = "sync"))]
+fn r21_an_older_state_with_a_lossy_remote_does_not_bounce() {
+    let sb = Sandbox::with_db(
+        r#"[{"id":1,"text":"first\n- [ ] nested item"},{"id":3,"text":"! bang"}]"#,
+    );
+    let (_, remote) = ssh_remote(&sb, "tasks.md");
+    assert!(sync_with(&sb, &remote, &[]).status.success());
+    // The state as rusk wrote it up to 0.7.3: one hash, the local one.
+    let state_path = sb.db_path().with_extension("json.sync");
+    let state: serde_json::Value = serde_json::from_str(&fs::read_to_string(&state_path).unwrap()).unwrap();
+    let legacy = serde_json::json!({"remote": state["remote"], "hash": state["local_hash"]});
+    fs::write(&state_path, legacy.to_string()).unwrap();
+    let before = sb.read_db();
+    let out = sync_with(&sb, &remote, &[]);
+    assert!(stdout_of(&out).contains("Already in sync"), "{}\n{}", stdout_of(&out), stderr_of(&out));
+    assert_eq!(sb.read_db(), before);
+}
+
+/// REVIEW №103: the Bearer token was on curl's command line, where `ps`
+/// shows it to every local user.
+#[test]
+#[cfg(all(unix, feature = "sync"))]
+fn r21_the_token_is_not_on_curls_command_line() {
+    use std::os::unix::fs::PermissionsExt;
+    let sb = Sandbox::new();
+    let bin = sb.path().join("fake-curl");
+    fs::create_dir_all(&bin).unwrap();
+    let log = sb.path().join("curl.log");
+    // Logs its arguments and the content of every `-H @file`, then answers
+    // like `curl -i` with an empty task list.
+    let script = format!(
+        "#!/bin/sh\nfor a in \"$@\"; do printf 'arg:%s\\n' \"$a\" >> '{log}'; \
+         case \"$a\" in @*) printf 'file:%s\\n' \"$(cat \"${{a#@}}\")\" >> '{log}';; esac; done\n\
+         printf 'HTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\n\\r\\n[]'\n",
+        log = log.display()
+    );
+    let curl = bin.join("curl");
+    fs::write(&curl, script).unwrap();
+    fs::set_permissions(&curl, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = std::env::join_paths(
+        std::iter::once(bin.clone()).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    // Through `rusk sync`: a debug binary keeps its database local whatever
+    // RUSK_DB says, but it talks to the sync remote.
+    let out = sb
+        .cmd()
+        .env("PATH", path)
+        .env("RUSK_SYNC_REMOTE", "http://127.0.0.1:9")
+        .env("RUSK_SYNC_TOKEN", "s3cret")
+        .arg("sync")
+        .output()
+        .unwrap();
+    let logged = fs::read_to_string(&log).unwrap_or_else(|_| panic!("curl was not run: {}", stderr_of(&out)));
+    assert!(logged.contains("file:Authorization: Bearer s3cret"), "{logged}");
+    assert!(!logged.lines().any(|l| l.starts_with("arg:") && l.contains("s3cret")), "{logged}");
+    // The file is gone once curl is done.
+    let file = logged.lines().find_map(|l| l.strip_prefix("arg:@")).unwrap();
+    assert!(!std::path::Path::new(file).exists(), "{file} was left behind");
+}
+
+/// REVIEW №58: the sync state was keyed by the remote as typed:
+/// `http://h:p/` and then `http://h:p` was a remote never synced with,
+/// and a local change after a pull became "both changed".
+#[test]
+#[cfg(all(unix, feature = "sync", feature = "web"))]
+fn r21_a_remote_is_one_however_it_is_spelled() {
+    if std::process::Command::new("curl").arg("--version").output().is_err() {
+        eprintln!("skipping: no curl");
+        return;
+    }
+    let served = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&served, "", &[]);
+    let sb = Sandbox::new();
+    let sync = |remote: &str, args: &[&str]| {
+        sb.cmd().env("RUSK_SYNC_REMOTE", remote).arg("sync").args(args).output().unwrap()
+    };
+    let with_slash = format!("http://127.0.0.1:{}/", server.port);
+    let out = sync(&with_slash, &["pull", "--force"]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    sb.cmd().args(["add", "local only"]).output().unwrap();
+    let out = sync(with_slash.trim_end_matches('/'), &[]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(stdout_of(&out).contains("Pushed 4 task(s)"), "{}", stdout_of(&out));
 }

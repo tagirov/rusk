@@ -264,7 +264,13 @@ rusk serve: browser ←→ tiny_http (web/server.rs), each request read, checked
     or one at a time (`server::DRAIN`): tiny_http buffers what is left of it whole
 
 rusk sync: sync.rs → the ssh/http backends as transports
-    → conflict check vs .sync state file → local Backend::save or remote replace
+    → conflict check: each side vs what the .sync state file says it held after the last
+      sync with this remote (keyed by its canonical form) → local Backend::save or remote
+      replace, and the hash of what that side holds now recorded — its format's stored form
+      of the list (`DbFormat::stored_form`: encoded, decoded, normalized), worked out rather
+      than read back, which would take in another writer's change; a server reports its
+      own in the `PUT` reply. `--force` needs only the source side; a target that reads is
+      read (same tasks: nothing written; its save checks staleness)
 ```
 
 ## Persistence

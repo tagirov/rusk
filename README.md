@@ -248,8 +248,10 @@ rusk serve --host 0.0.0.0   # requires web_token in the config
 ## Sync
 
 Synchronize the database with your VPS over SSH, or with a running
-`rusk serve` over HTTP(S). Conflicts are detected via the hash of the last
-synced state — nothing is silently overwritten. Details in
+`rusk serve` over HTTP(S). Conflicts are detected against what each side
+held after the last sync — nothing is silently overwritten, a change made on
+either side right after a sync is a change for the next one, and a first
+sync into an empty database simply fills it. Details in
 [WEB.md](WEB.md#rusk-sync)
 
 ```bash

@@ -301,9 +301,14 @@ pub fn replace_tasks(tm: &mut TaskManager, body: &str, if_match: Option<&str>) -
         *tasks = new.clone();
         Ok(tasks.len())
     });
+    // What the database holds now — its format may hold less than it was
+    // sent — worked out, not read back: `rusk sync` records it as the state
+    // of this side, and a read would hold another writer's change too.
+    let held = tm.stored_form(&new);
     let tasks = tm.tasks();
     finish(replaced, |count| {
-        ApiResponse::json(200, &serde_json::json!({ "count": count })).with_revision_of(tasks)
+        ApiResponse::json(200, &serde_json::json!({ "count": count, "tasks": held }))
+            .with_revision_of(tasks)
     })
 }
 

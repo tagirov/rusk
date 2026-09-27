@@ -98,14 +98,21 @@ impl HttpBackend {
     }
 
     /// Replaces the list on the server if it still has the revision
-    /// `if_match`; returns the revision of the new list.
-    fn put(&self, tasks: &[Task], if_match: Option<&str>) -> Result<Option<String>> {
+    /// `if_match`; returns the revision of the new list and the list as the
+    /// server holds it now, when it says (a server before R21 does not).
+    fn put(&self, tasks: &[Task], if_match: Option<&str>) -> Result<(Option<String>, Option<Vec<Task>>)> {
         let json = serde_json::to_string(tasks).context("Failed to serialize tasks")?;
         let res = self
             .request(Some("PUT"), Some(json.as_bytes()), if_match)
             .with_context(|| format!("failed to save tasks to {}", self.base))?;
         match res.status {
-            _ if res.is_success() => Ok(res.etag),
+            _ if res.is_success() => {
+                let held = serde_json::from_slice::<serde_json::Value>(&res.body)
+                    .ok()
+                    .and_then(|reply| reply.get("tasks").cloned())
+                    .and_then(|tasks| serde_json::from_value::<Vec<Task>>(tasks).ok());
+                Ok((res.etag, held))
+            }
             412 => Err(StaleDatabase::at(&self.base)),
             _ => Err(self.refused("save tasks to", &res)),
         }
@@ -120,9 +127,16 @@ impl HttpBackend {
     /// Replaces the list on the server, unless it has changed since this
     /// backend loaded it: that is a [`StaleDatabase`] error.
     pub fn save(&self, tasks: &[Task]) -> Result<()> {
-        let etag = self.put(tasks, self.etag().as_deref())?;
+        self.save_held(tasks).map(|_| ())
+    }
+
+    /// [`save`](Self::save), and what the server holds after it: the list
+    /// as its database stored it (its format may hold less), worked out by
+    /// the server as it stored it; `None` from a server that does not say.
+    pub fn save_held(&self, tasks: &[Task]) -> Result<Option<Vec<Task>>> {
+        let (etag, held) = self.put(tasks, self.etag().as_deref())?;
         self.set_etag(etag);
-        Ok(())
+        Ok(held)
     }
 
     /// Applies `change` to `snapshot` and saves the result; when the server
@@ -152,7 +166,7 @@ impl HttpBackend {
                 });
             }
             match self.put(&tasks, etag.as_deref()) {
-                Ok(new_etag) => {
+                Ok((new_etag, _)) => {
                     self.set_etag(new_etag);
                     return Ok(Updated {
                         tasks,

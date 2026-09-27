@@ -130,10 +130,23 @@ fn finish<T>(result: anyhow::Result<T>, ok: impl FnOnce(T) -> ApiResponse) -> Ap
     }
 }
 
+/// A request body as `T`. JSON that does not parse is "invalid JSON";
+/// JSON with a value a task can not take is `what`, and the value is named
+/// (`invalid task: date '2d' is not written YYYY-MM-DD`, REVIEW №18).
+fn parse_body<T: serde::de::DeserializeOwned>(body: &str, what: &str) -> Result<T, ApiResponse> {
+    serde_json::from_str(body).map_err(|e| {
+        let kind = match e.classify() {
+            serde_json::error::Category::Data => what,
+            _ => "invalid JSON",
+        };
+        ApiResponse::error(400, &format!("{kind}: {e}"))
+    })
+}
+
 #[derive(Deserialize)]
 struct NewTask {
     text: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::model::api_date")]
     date: Option<NaiveDate>,
     #[serde(default)]
     after: Vec<TaskId>,
@@ -152,11 +165,12 @@ pub struct TaskPatch {
     after: Option<Vec<TaskId>>,
 }
 
+/// A date held to what the API takes (REVIEW №18).
 fn some_option<'de, D>(deserializer: D) -> Result<Option<Option<NaiveDate>>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    Ok(Some(Option::<NaiveDate>::deserialize(deserializer)?))
+    Ok(Some(crate::model::api_date(deserializer)?))
 }
 
 /// GET /api/tasks
@@ -175,9 +189,9 @@ pub fn get_task(tm: &TaskManager, id: TaskId) -> ApiResponse {
 
 /// POST /api/tasks — `{"text": "...", "date": "YYYY-MM-DD" | null}`
 pub fn create_task(tm: &mut TaskManager, body: &str, if_match: Option<&str>) -> ApiResponse {
-    let new: NewTask = match serde_json::from_str(body) {
+    let new: NewTask = match parse_body(body, "invalid task") {
         Ok(v) => v,
-        Err(e) => return ApiResponse::error(400, &format!("invalid JSON: {e}")),
+        Err(response) => return response,
     };
     if new.text.trim().is_empty() {
         return ApiResponse::error(400, "Task text cannot be empty");
@@ -208,9 +222,9 @@ pub fn update_task(
     body: &str,
     if_match: Option<&str>,
 ) -> ApiResponse {
-    let patch: TaskPatch = match serde_json::from_str(body) {
+    let patch: TaskPatch = match parse_body(body, "invalid task") {
         Ok(v) => v,
-        Err(e) => return ApiResponse::error(400, &format!("invalid JSON: {e}")),
+        Err(response) => return response,
     };
     if let Some(text) = &patch.text
         && text.trim().is_empty()
@@ -285,9 +299,9 @@ pub fn delete_done(tm: &mut TaskManager, if_match: Option<&str>) -> ApiResponse 
 /// made to follow ([`normalize`]): a list that a load would have to repair
 /// is refused, with what is wrong.
 pub fn replace_tasks(tm: &mut TaskManager, body: &str, if_match: Option<&str>) -> ApiResponse {
-    let new: Vec<Task> = match serde_json::from_str(body) {
+    let new: Vec<Task> = match parse_body(body, "invalid task list") {
         Ok(v) => v,
-        Err(e) => return ApiResponse::error(400, &format!("invalid JSON: {e}")),
+        Err(response) => return response,
     };
     match normalize(&mut new.clone()) {
         Ok(repairs) if repairs.is_empty() => {}

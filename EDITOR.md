@@ -255,16 +255,21 @@ exists so that the next edit of that task can offer the text back.
 
 The due date (if any) is **only** the first whitespace-delimited token at the
 **very start of the first line**. It may be an absolute date (`DD-MM-YYYY`,
-slashes or dots or short year ok), the words `today` / `tomorrow`, a relative
+slashes or dots ok, a two-digit year is 20xx, the month may be a name:
+`11-jan-25`, `1-sept-2026`; years run from 1000 to 9999), the words
+`today` / `tomorrow`, a relative
 offset from today (`2d`, `2w`, `10d5w`,
-`1m3q`, …), or a relative offset from **this task's current due date** using a
+`1m3q`, …; the months are added first, in one step, then the days), or a
+relative offset from **this task's current due date** using a
 leading `+` (`+2w`, `+10d5w`, …; if the task had no due date yet, `+` uses
 today, same as `rusk add -d`). Use `_` as the only date token to clear
 the deadline. A **recognized** token is **highlighted in color** on that line
 (green for today or later, red if before today); text that does not parse as a
 date is not colored. The following text are the body. A date alone on the
 first line is fine: the text starts on the next one. Empty lines before and
-after the text are not stored.
+after the text are not stored. A task due in a year outside 1000–9999 (a
+file an older rusk wrote; see README → Database Formats) opens with that date as
+its first token, and keeps it when you leave the token as it is.
 
 A `_` word right after the date — or right after the `_` that is no date —
 is dropped too, and the word after it stays text: `01-01-2027 _ 2d fix` is

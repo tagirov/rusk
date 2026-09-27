@@ -160,7 +160,10 @@ typed on it; otherwise it says so in the banner and leaves reloading to you.
 ### API
 
 All endpoints return JSON and require the token (when configured) via cookie
-or Bearer header. Dates are ISO `YYYY-MM-DD`.
+or Bearer header. Dates are ISO `YYYY-MM-DD`, in the years 1000–9999. A body
+that is not JSON is a `400` "invalid JSON"; one with a value a task can not
+take is a `400` that names it (`invalid task: date '2d' is not written
+YYYY-MM-DD at line 1 column 25`).
 
 | Method & path | Body | Result |
 |---|---|---|

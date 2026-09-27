@@ -240,6 +240,23 @@ impl FileBackend {
                 let context_line = json_error_line_context(data, json_err)
                     .map(|c| format!(" Context: {c}"))
                     .unwrap_or_default();
+                // Well-formed JSON with a value rusk does not take (a date
+                // that is no day, text where a number goes): every task is
+                // still there, and deleting the file is the last thing to
+                // suggest (review of R25).
+                if json_err.classify() == serde_json::error::Category::Data {
+                    return anyhow::anyhow!(
+                        "Failed to parse the database file at '{}'. The file is well-formed \
+                        JSON, but a value in it is not one rusk can read.\n\
+                        JSON parsing error: {}{}\n\
+                        \n\
+                        To fix this issue, correct that value in the file (a date is \
+                        written YYYY-MM-DD), or restore from backup if you have one.",
+                        self.path.display(),
+                        json_err,
+                        context_line
+                    );
+                }
                 anyhow::anyhow!(
                     "Failed to parse the database file at '{}'. The file appears to be corrupted.\n\
                     JSON parsing error: {}{}\n\

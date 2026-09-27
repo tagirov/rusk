@@ -29,10 +29,32 @@ pub use backend::{Backend, Loaded, StaleDatabase};
 pub use config::{ColorValue, Config, Theme};
 pub use model::{Task, TaskId};
 
+/// Set by the `rusk` command when it starts (see [`is_test_mode`]).
+static COMMAND: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Tells the library it runs as the `rusk` command, not in a test harness.
+#[doc(hidden)]
+pub fn running_as_the_command() {
+    COMMAND.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// True when running under a test harness (cargo test env vars or a test
 /// binary name). Debug/test runs must not touch the user's real config file,
 /// mirroring the database-path isolation in `TaskManager::resolve_db_path`.
+///
+/// The `rusk` command itself built for release never is: one that finds
+/// `RUST_TEST_THREADS` in its environment, or is installed under a name
+/// holding "test" (`rusk-latest`), is still the user's rusk with the user's
+/// database and config (REVIEW №12). The library in a test binary is, in
+/// any profile: `cargo test --release` must not reach the user's database
+/// either (review of R25).
 pub(crate) fn is_test_mode() -> bool {
+    if cfg!(test) {
+        return true;
+    }
+    if !cfg!(debug_assertions) && COMMAND.load(std::sync::atomic::Ordering::Relaxed) {
+        return false;
+    }
     let env_check = std::env::var("RUST_TEST_THREADS").is_ok()
         || std::env::var("CARGO_TEST").is_ok()
         || std::env::var("__CARGO_TEST_CHANNEL").is_ok();
@@ -44,7 +66,7 @@ pub(crate) fn is_test_mode() -> bool {
                 .map(|s| s.contains("test"))
         })
         .unwrap_or(false);
-    env_check || exe_check || cfg!(test)
+    env_check || exe_check
 }
 pub use parser::{
     IdListError, is_cli_date_help_value, normalize_date_string, parse_cli_date,

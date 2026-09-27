@@ -534,6 +534,41 @@ numbers. The parsed `Config` lives in a process-wide `OnceLock`
 library/unit-test use falls back to defaults. Test/debug isolation mirrors
 the database rules: the default config path is only read by release binaries
 outside test mode, and `RUSK_CONFIG` overrides everywhere (empty = disabled).
+Test mode itself (`is_test_mode`: cargo's test variables, "test" in the name
+of the binary) never applies to the `rusk` command built for release
+(`main` calls `rusk::running_as_the_command()` first): that binary is the
+user's rusk whatever its name and environment. The library linked into a
+test binary is in test mode in any profile, so `cargo test --release` does
+not reach the user's database either; tests that need test mode in the
+binary itself are `#[cfg(debug_assertions)]`.
+
+The file is read as bytes (`config::parse_bytes`): a BOM in front of a key
+is dropped, and bytes that are no UTF-8 cost their line only when they are
+in its key or value. A value is bare — a comment starts at a `#` after
+whitespace, or at the `#`s that open the value when whitespace or nothing
+follows them (`key = # note` is an empty value) — or quoted: literal up to
+the next `"`, with nothing but a comment after it; a quote left open is an
+error for that line, and the warning does not echo the value (it may be a
+token). The bare `default` resets a setting to its built-in value
+(`reset_setting`), whatever an earlier line set; a variable named `default`
+shadows it like any variable. Warnings carry their line number and are
+sorted by it; the one about `git_backend = true` in a build without git is
+made after the last line, of the value the file ends with.
+
+Dates are held to four-digit years (`model::YEARS`, 1000–9999) wherever
+they come in: the CLI parser and the editor (which also checks the shape of
+the year: two digits or four), and the web API (`model::parse_iso_date`:
+exactly `YYYY-MM-DD`; an error names the value, apart from JSON that does
+not parse). What is stored is read as chrono reads it, in every codec and in
+SQLite: a date outside the years is kept, and `model::normalize` reports it
+(`Repairs::out_of_range`), so a database an older rusk wrote stays open to
+correct it; the editor keeps a task's own date when its token is left
+untouched. A `PUT` refuses a list with one, as it refuses every list a load
+would repair. A two-digit year on the command line is 20xx, and the list
+shows `D-mon-yy` for 2000–2099 and all four digits otherwise (`1-jan-0205`).
+Relative offsets add all months (m, q, y) in one step, then the days (d, w),
+so the end of a short month is applied once (`+1m1m` is `+2m`); a sum past
+what a date can hold is the same out-of-range error as a year past 9999.
 
 ## Shell completion
 

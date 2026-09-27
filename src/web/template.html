@@ -216,7 +216,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .55); }
 <form id="addbar" autocomplete="off" hidden>
   <div class="wrap">
     <div id="daterow" hidden>
-      <input type="date" id="add-date" aria-label="Due date">
+      <input type="date" id="add-date" aria-label="Due date" min="1000-01-01" max="9999-12-31">
       <button type="button" class="btn" id="add-date-clear">✕</button>
     </div>
     <div id="mainrow">
@@ -231,7 +231,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .55); }
   <form method="dialog" id="edit-form">
     <textarea id="edit-text" aria-label="Task text"></textarea>
     <div class="editrow">
-      <input type="date" id="edit-date" aria-label="Due date">
+      <input type="date" id="edit-date" aria-label="Due date" min="1000-01-01" max="9999-12-31">
       <button type="button" class="btn" id="edit-date-clear" title="Clear date">✕</button>
       <input type="checkbox" id="edit-prio">
       <label for="edit-prio">priority</label>

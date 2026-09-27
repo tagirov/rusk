@@ -16,21 +16,34 @@ delete at any time.
   if missing).
 - `RUSK_CONFIG=` (empty) disables the config system entirely.
 - Debug builds and test runs never touch the default config file; only an
-  explicit `RUSK_CONFIG` is honored there.
+  explicit `RUSK_CONFIG` is honored there. A release binary always reads
+  it, whatever it is called and whatever is in its environment.
 
 Problems in the file are **never fatal**: every unparseable line produces a
 yellow warning with its line number (`cfg:12: ...`) and the built-in default
-is kept — a broken theme cannot lock you out of your tasks.
+is kept — a broken theme cannot lock you out of your tasks. The warnings come
+in the order of the lines.
 
 ## Syntax
 
 ```
 # Comments start with `#`; blank lines are ignored.
-key = value              # inline comments too (a leading `#` is a hex color, not a comment)
+key = value              # inline comments too (`#` glued to a value, as in a hex color, is part of it)
+key =                    # an empty value; the comment is a comment
 title = "quoted value"   # quotes make the value literal (no variable resolution)
 ```
 
 - One `key = value` per line. Keys are lowercase `a-z`, digits, `_`.
+- Inside a value, a `#` after whitespace starts a comment. At the start of
+  a value, `#` starts one only when whitespace or the end of the line follows
+  it (`key = # note` and `key = ## note` are empty values); `#ffa500`, `#abc`
+  and `a#b` are values. A quoted value runs to the next `"` and has no
+  escapes: a quote that is never closed, or anything but a comment after the
+  closing one, is an error, and the line is skipped with a warning.
+- The file is UTF-8. A byte order mark in front of a key is ignored. Bytes
+  that are not UTF-8 cost the line they are in, with a warning, when they
+  are in its key or value; in a comment they are harmless. The rest of the
+  file is read either way.
 - **Variables**: any key that is not a recognized setting defines a variable.
   A later bare value that matches a variable name resolves to it:
 
@@ -41,7 +54,10 @@ title = "quoted value"   # quotes make the value literal (no variable resolution
 
 - A **theme key can reference another theme key** — `priority_marker = accent`
   copies accent's current value.
-- The literal value `default` keeps the built-in default.
+- The bare value `default` is the built-in default: it also undoes what an
+  earlier line set for the same key. (A variable you name `default` takes
+  its place, as any variable does for its name; `"default"` in quotes is
+  the word itself.)
 - Duplicate keys: the last one wins.
 - A variable that is never referenced produces a warning (this catches typos
   in setting names).

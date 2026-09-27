@@ -78,6 +78,10 @@ fn test_invalid_json_structure() {
     assert!(result.is_err());
     let error_msg = result.unwrap_err().to_string();
     assert!(error_msg.contains("Failed to parse the database file"));
+    // Well-formed JSON of the wrong shape is not corruption, and deleting
+    // the file is not the way out (review of R25).
+    assert!(error_msg.contains("correct that value"), "{error_msg}");
+    assert!(!error_msg.contains("rm '"), "{error_msg}");
 }
 
 #[test]

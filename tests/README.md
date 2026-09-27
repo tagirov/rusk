@@ -204,7 +204,13 @@ Every test that runs the binary must go through a `Sandbox`. Debug and
 test-mode binaries ignore `RUSK_DB` and pin the database to
 `$TMPDIR/rusk_debug/tasks.json`; the sandbox points `TMPDIR` (and `RUSK_DB`,
 for release binaries) at its own directory and forces test mode on the child,
-so a debug binary never seeds its demo tasks into the test database.
+so a debug binary never seeds its demo tasks into the test database. Test
+mode in the binary exists in debug builds only: the `rusk` command built for
+release never is in it (REVIEW №12), whatever its name or environment, so a
+test that needs it there (`RUSK_DB` ignored) is `#[cfg(debug_assertions)]`,
+and `r25_a_release_binary_is_never_in_test_mode` runs under
+`cargo test --release` only. The library linked into a test binary is in
+test mode in any profile.
 
 Usage:
 ```rust
@@ -329,6 +335,11 @@ These tests are designed to run in CI/CD pipelines:
   needs a pty — an empty `NO_COLOR` on a terminal, clap's colors, the `del`
   prompt, the editor's report after a failed save — was checked against a
   release binary (see the R19 status in REVIEW.md).
+  R25's config parser is unit-tested in `src/config.rs` (comments, quotes,
+  bytes, `default`, the template), the date parser in `src/parser/date.rs`
+  (the shape and range of a year, months first), stored dates outside the
+  years in `src/model.rs` (`normalize`, `parse_iso_date`); the `r25_*` tests
+  run the binary with a config file of their own.
   R3's rules themselves are unit-tested in `src/model.rs` (`normalize`), the
   CSV rows and lines in `src/codec/csv.rs`. R4's measuring is unit-tested in
   `src/width.rs` and its editor half in `src/cli/editor/view.rs`; what a

@@ -278,6 +278,17 @@ mod tests {
         assert_eq!(tasks[1].id, 0);
     }
 
+    /// Review of R25: a `due:` word any date chrono reads is protected by
+    /// the encoder, so the decoder has to take the `\` off it again — held
+    /// to four-digit years, `pay \due:2026-7-1 bill` kept its backslash.
+    #[test]
+    fn a_protected_lenient_due_word_comes_back_bare() {
+        let t = task(1, "pay due:2026-7-1 bill");
+        let txt = encode(std::slice::from_ref(&t));
+        assert!(txt.contains("\\due:2026-7-1"), "{txt}");
+        assert_eq!(decode(&txt).unwrap(), vec![t]);
+    }
+
     #[test]
     fn invalid_due_and_id_stay_in_text() {
         let tasks = decode("ship due:tomorrow id:zero\n").unwrap();

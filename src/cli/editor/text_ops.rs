@@ -185,6 +185,13 @@ pub fn leading_date(
     if token.is_empty() {
         return None;
     }
+    // The task's own date as the editor opened it is its date, also one of
+    // a year no longer taken as input: saving keeps it, so it is colored.
+    if let Some(date) = relative_edit_base
+        && token == date.format("%d-%m-%Y").to_string()
+    {
+        return Some((token.len(), date));
+    }
     crate::parse_cli_date_for_edit(&token, relative_edit_base)
         .ok()
         .map(|d| (token.len(), d))

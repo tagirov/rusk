@@ -5,11 +5,16 @@ use crate::completions::Shell;
 
 pub const DATE_FORMAT_LONG_HELP: &str = "\
 Date value for -d / --date (see `rusk add --help`):
-  Absolute    DD-MM-YYYY (slashes ok; short year ok, e.g. 1-3-25).
+  Absolute    DD-MM-YYYY, with -, / or . between the parts; leading zeros optional; a
+              two-digit year is 20xx (1-3-25 = 1 March 2025). The month may be a name:
+              DD-Mon-YY or DD-Mon-YYYY (11-jan-25, 1-sept-2026, 3-February-27).
+              Years run from 1000 to 9999.
   Words       today, tomorrow.
   Relative    Offset from today's local date. Chain segments with no spaces.
               Suffixes: d=days, w=weeks, m=months, q=quarters (3 months), y=years.
-              Examples: 2d, 2w, 5m, 3q, 2y, 10d5w, 12d2q1y.
+              Examples: 2d, 2w, 5m, 3q, 2y, 10d5w, 12d2q1y. All months are added
+              first, in one step, then the days: from the 31st, a shorter month ends
+              the date at its last day (31-01 + 1m = 28-02).
   Clear       Pass _ for no date (e.g. -d _): it removes the date of a task being edited.
   Subcommand  Pass -h or --help as the date value for this command's help (e.g. -d -h).\n";
 

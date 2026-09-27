@@ -89,15 +89,21 @@ rusk add Finish project report --date 31-12-2025
 rusk add Finish project report --date 31/12/25
 rusk add Finish project report --date 31.12.25
 
-# Leading zero for day and month is optional:
+# Leading zero for day and month is optional; a two-digit year is 20xx:
 rusk add Finish project report --date 1-3-25
+
+# The month may be a name (English, short or long):
+rusk add Tax return --date 30-apr-26
+rusk add Renew passport --date 1-September-2027
 
 # Plain words work too:
 rusk add Call mom --date today
 rusk add Buy milk --date tomorrow
 
 # Relative deadline from today (local date): chain number + suffix with no spaces.
-# d=days, w=weeks, m=months, q=quarters (3 months), y=years
+# d=days, w=weeks, m=months, q=quarters (3 months), y=years. The months are added
+# first (a shorter month ends the date at its last day: 31-01 + 1m = 28-02), then
+# the days. Years run from 1000 to 9999.
 rusk add Follow up --date 2w
 rusk add Review --date 10d5w
 
@@ -494,6 +500,12 @@ held to the same rules before anything uses it:
   reason `after` can only name ids the file already gives (an item added
   without an id has none until the next save). A dependency on the task
   itself, or one listed twice, is dropped too.
+- A due date is given with a year from 1000 to 9999. One outside that — a
+  typo an older rusk took (`1-1-205`) — is read as it is, shown with all
+  its digits (`1-jan-0205`) and named in a warning, so that
+  `rusk edit 2 -d <date>` or `-d _` can correct it. `rusk serve` does not
+  take a whole list with one (`PUT`, as `rusk sync push` sends), as it takes
+  no list a load would have to repair.
 - In JSON only `text` is required: any other field may be left out or `null`.
 
 The file itself changes only with the next save, and the `.backup` keeps what

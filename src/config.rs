@@ -237,26 +237,40 @@ fn is_valid_key(key: &str) -> bool {
 
 /// Splits a raw (already trimmed) value into its content and whether it was
 /// quoted. Quoted values are literal: no comment stripping, no variable
-/// resolution. In bare values an inline comment starts at the first `#`
-/// preceded by whitespace — a leading `#` (hex colors) is part of the value.
-fn parse_value(raw: &str) -> (String, bool) {
+/// resolution, no escapes. In bare values an inline comment starts at a `#`
+/// that is preceded by whitespace, or at the `#`s that open the value when
+/// whitespace or nothing follows them (`rusk_db = # note` and `## note` are
+/// an empty value, REVIEW №41); `#` glued to what follows (`#ffa500`) is
+/// part of the value. A quote that is never closed, or anything but a
+/// comment after the closing one, is an error (REVIEW №129): the value
+/// would otherwise be something else than it looks. The error does not
+/// quote the value: it may be a token (review of R25).
+fn parse_value(raw: &str) -> Result<(String, bool), String> {
     if let Some(rest) = raw.strip_prefix('"') {
-        let content = match rest.find('"') {
-            Some(end) => &rest[..end],
-            None => rest,
+        let Some(end) = rest.find('"') else {
+            return Err("a quoted value without its closing quote".to_string());
         };
-        return (content.to_string(), true);
+        let after = rest[end + 1..].trim_start();
+        if !after.is_empty() && !after.starts_with('#') {
+            return Err(
+                "text after the closing quote (a quoted value holds no quotes of its own)"
+                    .to_string(),
+            );
+        }
+        return Ok((rest[..end].to_string(), true));
     }
     let mut cut = raw.len();
-    let mut prev_is_space = false;
+    let mut prev_is_space = true;
+    let opens_with_comment = raw.trim_start_matches('#').chars().next().is_none_or(char::is_whitespace);
     for (i, c) in raw.char_indices() {
-        if c == '#' && prev_is_space {
+        let starts_comment = c == '#' && prev_is_space && (i > 0 || opens_with_comment);
+        if starts_comment {
             cut = i;
             break;
         }
         prev_is_space = c.is_whitespace();
     }
-    (raw[..cut].trim_end().to_string(), false)
+    Ok((raw[..cut].trim_end().to_string(), false))
 }
 
 /// A non-empty environment variable wins over the config value. One that
@@ -297,6 +311,31 @@ struct Var {
     referenced: bool,
 }
 
+/// Sets `key` back to its built-in value: the literal `default`, even after
+/// an earlier line set it (REVIEW №127).
+fn reset_setting(config: &mut Config, key: &str) {
+    let defaults = Config::default();
+    match key {
+        "rusk_db" => config.rusk_db = defaults.rusk_db,
+        "db_token" => config.db_token = defaults.db_token,
+        "no_color" => config.no_color = defaults.no_color,
+        "compact" => config.compact = defaults.compact,
+        "backup" => config.backup = defaults.backup,
+        "git_backend" => config.git_backend = defaults.git_backend,
+        "web_host" => config.web_host = defaults.web_host,
+        "web_port" => config.web_port = defaults.web_port,
+        "web_token" => config.web_token = defaults.web_token,
+        "sync_remote" => config.sync_remote = defaults.sync_remote,
+        "sync_token" => config.sync_token = defaults.sync_token,
+        "keywords" => config.keywords = defaults.keywords,
+        theme_key => {
+            if let Some(color) = defaults.theme.get(theme_key) {
+                config.theme.set(theme_key, color);
+            }
+        }
+    }
+}
+
 fn apply_setting(
     config: &mut Config,
     key: &str,
@@ -317,17 +356,7 @@ fn apply_setting(
             Ok(b) => match key {
                 "no_color" => config.no_color = b,
                 "compact" => config.compact = b,
-                "git_backend" => {
-                    // A build without the git layer would take the setting
-                    // and commit nothing, in silence (REVIEW №59).
-                    if b && cfg!(not(feature = "backend-git")) {
-                        warnings.push(format!(
-                            "cfg:{line}: git_backend = true needs the 'backend-git' feature, \
-                             which this build lacks; saves are not committed"
-                        ));
-                    }
-                    config.git_backend = b;
-                }
+                "git_backend" => config.git_backend = b,
                 _ => config.backup = b,
             },
             Err(e) => warn(format!("invalid value for '{key}': {e}")),
@@ -363,32 +392,72 @@ fn apply_setting(
 }
 
 /// Parses config text into a [`Config`]. Pure and never fatal: anything
-/// unparseable keeps its default and is reported in `warnings`.
+/// unparseable keeps its default and is reported in `warnings`, in the
+/// order of the lines (REVIEW №130).
 pub fn parse(text: &str) -> LoadOutcome {
-    let mut config = Config::default();
-    let mut warnings = Vec::new();
-    let mut vars: Vec<Var> = Vec::new();
+    parse_bytes(text.as_bytes())
+}
 
-    for (i, raw_line) in text.lines().enumerate() {
+/// [`parse`] of the file as it is: bytes that are not UTF-8 (a Latin-1
+/// letter) cost the line they are in when they are in its key or value —
+/// not the whole file, and not the line when they are in its comment
+/// (REVIEW №128, review of R25).
+pub fn parse_bytes(bytes: &[u8]) -> LoadOutcome {
+    let mut config = Config::default();
+    let mut warnings: Vec<(usize, String)> = Vec::new();
+    let mut vars: Vec<Var> = Vec::new();
+    // The line that last set `git_backend`.
+    let mut git_backend_line = None;
+
+    for (i, raw_line) in bytes.split(|&b| b == b'\n').enumerate() {
         let line_no = i + 1;
-        let line = raw_line.trim_end_matches('\r').trim();
+        let not_utf8 = || (line_no, format!("cfg:{line_no}: not valid UTF-8; line skipped"));
+        let (raw_line, lossy) = match std::str::from_utf8(raw_line) {
+            Ok(line) => (std::borrow::Cow::Borrowed(line), false),
+            Err(_) => (String::from_utf8_lossy(raw_line), true),
+        };
+        let replaced = |part: &str| lossy && part.contains(char::REPLACEMENT_CHARACTER);
+        // A byte order mark in front of a key is none of the key's, at the
+        // start of the file or of a file appended to another (REVIEW №126).
+        let line = raw_line.trim_end_matches('\r').trim_start_matches('\u{feff}').trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
         let Some(eq) = line.find('=') else {
-            warnings.push(format!("cfg:{line_no}: expected `key = value`; line skipped"));
+            warnings.push(if replaced(line) {
+                not_utf8()
+            } else {
+                (line_no, format!("cfg:{line_no}: expected `key = value`; line skipped"))
+            });
             continue;
         };
         let key = line[..eq].trim();
-        if !is_valid_key(key) {
-            warnings.push(format!("cfg:{line_no}: invalid key '{key}'; line skipped"));
+        if replaced(key) {
+            warnings.push(not_utf8());
             continue;
         }
-        let (value, quoted) = parse_value(line[eq + 1..].trim());
+        if !is_valid_key(key) {
+            warnings.push((
+                line_no,
+                format!("cfg:{line_no}: invalid key '{}'; line skipped", key.escape_debug()),
+            ));
+            continue;
+        }
+        let (value, quoted) = match parse_value(line[eq + 1..].trim()) {
+            Ok((value, _)) if replaced(&value) => {
+                warnings.push(not_utf8());
+                continue;
+            }
+            Ok(parsed) => parsed,
+            Err(why) => {
+                warnings.push((line_no, format!("cfg:{line_no}: {why} for '{key}'; line skipped")));
+                continue;
+            }
+        };
         // Settings decide themselves what an empty value means
         // (`keywords =` clears the list); an empty variable is a mistake.
         if value.is_empty() && !is_setting(key) {
-            warnings.push(format!("cfg:{line_no}: empty value for '{key}'; line skipped"));
+            warnings.push((line_no, format!("cfg:{line_no}: empty value for '{key}'; line skipped")));
             continue;
         }
 
@@ -403,12 +472,18 @@ pub fn parse(text: &str) -> LoadOutcome {
         };
 
         if is_setting(key) {
-            // The literal `default` keeps the built-in value, so the shipped
+            // The literal `default` is the built-in value, so the shipped
             // template can document every setting without changing behavior.
             if !quoted && resolved == "default" {
+                reset_setting(&mut config, key);
                 continue;
             }
-            apply_setting(&mut config, key, &resolved, line_no, &mut warnings);
+            let mut messages = Vec::new();
+            apply_setting(&mut config, key, &resolved, line_no, &mut messages);
+            if key == "git_backend" && messages.is_empty() {
+                git_backend_line = Some(line_no);
+            }
+            warnings.extend(messages.into_iter().map(|m| (line_no, m)));
         } else if let Some(var) = vars.iter_mut().find(|v| v.name == key) {
             var.value = resolved;
             var.line = line_no;
@@ -422,16 +497,35 @@ pub fn parse(text: &str) -> LoadOutcome {
         }
     }
 
+    // A build without the git layer would take the setting and commit
+    // nothing, in silence (REVIEW №59); said of the value the file ends
+    // with, not of a line a later one undid (review of R25).
+    if cfg!(not(feature = "backend-git"))
+        && config.git_backend
+        && let Some(line) = git_backend_line
+    {
+        warnings.push((
+            line,
+            format!(
+                "cfg:{line}: git_backend = true needs the 'backend-git' feature, which this \
+                 build lacks; saves are not committed"
+            ),
+        ));
+    }
     for var in &vars {
         if !var.referenced {
-            warnings.push(format!(
-                "cfg:{}: unused variable '{}' — did you mean a setting?",
-                var.line, var.name
+            warnings.push((
+                var.line,
+                format!("cfg:{}: unused variable '{}' — did you mean a setting?", var.line, var.name),
             ));
         }
     }
+    warnings.sort_by_key(|(line, _)| *line);
 
-    LoadOutcome { config, warnings }
+    LoadOutcome {
+        config,
+        warnings: warnings.into_iter().map(|(_, message)| message).collect(),
+    }
 }
 
 /// Template written on first run. The two active lines reproduce the built-in
@@ -442,8 +536,8 @@ const DEFAULT_CONFIG: &str = "\
 #
 # Syntax: `key = value`, one per line; `#` starts a comment.
 # Any key that is not a recognized setting defines a variable; a later bare
-# value that matches a variable name resolves to it. The literal value
-# `default` keeps the built-in default.
+# value that matches a variable name resolves to it. The bare value
+# `default` is the built-in value, also after an earlier line set another.
 # Colors: one of the 16 ANSI names (black, red, green, yellow, blue, magenta,
 # cyan, white, bright_black, bright_red, ...) or a hex value like #ffa500.
 # Environment variables always override this file:
@@ -458,7 +552,8 @@ const DEFAULT_CONFIG: &str = "\
 #                            # (.json default; .csv, .md, .txt (todo.txt), .ndjson/.jsonl,
 #                            # .ics, .db/.sqlite/.sqlite3 — each needs its build feature).
 #                            # Remote: https://host (rusk serve API) or user@host:/path (ssh).
-# db_token =                 # Bearer token when rusk_db is an http(s) location
+# Bearer token when rusk_db is an http(s) location:
+# db_token =
 # git_backend = false        # commit every save of a local file database to a git repo
 #                            # in the database directory (history + undo; needs `git`)
 # no_color = false           # disable ANSI colors in terminal output
@@ -472,11 +567,14 @@ const DEFAULT_CONFIG: &str = "\
 # --- web: rusk serve / rusk gen ---
 # web_host = 127.0.0.1
 # web_port = 7272
-# web_token =                # required when web_host is not localhost
+# Access token, required when web_host is not a loopback address:
+# web_token =
 
 # --- sync: rusk sync ---
-# sync_remote =              # user@host:/path/tasks.json (ssh) or https://host (rusk serve API)
-# sync_token =               # Bearer token for http(s) remotes
+# user@host:/path/tasks.json (ssh) or https://host (rusk serve API):
+# sync_remote =
+# Bearer token for http(s) remotes:
+# sync_token =
 
 # --- theme ---
 # A color value is an ANSI name, a hex #rrggbb, a variable, or another theme key.
@@ -491,6 +589,7 @@ priority_marker = accent
 # list_header = blue
 # done_marker = green
 # task_id = default
+# search_match = yellow
 # keyword = yellow
 # date_overdue = red
 # date_upcoming = cyan
@@ -525,8 +624,8 @@ fn load_from(path: PathBuf) -> LoadOutcome {
             };
         }
     }
-    match std::fs::read_to_string(&path) {
-        Ok(text) => parse(&text),
+    match std::fs::read(&path) {
+        Ok(bytes) => parse_bytes(&bytes),
         Err(e) => LoadOutcome {
             warnings: vec![format!(
                 "could not read config file {}: {e}",
@@ -582,6 +681,124 @@ mod tests {
 
     fn cfg(text: &str) -> Config {
         parse(text).config
+    }
+
+    /// REVIEW №41: `key = # note` made the note the value.
+    #[test]
+    fn a_comment_after_an_empty_value_is_a_comment() {
+        let parsed = parse("rusk_db = # some comment\nweb_token =      # required\nkeywords =   # disabled\n");
+        assert_eq!(parsed.config.rusk_db, None);
+        assert_eq!(parsed.config.web_token, None);
+        assert!(parsed.config.keywords.is_empty());
+        assert_eq!(parsed.warnings.len(), 2, "{:?}", parsed.warnings);
+        // A hex color keeps its `#`, and so does a value that is not a comment.
+        assert_eq!(cfg("error = #ff0000\n").theme.error, ColorValue::parse("#ff0000").unwrap());
+        assert_eq!(cfg("db_token = #tok\n").db_token.as_deref(), Some("#tok"));
+        assert_eq!(cfg("db_token = a#b # note\n").db_token.as_deref(), Some("a#b"));
+        // Review of R25: so are the `#`s of `## note`; `##tok` is a value.
+        assert_eq!(cfg("db_token = ## note\n").db_token, None);
+        assert_eq!(cfg("db_token = ##tok\n").db_token.as_deref(), Some("##tok"));
+    }
+
+    /// REVIEW №125: every setting and theme key is in the template.
+    #[test]
+    fn the_template_lists_every_setting() {
+        for key in SETTINGS.iter().chain(Theme::KEYS) {
+            assert!(
+                DEFAULT_CONFIG.lines().any(|l| l.trim_start_matches("# ").starts_with(&format!("{key} ="))),
+                "{key} is not in the template"
+            );
+        }
+        // And uncommenting all of them — `# db_token =` too, which ends at
+        // its `=` — gives the built-in values: no value that is really a
+        // comment, and nothing but the empty values and the example
+        // variable to warn of (review of R25).
+        let is_setting_line = |l: &&str| l.split_once(" =").is_some_and(|(key, _)| is_valid_key(key));
+        let uncommented: String = DEFAULT_CONFIG
+            .lines()
+            .map(|l| l.strip_prefix("# ").filter(is_setting_line).unwrap_or(l))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        let parsed = parse(&uncommented);
+        assert_eq!(parsed.config, Config::default());
+        let (empty, other): (Vec<_>, Vec<_>) = parsed.warnings.iter().partition(|w| w.contains("empty value"));
+        assert_eq!(empty.len(), 4, "{:?}", parsed.warnings);
+        assert!(matches!(other.as_slice(), [w] if w.contains("unused variable 'my_accent'")), "{other:?}");
+    }
+
+    /// REVIEW №126: a BOM made the first key invalid.
+    #[test]
+    fn a_byte_order_mark_is_not_part_of_the_first_key() {
+        let parsed = parse("\u{feff}no_color = true\n");
+        assert!(parsed.config.no_color);
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        // Review of R25: nor of a key further down (a file appended to
+        // another); a key that is invalid for a character nobody sees shows it.
+        let parsed = parse("error = green\n\u{feff}no_color = true\n");
+        assert!(parsed.config.no_color);
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert_eq!(warnings("no\u{200b}_color = true\n"), ["cfg:1: invalid key 'no\\u{200b}_color'; line skipped"]);
+    }
+
+    /// REVIEW №127: `default` skipped the line and kept an earlier value.
+    #[test]
+    fn default_resets_what_an_earlier_line_set() {
+        let c = cfg("error = green\nerror = default\nkeywords = A B\nkeywords = default\nweb_port = 1\nweb_port = default\n");
+        let defaults = Config::default();
+        assert_eq!(c.theme.error, defaults.theme.error);
+        assert_eq!(c.keywords, defaults.keywords);
+        assert_eq!(c.web_port, defaults.web_port);
+    }
+
+    /// REVIEW №128: one byte that is not UTF-8 dropped the whole file.
+    #[test]
+    fn a_line_that_is_not_utf8_costs_only_that_line() {
+        let parsed = parse_bytes(b"# caf\xe9\nerror = green\ncompact = true\nwarning = \xffoo\n");
+        assert!(parsed.config.compact);
+        assert_eq!(parsed.config.theme.error, ColorValue::parse("green").unwrap());
+        assert_eq!(parsed.warnings, ["cfg:4: not valid UTF-8; line skipped"]);
+        // Review of R25: in a comment after a value the bytes cost nothing;
+        // in a key or a quoted value they cost the line.
+        let parsed = parse_bytes(b"error = green # caf\xe9\ncaf\xe9 = 1\ninfo = \"caf\xe9\"\n");
+        assert_eq!(parsed.config.theme.error, ColorValue::parse("green").unwrap());
+        assert_eq!(parsed.warnings, ["cfg:2: not valid UTF-8; line skipped", "cfg:3: not valid UTF-8; line skipped"]);
+    }
+
+    /// REVIEW №129: an unclosed quote, junk after the closing one, `\"`
+    /// were taken in silence.
+    #[test]
+    fn a_broken_quote_is_said() {
+        let parsed = parse("error = \"green\nwarning = \"cyan\" trailing junk\nweb_token = \"a\\\"b\"\ninfo = \"cyan\" # ok\n");
+        assert_eq!(parsed.config.theme.error, Config::default().theme.error);
+        assert_eq!(parsed.config.theme.warning, Config::default().theme.warning);
+        assert_eq!(parsed.config.web_token, None);
+        assert_eq!(parsed.config.theme.info, ColorValue::parse("cyan").unwrap());
+        assert_eq!(parsed.warnings.len(), 3, "{:?}", parsed.warnings);
+        assert!(parsed.warnings[0].contains("without its closing quote"), "{:?}", parsed.warnings);
+        // Review of R25: what follows the closing quote is not echoed — the
+        // value may be a token.
+        let w = warnings("web_token = \"abc\"def123\n");
+        assert!(w.len() == 1 && w[0].contains("after the closing quote") && !w[0].contains("def123"), "{w:?}");
+    }
+
+    /// REVIEW №59, review of R25: a build without the git layer says that
+    /// `git_backend = true` commits nothing — of the value the file ends
+    /// with, not of a line a later one undid.
+    #[test]
+    #[cfg(not(feature = "backend-git"))]
+    fn git_backend_without_git_is_said_of_the_last_value() {
+        assert!(warnings("git_backend = true\n")[0].starts_with("cfg:1: git_backend = true needs"));
+        assert!(warnings("git_backend = true\ngit_backend = default\n").is_empty());
+        assert!(warnings("git_backend = true\ngit_backend = false\n").is_empty());
+        let w = warnings("git_backend = true\ngit_backend = maybe\n");
+        assert!(w.len() == 2 && w[0].starts_with("cfg:1: git_backend = true needs"), "{w:?}");
+    }
+
+    /// REVIEW №130: warnings came out of line order.
+    #[test]
+    fn warnings_follow_the_lines() {
+        let w = warnings("unused1 = 1\nerror = zzz\n");
+        assert!(w[0].starts_with("cfg:1:") && w[1].starts_with("cfg:2:"), "{w:?}");
     }
 
     fn warnings(text: &str) -> Vec<String> {

@@ -101,6 +101,7 @@ fn main() {
 }
 
 fn run() -> Result<()> {
+    rusk::running_as_the_command();
     windows_console::enable_ansi_support();
 
     let outcome = config::load();

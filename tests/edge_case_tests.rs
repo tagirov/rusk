@@ -89,8 +89,8 @@ fn test_edge_case_very_long_text() {
 fn test_edge_case_date_boundaries() {
     let mut tm = TaskManager::new_empty().unwrap();
 
-    // Test earliest possible date
-    let earliest_date = "01-01-0001";
+    // The earliest date: the first year of four digits (REVIEW №18).
+    let earliest_date = "01-01-1000";
     let result = tm.add_task(
         vec!["Earliest task".to_string()],
         Some(earliest_date.to_string()),
@@ -127,6 +127,11 @@ fn test_edge_case_date_boundaries() {
             tm.tasks[i + 2].date,
             NaiveDate::parse_from_str(date, "%d-%m-%Y").ok()
         );
+    }
+
+    // A year of fewer digits, or of more, is no date.
+    for date in ["01-01-0001", "01-01-0999", "01-01-10000"] {
+        assert!(tm.add_task(vec!["out of range".to_string()], Some(date.to_string())).is_err(), "{date}");
     }
 }
 

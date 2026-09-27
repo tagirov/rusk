@@ -154,8 +154,10 @@ fn test_get_db_dir_function() -> Result<()> {
 }
 
 /// RUSK_DB is ignored in test mode. Checked on a child process so the
-/// environment of this (multi-threaded) test process is never mutated.
+/// environment of this (multi-threaded) test process is never mutated. The
+/// `rusk` command has a test mode in debug builds only (REVIEW №12).
 #[test]
+#[cfg(debug_assertions)]
 fn test_rusk_db_is_ignored_in_test_mode() -> Result<()> {
     let sb = common::Sandbox::new();
     let custom_file = sb.path().join("subdir").join("tasks.json");

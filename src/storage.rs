@@ -1,7 +1,7 @@
 use anyhow::Result;
 use colored::*;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 
 use crate::backend::Backend;
 use crate::model::{Task, TaskId};
@@ -207,28 +207,15 @@ fn eprint_db_location(location: &str) {
     crate::errln!("{}", format!("Database path: {location}").blue());
 }
 
-struct DbReporter {
-    location: String,
-}
-
-impl Drop for DbReporter {
-    fn drop(&mut self) {
-        eprint_db_location(&self.location);
-    }
-}
-
 impl TaskManager {
     fn is_test_mode() -> bool {
         crate::is_test_mode()
     }
 
+    /// A debug run says which database it works on; under a test harness
+    /// it keeps quiet.
     fn maybe_log_db_location(location: &str) {
-        static REPORTER: OnceLock<DbReporter> = OnceLock::new();
-        if Self::is_test_mode() {
-            let _ = REPORTER.get_or_init(|| DbReporter {
-                location: location.to_string(),
-            });
-        } else if cfg!(debug_assertions) {
+        if cfg!(debug_assertions) && !Self::is_test_mode() {
             eprint_db_location(location);
         }
     }
@@ -575,7 +562,10 @@ impl TaskManager {
                             was_changed = true;
                         }
                     } else {
-                        let parsed_date = parse_cli_date_for_edit(new_date, task.date)?;
+                        // `+1d` counts from each task's own date, so one
+                        // of several can be the one it fails for.
+                        let parsed_date = parse_cli_date_for_edit(new_date, task.date)
+                            .map_err(|e| anyhow::anyhow!("task {id}: {e:#}"))?;
                         if task.date != Some(parsed_date) {
                             task.date = Some(parsed_date);
                             was_changed = true;

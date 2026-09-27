@@ -282,7 +282,9 @@ const HELP_ROWS: &[HelpRow] = &[
     HelpRow::Pair("Ctrl+G / F1", "show this help"),
     HelpRow::Blank,
     HelpRow::Section("Due date — first token of the first line"),
-    HelpRow::Pair("DD-MM-YYYY", "absolute (also `/` or `.`; short year ok)"),
+    HelpRow::Pair("DD-MM-YYYY", "absolute (also `/` or `.`; yy = 20yy)"),
+    HelpRow::Pair("", "years run from 1000 to 9999"),
+    HelpRow::Pair("11-jan-25", "month by name (short or long)"),
     HelpRow::Pair("today / tomorrow", "plain words work too"),
     HelpRow::Pair("2d 2w 3m 1q 1y", "relative from today (combine: 10d5w)"),
     HelpRow::Pair(

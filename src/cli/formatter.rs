@@ -15,7 +15,8 @@ const ID_COLUMN_MIN_WIDTH: usize = 2;
 const LIST_PREFIX_FIXED_WIDTH: usize = 17;
 /// Rule under the list header for a two-digit id column.
 const LIST_RULE_WIDTH: usize = 46;
-/// Columns held by the short date (`14-sep-26`) in a list line.
+/// Columns held by the short date (`14-sep-26`) in a list line; a date of
+/// another century (`14-sep-1975`) widens the column.
 const DATE_COLUMN_WIDTH: usize = 9;
 /// Marks a task the compact view shows only the beginning of.
 const SHORTENED: &str = "…";
@@ -52,13 +53,20 @@ impl HandlerCLI {
         date.map_or_else(|| "empty".to_string(), Self::short_date)
     }
 
+    /// `D-mon-yy`; a year outside 2000-2099 keeps all four digits, as two
+    /// of them would name another century (REVIEW №18).
     fn short_date(date: chrono::NaiveDate) -> String {
         use chrono::Datelike;
+        let year = if (2000..=2099).contains(&date.year()) {
+            date.format("%y").to_string()
+        } else {
+            // Four digits, a year below 1000 read from a file too.
+            format!("{:04}", date.year())
+        };
         format!(
-            "{}-{}-{}",
+            "{}-{}-{year}",
             date.day(),
-            date.format("%b").to_string().to_lowercase(),
-            date.format("%y")
+            date.format("%b").to_string().to_lowercase()
         )
     }
 
@@ -479,20 +487,32 @@ impl HandlerCLI {
             .unwrap_or(ID_COLUMN_MIN_WIDTH)
             .max(ID_COLUMN_MIN_WIDTH);
         let id_pad = " ".repeat(id_width - ID_COLUMN_MIN_WIDTH);
+        // So is the date column as wide as the widest date: one of another
+        // century shows all four digits of its year (REVIEW №18), and the
+        // text after it must not move.
+        let date_width = tasks
+            .iter()
+            .filter_map(|t| t.date)
+            .map(|d| Self::short_date(d).chars().count())
+            .max()
+            .unwrap_or(DATE_COLUMN_WIDTH)
+            .max(DATE_COLUMN_WIDTH);
+        let date_pad = " ".repeat(date_width - DATE_COLUMN_WIDTH);
 
         let mut out = format!(
-            "\n  #  {}{}    {}       {}\n",
+            "\n  #  {}{}    {}{}       {}\n",
             id_pad,
             theme().list_header.paint("id"),
+            date_pad,
             theme().list_header.paint("date"),
             theme().list_header.paint("task")
         );
-        let rule = (LIST_RULE_WIDTH + id_width - ID_COLUMN_MIN_WIDTH)
+        let rule = (LIST_RULE_WIDTH + id_width - ID_COLUMN_MIN_WIDTH + date_width - DATE_COLUMN_WIDTH)
             .min(max_line_width.saturating_sub(2));
         out.push_str(&format!("  {}\n", "─".repeat(rule)));
 
-        // "  " + status + " " + id + "  " + date(9) + "  "
-        let prefix_width = LIST_PREFIX_FIXED_WIDTH + id_width;
+        // "  " + status + " " + id + "  " + date + "  "
+        let prefix_width = LIST_PREFIX_FIXED_WIDTH + id_width + date_width - DATE_COLUMN_WIDTH;
         let indent = " ".repeat(prefix_width);
         let available_width = max_line_width
             .saturating_sub(prefix_width)
@@ -565,9 +585,7 @@ impl HandlerCLI {
             let id_txt = task.id.to_string();
             let id_lead = " ".repeat(id_width - id_txt.len());
             let date_txt = date_colored.to_string();
-            let date_lead = " ".repeat(
-                DATE_COLUMN_WIDTH.saturating_sub(Self::display_width(&date_txt)),
-            );
+            let date_lead = " ".repeat(date_width.saturating_sub(Self::display_width(&date_txt)));
 
             out.push_str(&format!(
                 "  {} {}{}  {}{}  {}{}\n",
@@ -789,6 +807,41 @@ mod tests {
         let date = chrono::NaiveDate::from_ymd_opt(2027, 1, 1);
         assert_eq!(HandlerCLI::format_date_for_display(date), "1-jan-27");
         assert_eq!(HandlerCLI::format_date_for_display(None), "empty");
+        // Another century keeps its four digits.
+        let date = chrono::NaiveDate::from_ymd_opt(1975, 5, 4);
+        assert_eq!(HandlerCLI::format_date_for_display(date), "4-may-1975");
+        let date = chrono::NaiveDate::from_ymd_opt(100, 1, 1);
+        assert_eq!(HandlerCLI::format_date_for_display(date), "1-jan-0100");
+    }
+
+    /// Review of R25: a date of another century is wider than the date
+    /// column, and pushed its text out of line with the others.
+    #[test]
+    fn a_wide_date_widens_its_column_not_the_row() {
+        let mut old = task(1, "old one");
+        old.date = chrono::NaiveDate::from_ymd_opt(1975, 12, 24);
+        let mut new = task(2, "new one");
+        new.date = chrono::NaiveDate::from_ymd_opt(2027, 1, 1);
+        let plain = task(3, "no date\nsecond line");
+        let refs = [&old, &new, &plain];
+        let listing = HandlerCLI::strip_ansi_codes(&HandlerCLI::format_task_list(&refs, false, None, 80));
+        let column = |needle: &str| {
+            let line = listing.lines().find(|l| l.contains(needle)).unwrap();
+            line[..line.find(needle).unwrap()].chars().count()
+        };
+        let at = column("old one");
+        assert_eq!(column("new one"), at, "{listing}");
+        assert_eq!(column("no date"), at, "{listing}");
+        assert_eq!(column("second line"), at, "{listing}");
+        // The header's `task` moves with the text.
+        assert_eq!(column("task") - at, 3, "{listing}");
+        let usual = [&new, &plain];
+        let listing = HandlerCLI::strip_ansi_codes(&HandlerCLI::format_task_list(&usual, false, None, 80));
+        let at = |needle: &str| {
+            let line = listing.lines().find(|l| l.contains(needle)).unwrap();
+            line[..line.find(needle).unwrap()].chars().count()
+        };
+        assert_eq!(at("task") - at("new one"), 3, "{listing}");
     }
 
     fn task(id: crate::model::TaskId, text: &str) -> Task {

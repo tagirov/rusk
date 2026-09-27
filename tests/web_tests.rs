@@ -243,8 +243,11 @@ fn test_serve_full_crud() {
 /// REVIEW №22 (R1): an error body names the cause, not only the step that
 /// failed - also where the database cannot even be opened for a request
 /// (`server.rs`, before any API handler runs). A directory in place of the
-/// database file fails for every user, root included.
+/// database file fails for every user, root included. (A debug binary is
+/// held to its test database; a release one takes a directory in `RUSK_DB`
+/// for `<dir>/tasks.json`.)
 #[test]
+#[cfg(debug_assertions)]
 fn test_serve_error_bodies_name_the_cause() {
     let sb = common::Sandbox::new();
     std::fs::create_dir(sb.db_path()).unwrap();

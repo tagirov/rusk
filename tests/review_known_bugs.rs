@@ -91,8 +91,11 @@ fn chain_of(err: &anyhow::Error) -> String {
 }
 
 /// REVIEW №22: the binary prints the cause. A directory in place of the
-/// database cannot be read by any user, root included.
+/// database cannot be read by any user, root included. (A debug binary is
+/// held to its test database; a release one takes a directory in `RUSK_DB`
+/// for `<dir>/tasks.json`.)
 #[test]
+#[cfg(debug_assertions)]
 fn r1_the_binary_prints_the_cause_of_an_error() {
     let sb = Sandbox::new();
     fs::create_dir(sb.db_path()).unwrap();
@@ -6245,4 +6248,217 @@ fn r22_git_backend_without_the_feature_is_said() {
     let out = sb.cmd().env("RUSK_CONFIG", &config).args(["add", "one"]).output().unwrap();
     assert!(out.status.success(), "{}", stderr_of(&out));
     assert!(stderr_of(&out).contains("needs the 'backend-git' feature"), "{}", stderr_of(&out));
+}
+
+// ---------------------------------------------------------------------------
+// R25 — config, dates, environment
+// ---------------------------------------------------------------------------
+//
+// The config parser and the date parser are unit-tested in `src/config.rs`
+// and `src/parser/date.rs`; here the binary is run with a config file of the
+// test's own and colors forced on where the result is a color.
+
+/// `rusk <args>` with `config` as the config file and colors forced on.
+fn with_config(sb: &Sandbox, config: &[u8], args: &[&str]) -> std::process::Output {
+    let path = sb.path().join("r25.cfg");
+    fs::write(&path, config).unwrap();
+    sb.cmd()
+        .env("RUSK_CONFIG", &path)
+        .env_remove("RUSK_NO_COLOR")
+        .env("CLICOLOR_FORCE", "1")
+        .args(args)
+        .output()
+        .unwrap()
+}
+
+/// REVIEW №12: a release binary took `RUST_TEST_THREADS` in its
+/// environment for a test harness and moved the database to
+/// `$TMPDIR/rusk_debug` in silence. Only a release build shows it: run
+/// `cargo test --release --test review_known_bugs r25_`.
+#[test]
+#[cfg(not(debug_assertions))]
+fn r25_a_release_binary_is_never_in_test_mode() {
+    let sb = Sandbox::new();
+    let elsewhere = sb.path().join("elsewhere.json");
+    let out = sb.cmd().env("RUSK_DB", &elsewhere).env("RUST_TEST_THREADS", "4").args(["add", "probe"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(elsewhere.exists(), "RUSK_DB was not used");
+    assert!(!sb.db_path().exists(), "the database went to the test-mode path");
+}
+
+/// REVIEW №18: years of one to three digits, signed and five-digit years
+/// were taken from the command line and the web API, and showed as a
+/// two-digit year nobody could read.
+#[test]
+fn r25_a_date_has_a_four_digit_year() {
+    let sb = Sandbox::new();
+    for value in ["01-01--2025", "11-jan-20255", "11-jan-025", "1-1-100", "01-01-+2025", "11-jan-02025"] {
+        let out = sb.cmd().args(["add", "t", "-d", value]).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{value}: {}", stdout_of(&out));
+        assert!(stderr_of(&out).contains(&format!("Invalid date '{value}'")), "{value}: {}", stderr_of(&out));
+    }
+    assert_eq!(sb.read_db(), "");
+
+    // Another century keeps its four digits on screen.
+    let out = sb.cmd().args(["add", "old", "-d", "4-5-1975"]).output().unwrap();
+    assert!(stdout_of(&out).contains("(4-may-1975)"), "{}", stdout_of(&out));
+
+    // Review of R25: an offset past the years is refused in the same words,
+    // quoting the value as typed (`+` too) and naming the task; one past
+    // what a date can hold panicked.
+    let sb = Sandbox::with_db(r#"[{"id":1,"text":"a","date":"9999-12-31"},{"id":2,"text":"b"}]"#);
+    let out = sb.cmd().args(["edit", "2,1", "-d", "+1d"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr_of(&out).contains("task 1: Invalid date '+1d': the year 10000 is out of range (dates run from 1000 to 9999)"),
+        "{}",
+        stderr_of(&out)
+    );
+    assert_eq!(date_of(&db_tasks(&sb), 1), "9999-12-31");
+    for value in ["4294967295w4294967295w4294967295w4294967295w", "100000000d", "1-1-10000"] {
+        let out = sb.cmd().args(["add", "t", "-d", value]).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{value}: {}", stderr_of(&out));
+        assert!(stderr_of(&out).contains("(dates run from 1000 to 9999)"), "{value}: {}", stderr_of(&out));
+    }
+}
+
+/// Review of R25: the files a previous rusk wrote hold such dates (it took
+/// `1-1-205` for the year 205). Reading them strictly locked the user out
+/// of the database — "corrupted, rm it" — with no way to correct the date.
+/// They are read as they are, shown, and named in a warning.
+#[test]
+fn r25_an_old_year_stays_open_to_correct() {
+    let sb = Sandbox::with_db(r#"[{"id":1,"text":"pay rent","date":"0205-01-01"},{"id":2,"text":"b"}]"#);
+    let out = sb.cmd().arg("list").output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(stdout_of(&out).contains("1-jan-0205"), "{}", stdout_of(&out));
+    let err = stderr_of(&out);
+    assert!(err.contains("task 1") && err.contains("0205-01-01") && err.contains("1000 to 9999"), "{err}");
+    assert!(!err.contains("rm '"), "{err}");
+    let out = sb.cmd().args(["edit", "1", "-d", "_"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let out = sb.cmd().arg("list").output().unwrap();
+    assert_eq!(stderr_of(&out), "");
+
+    // Every codec reads what chrono reads; the load says so.
+    let dir = tempfile::tempdir().unwrap();
+    let csv = dir.path().join("y.csv");
+    fs::write(&csv, "id,text,date,done,priority,after\n1,a,26-07-10,false,false,\n").unwrap();
+    assert_eq!(backend(&csv).load().unwrap()[0].date.unwrap().to_string(), "0026-07-10");
+    let json = dir.path().join("y.json");
+    fs::write(&json, r#"[{"id":1,"text":"a","date":"+20255-01-11"}]"#).unwrap();
+    assert_eq!(backend(&json).load().unwrap()[0].date.unwrap().to_string(), "+20255-01-11");
+    #[cfg(feature = "fmt-ics")]
+    {
+        let ics = dir.path().join("y.ics");
+        fs::write(&ics, "BEGIN:VCALENDAR\nBEGIN:VTODO\nUID:rusk-1@rusk\nSUMMARY:a\nDUE;VALUE=DATE:01000101\nEND:VTODO\nEND:VCALENDAR\n").unwrap();
+        assert_eq!(backend(&ics).load().unwrap()[0].date.unwrap().to_string(), "0100-01-01");
+    }
+    // A value that is no date at all is named, and the file is not called
+    // corrupted: correcting the value keeps every task.
+    fs::write(&json, r#"[{"id":1,"text":"a","date":"2026-13-45"}]"#).unwrap();
+    let err = chain_of(&backend(&json).load().unwrap_err());
+    assert!(err.contains("2026-13-45") && err.contains("correct that value"), "{err}");
+    assert!(!err.contains("rm '") && !err.contains("corrupted"), "{err}");
+}
+
+/// Review of R25: the editor opened a task due on 01-01-0100 with that
+/// token in front, no longer read it as a date, and saved it untouched as
+/// the text `01-01-0100 old` with no date.
+#[test]
+#[cfg(all(unix, feature = "interactive"))]
+fn r25_the_editor_keeps_a_tasks_own_date() {
+    let sb = Sandbox::with_db(r#"[{"id":1,"text":"old","date":"0100-01-01"}]"#);
+    let Some(run) = in_editor(&sb, &["edit", "1"], &[CTRL_S], false) else {
+        return;
+    };
+    assert_eq!(run.code, Some(0), "{}", run.after_editor());
+    let tasks = db_tasks(&sb);
+    assert_eq!(text_of(&tasks, 1), "old");
+    assert_eq!(date_of(&tasks, 1), "0100-01-01");
+}
+
+/// REVIEW №18, the web API: a date of the wrong shape was "invalid JSON"
+/// at a column, and a signed year was taken.
+#[test]
+#[cfg(feature = "web")]
+fn r25_the_api_names_a_bad_date() {
+    use rusk::web::api::{create_task, replace_tasks, update_task};
+    let dir = tempfile::tempdir().unwrap();
+    let mut tm = TaskManager::new_empty_with_path(dir.path().join("tasks.json"));
+    for (date, why) in [
+        ("2d", "is not written YYYY-MM-DD"),
+        ("-2025-01-01", "is not written YYYY-MM-DD"),
+        ("2026-7-1", "is not written YYYY-MM-DD"),
+        ("2026-02-30", "is no day of the calendar"),
+        ("0999-01-01", "is outside the years 1000-9999"),
+    ] {
+        let res = create_task(&mut tm, &format!(r#"{{"text":"x","date":"{date}"}}"#), None);
+        assert_eq!(res.status, 400, "{date}: {}", res.body);
+        assert!(res.body.contains(&format!("invalid task: date '{date}' {why}")), "{date}: {}", res.body);
+    }
+    assert_eq!(create_task(&mut tm, r#"{"text":"x","date":"2026-07-01"}"#, None).status, 201);
+    let res = update_task(&mut tm, 1, r#"{"date":"10000-01-01"}"#, None);
+    assert!(res.status == 400 && res.body.contains("invalid task: date '10000-01-01'"), "{}", res.body);
+    // JSON that does not parse is still said to be that.
+    let res = create_task(&mut tm, r#"{"text":"x","#, None);
+    assert!(res.status == 400 && res.body.contains("invalid JSON"), "{}", res.body);
+    // A whole list with a date outside the years is not taken either.
+    let res = replace_tasks(&mut tm, r#"[{"id":1,"text":"a","date":"0205-01-01"}]"#, None);
+    assert_eq!(res.status, 400, "{}", res.body);
+    assert!(res.body.contains("task 1 is due on 0205-01-01, outside the years 1000-9999"), "{}", res.body);
+}
+
+/// REVIEW №41, №125, №126, №127, №128, №129, №130: the config parser.
+#[test]
+fn r25_the_config_file_means_what_it_says() {
+    let sb = Sandbox::with_db(r#"[{"id":1,"text":"disabled foo"}]"#);
+    // №41: a comment after an empty value is a comment.
+    let out = with_config(&sb, b"keywords =   # disabled\n", &["list"]);
+    assert!(!stdout_of(&out).contains("\x1b[33mdisabled"), "{}", stdout_of(&out));
+    // №126: a BOM does not spoil the first key.
+    let out = with_config(&sb, b"\xef\xbb\xbfno_color = true\n", &["list"]);
+    assert!(!stdout_of(&out).contains('\x1b') && stderr_of(&out).is_empty(), "{}", stderr_of(&out));
+    // №127: `default` puts back the built-in value.
+    let out = with_config(&sb, b"error = green\nerror = default\n", &["mark", "abc"]);
+    assert!(stderr_of(&out).contains("\x1b[31m"), "{:?}", stderr_of(&out));
+    // №128: a line that is not UTF-8 costs that line only.
+    let out = with_config(&sb, b"# caf\xe9\nerror = green\n", &["mark", "abc"]);
+    assert!(stderr_of(&out).contains("\x1b[32m"), "{:?}", stderr_of(&out));
+    assert!(!stderr_of(&out).contains("could not read config"), "{}", stderr_of(&out));
+    // №129: a broken quote is said; №130: in the order of the lines.
+    let out = with_config(&sb, b"unused1 = 1\nerror = \"green\n", &["list"]);
+    let err = stderr_of(&out);
+    let first = err.find("cfg:1:").expect(&err);
+    let second = err.find("cfg:2: a quoted value without its closing quote").expect(&err);
+    assert!(first < second, "{err}");
+
+    // №125: the template names every theme key.
+    let fresh = sb.path().join("fresh.cfg");
+    let out = sb.cmd().env("RUSK_CONFIG", &fresh).arg("list").output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let template = fs::read_to_string(&fresh).expect("the template is written");
+    assert!(template.contains("# search_match = yellow") && template.contains("# sync_token ="), "{template}");
+
+    // Review of R25: the warning about a broken quote does not echo what
+    // follows it (a token), and a Latin-1 letter in a comment costs nothing.
+    let out = with_config(&sb, b"web_token = \"abc\"def123\n", &["list"]);
+    assert!(stderr_of(&out).contains("after the closing quote") && !stderr_of(&out).contains("def123"), "{}", stderr_of(&out));
+    let out = with_config(&sb, b"error = green # caf\xe9\n", &["mark", "abc"]);
+    assert!(stderr_of(&out).contains("\x1b[32m") && !stderr_of(&out).contains("cfg:"), "{:?}", stderr_of(&out));
+}
+
+/// REVIEW №131, №132: the date forms are in the help, and months are added
+/// in one step (`+1m1m` from 31-01 was 28-03, `+2m` 31-03).
+#[test]
+fn r25_date_forms_and_month_offsets() {
+    let out = Sandbox::new().cmd().args(["add", "--help"]).output().unwrap();
+    let help = stdout_of(&out);
+    assert!(help.contains("DD-Mon-YY") && help.contains("two-digit") && help.contains("1000 to 9999"), "{help}");
+
+    let sb = Sandbox::new();
+    sb.cmd().args(["add", "e1", "-d", "31-01-2026"]).output().unwrap();
+    let out = sb.cmd().args(["edit", "1", "-d", "+1m1m"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert_eq!(date_of(&db_tasks(&sb), 1), "2026-03-31");
 }

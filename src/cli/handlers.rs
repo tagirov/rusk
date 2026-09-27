@@ -353,6 +353,13 @@ impl HandlerCLI {
             None
         } else if is_cli_date_clear_value(token) {
             Some(None)
+        } else if let Some(date) = task_date
+            && token == date.format("%d-%m-%Y").to_string()
+        {
+            // The task's own date as the editor opened it — also one of a
+            // year no longer taken as input, read from a file (review of
+            // R25): saved untouched, it is kept, not turned into text.
+            Some(Some(date))
         } else {
             crate::parse_cli_date_for_edit(token, task_date).ok().map(Some)
         }
@@ -942,6 +949,9 @@ mod tests {
         assert_eq!(round_trip("call mom tomorrow", None), "call mom tomorrow");
         assert_eq!(round_trip("call mom", date), "01-01-2027 call mom");
         assert_eq!(round_trip("_note", None), "_note");
+        // A date of a year no longer taken as input stays the task's date.
+        let old = chrono::NaiveDate::from_ymd_opt(100, 1, 1);
+        assert_eq!(round_trip("ics old year", old), "01-01-0100 ics old year");
     }
 
     /// Review of R24: the date typed in front of the `_`, the date deleted

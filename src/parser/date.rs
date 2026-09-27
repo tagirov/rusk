@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use chrono::{Duration, Local, Months, NaiveDate};
+use chrono::{Datelike, Duration, Local, Months, NaiveDate};
 
 pub fn is_cli_date_help_value(s: &str) -> bool {
     matches!(s.trim(), "-h" | "--help")
@@ -26,7 +26,8 @@ pub fn parse_cli_date_for_edit(date_str: &str, task_date: Option<NaiveDate>) -> 
             anyhow::bail!("Date cannot be empty");
         }
         let base = task_date.unwrap_or_else(|| Local::now().date_naive());
-        return parse_cli_date_with_base(rest, base);
+        // The message quotes the value as typed, `+` and all.
+        return within_years(parse_any_year(rest, base, trimmed)?, trimmed);
     }
     parse_cli_date(trimmed)
 }
@@ -86,6 +87,50 @@ fn english_month_abbrev_to_u32(s: &str) -> Option<u32> {
 }
 
 pub fn parse_cli_date_with_base(date_str: &str, base: NaiveDate) -> Result<NaiveDate> {
+    let shown = date_str.trim();
+    within_years(parse_any_year(date_str, base, shown)?, shown)
+}
+
+/// A date of a year of four digits, as every database writes one (REVIEW
+/// №18). `shown` is the value as the user gave it.
+fn within_years(date: NaiveDate, shown: &str) -> Result<NaiveDate> {
+    if !crate::model::YEARS.contains(&date.year()) {
+        anyhow::bail!(
+            "Invalid date '{shown}': the year {} is out of range (dates run from 1000 to 9999)",
+            date.year()
+        );
+    }
+    Ok(date)
+}
+
+/// An offset that runs past what a date can hold ends beyond the years
+/// too, and says so as [`within_years`] does.
+fn past_the_years(shown: &str) -> anyhow::Error {
+    anyhow::anyhow!("Invalid date '{shown}': the year is out of range (dates run from 1000 to 9999)")
+}
+
+/// The year of an absolute date is written with two digits (20xx) or four:
+/// `02025`, `+2025` or `205` are not taken for a year they happen to parse
+/// to (REVIEW №18, review of R25).
+fn check_year_shape(dash_form: &str, shown: &str) -> Result<()> {
+    let parts: Vec<&str> = dash_form.split('-').collect();
+    if let [_, _, year] = parts.as_slice() {
+        let year = year.trim();
+        let digits = year.bytes().all(|b| b.is_ascii_digit());
+        if !year.is_empty() && digits && !matches!(year.len(), 1 | 2 | 4) {
+            anyhow::bail!(
+                "Invalid date '{shown}': a year has two digits (20xx) or four \
+                 (dates run from 1000 to 9999)"
+            );
+        }
+        if !year.is_empty() && !digits && year.bytes().any(|b| b.is_ascii_digit()) {
+            anyhow::bail!("Invalid date '{shown}': a year is written with digits only");
+        }
+    }
+    Ok(())
+}
+
+fn parse_any_year(date_str: &str, base: NaiveDate, shown: &str) -> Result<NaiveDate> {
     let trimmed = date_str.trim();
     if trimmed.is_empty() {
         anyhow::bail!("Date cannot be empty");
@@ -105,11 +150,12 @@ pub fn parse_cli_date_with_base(date_str: &str, base: NaiveDate) -> Result<Naive
     if !absolute_only {
         let b = trimmed.as_bytes();
         if !b.is_empty() && b[0].is_ascii_digit() {
-            return parse_and_apply_relative_cli_date(trimmed, base);
+            return parse_and_apply_relative_cli_date(trimmed, base, shown);
         }
     }
 
     let dash_form = trimmed.replace(['/', '.'], "-");
+    check_year_shape(&dash_form, shown)?;
     if let Some(d) = parse_english_abbrev_dash_date(&dash_form) {
         return Ok(d);
     }
@@ -198,46 +244,32 @@ fn parse_relative_cli_segments(s: &str) -> Result<Vec<(u32, char)>> {
     Ok(segments)
 }
 
-fn apply_relative_cli_segments(base: NaiveDate, segments: &[(u32, char)]) -> Result<NaiveDate> {
-    let mut d = base;
-    for &(n, u) in segments {
-        d = match u {
-            'd' => d
-                .checked_add_signed(Duration::days(n as i64))
-                .with_context(|| format!("Date out of range after adding {n} day(s)"))?,
-            'w' => {
-                let days = (n as i64)
-                    .checked_mul(7)
-                    .ok_or_else(|| anyhow::anyhow!("Week count too large in relative date"))?;
-                d.checked_add_signed(Duration::days(days))
-                    .with_context(|| format!("Date out of range after adding {n} week(s)"))?
-            }
-            'm' => d
-                .checked_add_months(Months::new(n))
-                .with_context(|| format!("Date out of range after adding {n} month(s)"))?,
-            'q' => {
-                let qm = n
-                    .checked_mul(3)
-                    .ok_or_else(|| anyhow::anyhow!("Quarter count too large in relative date"))?;
-                d.checked_add_months(Months::new(qm))
-                    .with_context(|| format!("Date out of range after adding {n} quarter(s)"))?
-            }
-            'y' => {
-                let ym = n
-                    .checked_mul(12)
-                    .ok_or_else(|| anyhow::anyhow!("Year count too large in relative date"))?;
-                d.checked_add_months(Months::new(ym))
-                    .with_context(|| format!("Date out of range after adding {n} year(s)"))?
-            }
+/// Adds the segments to `base`: all the months first (m, q = 3, y = 12), in
+/// one step, then all the days (d, w = 7). One step, so that `+1m1m` is
+/// `+2m`: from the 31st, a month with fewer days ends the date at its last
+/// day (31-01 + 1m = 28-02, or 29-02 in a leap year), and it does that once,
+/// not once per segment (REVIEW №132). The order of the segments does not
+/// matter.
+/// `None` when the sum runs past what a date can hold.
+fn apply_relative_cli_segments(base: NaiveDate, segments: &[(u32, char)]) -> Option<NaiveDate> {
+    let (mut months, mut days) = (0u32, 0i64);
+    for &(n, unit) in segments {
+        match unit {
+            'd' => days = days.checked_add(n as i64)?,
+            'w' => days = days.checked_add((n as i64).checked_mul(7)?)?,
+            'm' => months = months.checked_add(n)?,
+            'q' => months = months.checked_add(n.checked_mul(3)?)?,
+            'y' => months = months.checked_add(n.checked_mul(12)?)?,
             _ => unreachable!(),
-        };
+        }
     }
-    Ok(d)
+    base.checked_add_months(Months::new(months))
+        .and_then(|d| d.checked_add_signed(Duration::try_days(days)?))
 }
 
-fn parse_and_apply_relative_cli_date(trimmed: &str, base: NaiveDate) -> Result<NaiveDate> {
+fn parse_and_apply_relative_cli_date(trimmed: &str, base: NaiveDate, shown: &str) -> Result<NaiveDate> {
     let segments = parse_relative_cli_segments(trimmed)?;
-    apply_relative_cli_segments(base, &segments)
+    apply_relative_cli_segments(base, &segments).ok_or_else(|| past_the_years(shown))
 }
 
 #[cfg(test)]
@@ -247,6 +279,55 @@ mod tests {
 
     fn d(y: i32, m: u32, day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, day).unwrap()
+    }
+
+    /// REVIEW №18: a year of one to three digits, with a sign or with five
+    /// digits was taken, and showed as a two-digit year nobody could read.
+    #[test]
+    fn a_year_has_four_digits() {
+        for value in ["01-01--2025", "11-jan-20255", "01-01-20255", "11-jan-025", "1-1-100", "1-1-999"] {
+            let err = parse_cli_date_with_base(value, d(2026, 9, 27)).unwrap_err().to_string();
+            assert!(err.starts_with(&format!("Invalid date '{value}'")), "{value}: {err}");
+        }
+        assert_eq!(parse_cli_date_with_base("1-1-25", d(2026, 1, 1)).unwrap(), d(2025, 1, 1));
+        assert_eq!(parse_cli_date_with_base("11-jan-25", d(2026, 1, 1)).unwrap(), d(2025, 1, 11));
+        assert_eq!(parse_cli_date_with_base("1.1.1999", d(2026, 1, 1)).unwrap(), d(1999, 1, 1));
+        assert!(parse_cli_date_with_base("8000y", d(2026, 1, 1)).is_err());
+        // The shape of the year, not only its value (review of R25).
+        for value in ["01-01-+2025", "11-jan-02025", "11-jan-+5", "1/1/02025"] {
+            let err = parse_cli_date_with_base(value, d(2026, 1, 1)).unwrap_err().to_string();
+            assert!(err.starts_with(&format!("Invalid date '{value}': a year")), "{value}: {err}");
+        }
+    }
+
+    /// Review of R25: every date past the years says so, in the same
+    /// words, quoting the value as typed — `+` too — and never panics.
+    #[test]
+    fn a_date_past_the_years_says_so() {
+        let range = "(dates run from 1000 to 9999)";
+        let base = d(2026, 1, 1);
+        for value in ["1-1-10000", "1-1-0999", "3000000d", "100000000d", "4294967295w4294967295w4294967295w4294967295w"] {
+            let err = parse_cli_date_with_base(value, base).unwrap_err().to_string();
+            assert!(err.starts_with(&format!("Invalid date '{value}': ")), "{value}: {err}");
+            assert!(err.ends_with(range), "{value}: {err}");
+        }
+        let err = parse_cli_date_for_edit("+1d", Some(d(9999, 12, 31))).unwrap_err().to_string();
+        assert_eq!(err, format!("Invalid date '+1d': the year 10000 is out of range {range}"));
+    }
+
+    /// REVIEW №132: each month segment ended the date at the end of a short
+    /// month on its own: `+1m1m` from 31-01 gave 28-03, `+2m` 31-03.
+    #[test]
+    fn months_are_added_in_one_step() {
+        let base = d(2026, 1, 31);
+        assert_eq!(parse_cli_date_with_base("1m1m", base).unwrap(), d(2026, 3, 31));
+        assert_eq!(parse_cli_date_with_base("2m", base).unwrap(), d(2026, 3, 31));
+        assert_eq!(parse_cli_date_with_base("1m", base).unwrap(), d(2026, 2, 28));
+        assert_eq!(parse_cli_date_with_base("1y", d(2024, 2, 29)).unwrap(), d(2025, 2, 28));
+        // Months first, then days, whatever the order they are written in.
+        assert_eq!(parse_cli_date_with_base("1m10d", base).unwrap(), d(2026, 3, 10));
+        assert_eq!(parse_cli_date_with_base("10d1m", base).unwrap(), d(2026, 3, 10));
+        assert_eq!(parse_cli_date_with_base("1q1y", base).unwrap(), d(2027, 4, 30));
     }
 
     #[test]

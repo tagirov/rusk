@@ -1,6 +1,46 @@
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashSet;
+
+/// The years a due date may be given with: four digits. chrono takes any
+/// year and a sign, so `1-1-100`, `-2025-01-01` or `+20255-01-11` went into
+/// a database, showed as a two-digit year nobody could read, and fell out of
+/// an iCalendar file (REVIEW №18). A date comes in held to it — on the
+/// command line, in the editor, through the API; a date already stored
+/// outside it is read as it is and reported (see [`normalize`]), so that a
+/// database an older rusk wrote stays open to correct it (review of R25).
+pub const YEARS: std::ops::RangeInclusive<i32> = 1000..=9999;
+
+/// A date as the web API takes one: `YYYY-MM-DD`, with a year of
+/// [`YEARS`]; the error says what is wrong with it.
+pub fn parse_iso_date(s: &str) -> Result<NaiveDate, String> {
+    let b = s.as_bytes();
+    let shaped = b.len() == 10
+        && b.iter()
+            .enumerate()
+            .all(|(i, c)| if i == 4 || i == 7 { *c == b'-' } else { c.is_ascii_digit() });
+    if !shaped {
+        return Err(format!("date '{s}' is not written YYYY-MM-DD"));
+    }
+    let date = NaiveDate::parse_from_str(s, "%Y-%m-%d")
+        .map_err(|_| format!("date '{s}' is no day of the calendar"))?;
+    if !YEARS.contains(&date.year()) {
+        return Err(format!("date '{s}' is outside the years 1000-9999"));
+    }
+    Ok(date)
+}
+
+/// A `date` given through the API, held to [`parse_iso_date`].
+#[cfg(feature = "web")]
+pub(crate) fn api_date<'de, D>(deserializer: D) -> Result<Option<NaiveDate>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match Option::<String>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(s) => parse_iso_date(&s).map(Some).map_err(serde::de::Error::custom),
+    }
+}
 
 /// Task identifier. u32 keeps ids compact in every storage format and
 /// converts losslessly to SQLite's i64 column type.
@@ -57,7 +97,9 @@ pub const NO_TEXT: &str = "(no text)";
 /// - every task has an id of its own: the first task with an id keeps it; a
 ///   later task with the same id, and one with none (0), gets the lowest
 ///   free id, in list order;
-/// - a task depends only on other tasks that exist, each listed once.
+/// - a task depends only on other tasks that exist, each listed once;
+/// - a date outside [`YEARS`] is kept, and reported: it is the user's to
+///   correct, and the database has to stay open for that.
 ///
 /// Dependencies are settled against the ids the list itself gives, before
 /// any id is handed out: a dependency on a task that is not there must not
@@ -152,6 +194,15 @@ pub fn normalize(tasks: &mut Vec<Task>) -> anyhow::Result<Repairs> {
             problem,
         })
         .collect();
+    repairs.out_of_range = tasks
+        .iter()
+        .zip(&written)
+        .filter_map(|(task, &was)| {
+            task.date
+                .filter(|date| !YEARS.contains(&date.year()))
+                .map(|date| OutOfRange { was, now: task.id, date })
+        })
+        .collect();
     Ok(repairs)
 }
 
@@ -170,6 +221,17 @@ pub struct Repairs {
     pub numbered: Vec<TaskId>,
     /// Dependencies left out.
     pub dropped_dependencies: Vec<DroppedDependency>,
+    /// Dates outside [`YEARS`], kept as they are.
+    pub out_of_range: Vec<OutOfRange>,
+}
+
+/// A task due on a date whose year is outside [`YEARS`]: the id it was
+/// written with and its id now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OutOfRange {
+    pub was: TaskId,
+    pub now: TaskId,
+    pub date: NaiveDate,
 }
 
 /// A task stored without text: the id it was written with and its id now
@@ -277,6 +339,21 @@ impl Repairs {
                 enumerate(many.iter().map(|d| format!("task {} on {}", d.now, d.on)), ", ")
             )),
         }
+        match self.out_of_range.as_slice() {
+            [] => {}
+            [one] => warnings.push(format!(
+                "Warning: task {} in '{location}' is due on {}, a year rusk does not take \
+                 (dates run from 1000 to 9999); set another with `rusk edit {} -d <date>`, or \
+                 none with `-d _`",
+                one.now, one.date, one.now
+            )),
+            many => warnings.push(format!(
+                "Warning: tasks in '{location}' are due in years rusk does not take (dates run \
+                 from 1000 to 9999): {}; set others with `rusk edit <id> -d <date>`, or none \
+                 with `-d _`",
+                enumerate(many.iter().map(|o| format!("task {} on {}", o.now, o.date)), ", ")
+            )),
+        }
         warnings
     }
 
@@ -316,6 +393,12 @@ impl Repairs {
                 DependencyProblem::Itself => format!("{task} depends on itself"),
                 DependencyProblem::Repeated => format!("{task} lists task {on} more than once"),
             });
+        }
+        for out in &self.out_of_range {
+            problems.push(format!(
+                "task {} is due on {}, outside the years 1000-9999",
+                out.was, out.date
+            ));
         }
         // The same fault can be found more than once (an id used three
         // times, a task listed as its own dependency twice).
@@ -524,6 +607,50 @@ mod tests {
              (ids must be unique); a task is without an id (ids start at 1); task 1 depends on \
              task 4, which does not exist"
         );
+    }
+
+    /// Review of R25: a date outside the years is kept, and named — the
+    /// database has to stay open to correct it.
+    #[test]
+    fn a_date_outside_the_years_is_kept_and_named() {
+        let d = |y, m, day| NaiveDate::from_ymd_opt(y, m, day);
+        let mut tasks = vec![task(1, "a"), task(2, "b"), task(0, "c")];
+        tasks[0].date = d(205, 1, 1);
+        tasks[1].date = d(2026, 1, 1);
+        tasks[2].date = d(10000, 1, 1);
+        let repairs = normalize(&mut tasks).unwrap();
+        assert_eq!(tasks[0].date, d(205, 1, 1));
+        assert_eq!(
+            repairs.out_of_range,
+            [
+                OutOfRange { was: 1, now: 1, date: d(205, 1, 1).unwrap() },
+                OutOfRange { was: 0, now: 3, date: d(10000, 1, 1).unwrap() },
+            ]
+        );
+        let warnings = repairs.warnings("t.json");
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("task 1 on 0205-01-01, task 3 on +10000-01-01"), "{}", warnings[0]);
+        assert!(
+            repairs.problems().contains("task 1 is due on 0205-01-01, outside the years 1000-9999"),
+            "{}",
+            repairs.problems()
+        );
+        let mut one = vec![task(4, "d")];
+        one[0].date = d(999, 12, 31);
+        let warnings = normalize(&mut one).unwrap().warnings("t.json");
+        assert!(warnings[0].contains("`rusk edit 4 -d <date>`"), "{}", warnings[0]);
+    }
+
+    /// REVIEW №18: a date through the API is `YYYY-MM-DD` of a year of
+    /// four digits, and the error says which of that it is not.
+    #[test]
+    fn an_api_date_says_what_is_wrong_with_it() {
+        assert_eq!(parse_iso_date("2026-07-01"), Ok(NaiveDate::from_ymd_opt(2026, 7, 1).unwrap()));
+        for shape in ["2026-7-1", "+2026-07-01", "20260701", " 2026-07-01"] {
+            assert_eq!(parse_iso_date(shape).unwrap_err(), format!("date '{shape}' is not written YYYY-MM-DD"));
+        }
+        assert_eq!(parse_iso_date("2026-02-30").unwrap_err(), "date '2026-02-30' is no day of the calendar");
+        assert_eq!(parse_iso_date("0999-12-31").unwrap_err(), "date '0999-12-31' is outside the years 1000-9999");
     }
 
     #[test]

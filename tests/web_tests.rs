@@ -62,8 +62,29 @@ fn spawn_serve(sb: &common::Sandbox, rusk_config: &str, extra_args: &[&str]) -> 
     }
 }
 
+/// The body of a chunked response in `raw`, once its last chunk is there.
+fn dechunk(raw: &[u8]) -> Option<Vec<u8>> {
+    let mut body = Vec::new();
+    let mut at = 0;
+    loop {
+        let line_end = at + raw[at..].windows(2).position(|w| w == b"\r\n")?;
+        let size_text = String::from_utf8_lossy(&raw[at..line_end]);
+        let size = usize::from_str_radix(size_text.split(';').next()?.trim(), 16).ok()?;
+        let data = line_end + 2;
+        if size == 0 {
+            return Some(body);
+        }
+        if raw.len() < data + size + 2 {
+            return None;
+        }
+        body.extend_from_slice(&raw[data..data + size]);
+        at = data + size + 2;
+    }
+}
+
 /// Raw HTTP/1.1 client over one keep-alive connection (like a browser).
-/// Reads headers, then exactly Content-Length body bytes.
+/// Reads headers, then exactly Content-Length body bytes — or the chunks of
+/// a chunked body (tiny_http sends a body over 32 KiB so), put together.
 ///
 /// Deliberately NOT one-connection-per-request: tiny_http's task pool has a
 /// lost-wakeup race under rapid connect/close churn that can park a fresh
@@ -99,13 +120,22 @@ impl Client {
             }
         };
         let headers = String::from_utf8_lossy(&buf[..header_end]).to_string();
-        let content_length: usize = headers
+        let lower = headers.to_ascii_lowercase();
+        if lower.lines().any(|l| l.starts_with("transfer-encoding:") && l.contains("chunked")) {
+            let mut raw = buf.split_off(header_end);
+            let body = loop {
+                if let Some(body) = dechunk(&raw) {
+                    break body;
+                }
+                let n = self.stream.read(&mut chunk).expect("read response body");
+                assert!(n > 0, "server closed connection in a chunked body of `{first_line}`");
+                raw.extend_from_slice(&chunk[..n]);
+            };
+            return format!("{headers}{}", String::from_utf8_lossy(&body));
+        }
+        let content_length: usize = lower
             .lines()
-            .find_map(|l| {
-                l.to_ascii_lowercase()
-                    .strip_prefix("content-length:")
-                    .map(|v| v.trim().parse().unwrap_or(0))
-            })
+            .find_map(|l| l.strip_prefix("content-length:").map(|v| v.trim().parse().unwrap_or(0)))
             .unwrap_or(0);
         while buf.len() < header_end + content_length {
             let n = self.stream.read(&mut chunk).expect("read response body");

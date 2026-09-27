@@ -38,11 +38,13 @@ fn tasks_json(tasks: &[Task]) -> Result<String> {
     Ok(json.replace('<', "\\u003c"))
 }
 
+/// `signed_in`: the page is served behind a token, and offers to sign out.
 pub fn render_template(
     mode: Mode,
     theme_css: &str,
     tasks: &[Task],
     generated: &str,
+    signed_in: bool,
 ) -> Result<String> {
     let mode_str = match mode {
         Mode::Static => "static",
@@ -51,11 +53,12 @@ pub fn render_template(
     let html = TEMPLATE
         .replacen("__MODE__", mode_str, 1)
         .replacen("/*__THEME__*/", theme_css, 1)
-        .replacen("__GENERATED__", generated, 1);
+        .replacen("__GENERATED__", generated, 1)
+        .replacen("__SIGNED_IN__", if signed_in { "true" } else { "false" }, 1);
     // Validate before injecting task data, which may legitimately contain
     // marker-looking text.
     ensure!(
-        !html.contains("__MODE__") && !html.contains("__GENERATED__"),
+        !html.contains("__MODE__") && !html.contains("__GENERATED__") && !html.contains("__SIGNED_IN__"),
         "template markers were not replaced"
     );
     ensure!(
@@ -73,17 +76,19 @@ pub fn render_static_page(tasks: &[Task]) -> Result<String> {
         &theme_css(&crate::config::config().theme),
         tasks,
         &generated,
+        false,
     )
 }
 
 /// Live page for `rusk serve`: tasks inlined for instant first paint,
 /// then the client re-fetches from the API.
-pub fn render_live_page(tasks: &[Task]) -> Result<String> {
+pub fn render_live_page(tasks: &[Task], signed_in: bool) -> Result<String> {
     render_template(
         Mode::Live,
         &theme_css(&crate::config::config().theme),
         tasks,
         "",
+        signed_in,
     )
 }
 
@@ -105,7 +110,7 @@ mod tests {
     #[test]
     fn all_markers_are_replaced() {
         let html =
-            render_template(Mode::Static, "--rusk-accent: #ffa500;", &[task("hello")], "now")
+            render_template(Mode::Static, "--rusk-accent: #ffa500;", &[task("hello")], "now", false)
                 .unwrap();
         for marker in ["__MODE__", "__THEME__", "__DATA__", "__GENERATED__"] {
             assert!(!html.contains(marker), "marker {marker} left in output");
@@ -118,7 +123,7 @@ mod tests {
 
     #[test]
     fn live_mode_marker() {
-        let html = render_template(Mode::Live, "", &[], "").unwrap();
+        let html = render_template(Mode::Live, "", &[], "", true).unwrap();
         assert!(html.contains(r#"mode: "live""#));
         assert!(html.contains("tasks: []"));
     }
@@ -126,7 +131,7 @@ mod tests {
     #[test]
     fn script_injection_is_neutralized() {
         let evil = "</script><script>alert(1)</script>";
-        let html = render_template(Mode::Static, "", &[task(evil)], "").unwrap();
+        let html = render_template(Mode::Static, "", &[task(evil)], "", false).unwrap();
         assert!(!html.contains(evil), "raw </script> from task text must not appear");
         assert!(html.contains("\\u003c/script>\\u003cscript>"));
     }

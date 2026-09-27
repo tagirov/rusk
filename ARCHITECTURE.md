@@ -61,7 +61,7 @@ src/
 │   ├── mod.rs           # Single-file template rendering (gen + serve share it), theme → CSS vars
 │   ├── template.html    # Mobile-first UI (vanilla HTML/CSS/JS, embedded via include_str!)
 │   ├── api.rs           # JSON API handlers over TaskManager (transport-agnostic, unit-tested)
-│   └── server.rs        # tiny_http loop: routing, cookie/Bearer auth, login page
+│   └── server.rs        # tiny_http server, a thread per request: routing, cookie/Bearer auth, Host check, login page
 ├── completions.rs       # Shell completion scripts (include_str!), Shell enum
 └── windows_console.rs   # Windows ANSI support via windows-sys
 ```
@@ -255,8 +255,13 @@ User input → clap (args.rs) → main.rs (config::load → init) dispatch
       task text through printable::escape first, so a control character in it is shown,
       not obeyed)
 
-rusk serve: browser ←→ tiny_http loop (web/server.rs)
-    → api.rs handlers → fresh TaskManager per request ←→ database
+rusk serve: browser ←→ tiny_http (web/server.rs), each request read, checked and answered
+    on a thread of its own (a body up to 32 MiB, the sign-in form up to 4 KiB) → auth: any
+    presented token (cookie, Bearer) matches; without a token only a loopback `Host` →
+    api.rs handlers → fresh TaskManager per request, one request at a time
+    (`server::DATABASE`: an ssh database has no lock of its own) ←→ database (and the writer
+    lock against CLI commands). An unread body is thrown away by its thread (up to 1 MiB)
+    or one at a time (`server::DRAIN`): tiny_http buffers what is left of it whole
 
 rusk sync: sync.rs → the ssh/http backends as transports
     → conflict check vs .sync state file → local Backend::save or remote replace

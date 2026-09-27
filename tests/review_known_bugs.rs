@@ -21,7 +21,8 @@
 // its browser half is checked black-box, see REVIEW.md), R18 (the lifecycle
 // of a SQLite connection) — all of R1-R18 — and of the clusters for the
 // rest of REVIEW.md: R19 (output, terminals and messages), R24 (the editor:
-// keys, words, selection, undo, the first-line date). R6 and R8 need a pty
+// keys, words, selection, undo, the first-line date), R20 (`rusk serve`:
+// requests, tokens, hosts, headers). R6 and R8 need a pty
 // for most of their repros: what Command can drive is here, the draft rules
 // are unit-tested in `src/cli/editor/draft.rs`, and the rest is driven by a
 // pty script against a release binary (see REVIEW.md).
@@ -5200,4 +5201,516 @@ fn r24_a_crlf_text_opens_unchanged() {
     assert_eq!(run.code, Some(0));
     assert!(!String::from_utf8_lossy(&run.screen).contains("Discard"), "a clean buffer asked to discard");
     assert_eq!(sb.read_db(), before);
+}
+
+// ---------------------------------------------------------------------------
+// R20 — `rusk serve`: requests, tokens, hosts, headers
+// ---------------------------------------------------------------------------
+//
+// A real `rusk serve --port 0` of the sandbox, spoken to in raw HTTP/1.1
+// over a keep-alive connection, as a browser does. The routing rules
+// themselves are unit-tested in `src/web/server.rs` against tiny_http's
+// `TestRequest`.
+
+/// `rusk serve` of `sb` with `config` as its config file; killed on drop.
+#[cfg(feature = "web")]
+struct Served {
+    child: std::process::Child,
+    port: u16,
+    _stdout: std::io::BufReader<std::process::ChildStdout>,
+}
+
+#[cfg(feature = "web")]
+impl Drop for Served {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+#[cfg(feature = "web")]
+fn serve(sb: &Sandbox, config: &str, args: &[&str]) -> Served {
+    use std::io::BufRead;
+    let mut child = sb
+        .cmd()
+        .env("RUSK_CONFIG", config)
+        .args(["serve", "--port", "0"])
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut out = std::io::BufReader::new(child.stdout.take().unwrap());
+    let mut port = None;
+    for _ in 0..10 {
+        let mut line = String::new();
+        if out.read_line(&mut line).unwrap_or(0) == 0 {
+            break;
+        }
+        if let Some(addr) = line.split("http://").nth(1) {
+            port = addr.trim().rsplit(':').next().and_then(|p| p.parse().ok());
+        }
+        if line.contains("Ctrl+C") {
+            break;
+        }
+    }
+    let Some(port) = port else {
+        let _ = child.kill();
+        let _ = child.wait();
+        panic!("the server printed no address");
+    };
+    Served { child, port, _stdout: out }
+}
+
+/// One keep-alive HTTP/1.1 connection.
+#[cfg(feature = "web")]
+struct Http(std::net::TcpStream);
+
+/// The body of a chunked response in `raw`, once its last chunk is there.
+#[cfg(feature = "web")]
+fn dechunk(raw: &[u8]) -> Option<Vec<u8>> {
+    let mut body = Vec::new();
+    let mut at = 0;
+    loop {
+        let line_end = at + raw[at..].windows(2).position(|w| w == b"\r\n")?;
+        let size_text = String::from_utf8_lossy(&raw[at..line_end]);
+        let size = usize::from_str_radix(size_text.split(';').next()?.trim(), 16).ok()?;
+        let data = line_end + 2;
+        if size == 0 {
+            return Some(body);
+        }
+        if raw.len() < data + size + 2 {
+            return None;
+        }
+        body.extend_from_slice(&raw[data..data + size]);
+        at = data + size + 2;
+    }
+}
+
+#[cfg(feature = "web")]
+impl Http {
+    fn to(port: u16) -> Self {
+        let stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+        Self(stream)
+    }
+
+    /// Sends `head` (request line and headers, without the blank line) and
+    /// `body`, and returns the response: headers, then the body unless the
+    /// request was a HEAD.
+    fn send(&mut self, head: &str, body: &str) -> String {
+        use std::io::{Read, Write};
+        let length = if body.is_empty() { String::new() } else { format!("Content-Length: {}\r\n", body.len()) };
+        write!(self.0, "{head}\r\n{length}\r\n{body}").unwrap();
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 8192];
+        let end = loop {
+            let n = self.0.read(&mut chunk).unwrap_or_else(|e| panic!("{head}: {e}"));
+            assert!(n > 0, "{head}: connection closed");
+            buf.extend_from_slice(&chunk[..n]);
+            if let Some(at) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                break at + 4;
+            }
+        };
+        let headers = String::from_utf8_lossy(&buf[..end]).to_ascii_lowercase();
+        let length: usize = headers
+            .lines()
+            .find_map(|l| l.strip_prefix("content-length:").map(|v| v.trim().parse().unwrap_or(0)))
+            .unwrap_or(0);
+        let chunked = headers
+            .lines()
+            .any(|l| l.starts_with("transfer-encoding:") && l.contains("chunked"));
+        if head.starts_with("HEAD ") {
+            // No body.
+        } else if chunked {
+            // tiny_http sends a body over 32 KiB in chunks: read them all,
+            // so that the connection stays in step, and put them together.
+            let mut raw = buf.split_off(end);
+            loop {
+                if let Some(body) = dechunk(&raw) {
+                    buf.extend_from_slice(&body);
+                    break;
+                }
+                let n = self.0.read(&mut chunk).unwrap();
+                assert!(n > 0, "{head}: connection closed in a chunked body");
+                raw.extend_from_slice(&chunk[..n]);
+            }
+        } else {
+            while buf.len() < end + length {
+                let n = self.0.read(&mut chunk).unwrap();
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+            }
+        }
+        String::from_utf8_lossy(&buf).into_owned()
+    }
+
+    fn get(&mut self, path: &str, headers: &str) -> String {
+        self.send(&format!("GET {path} HTTP/1.1\r\nHost: localhost{headers}"), "")
+    }
+
+    fn json(&mut self, method: &str, path: &str, body: &str) -> String {
+        self.send(
+            &format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json"),
+            body,
+        )
+    }
+}
+
+#[cfg(feature = "web")]
+fn status(response: &str) -> u16 {
+    response.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0)
+}
+
+/// The value of response header `name`, lowercased name match.
+#[cfg(feature = "web")]
+fn header_in<'a>(response: &'a str, name: &str) -> Option<&'a str> {
+    response.lines().take_while(|l| !l.is_empty()).find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        key.eq_ignore_ascii_case(name).then(|| value.trim())
+    })
+}
+
+#[cfg(feature = "web")]
+fn token_config(sb: &Sandbox, token: &str) -> String {
+    let path = sb.path().join("token.cfg");
+    fs::write(&path, format!("web_token = \"{token}\"\n")).unwrap();
+    path.display().to_string()
+}
+
+/// REVIEW №51: one client that sent the headers of a big body and then
+/// stalled held up every other client.
+#[test]
+#[cfg(feature = "web")]
+fn r20_a_stalled_client_does_not_hold_up_the_others() {
+    use std::io::Write;
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, "", &[]);
+    let mut stalled = std::net::TcpStream::connect(("127.0.0.1", server.port)).unwrap();
+    write!(
+        stalled,
+        "POST /api/tasks HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n\
+         Content-Length: 500000\r\n\r\n{{\"text\":\"{}",
+        "a".repeat(3000)
+    )
+    .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    let started = std::time::Instant::now();
+    let mut other = Http::to(server.port);
+    other.0.set_read_timeout(Some(std::time::Duration::from_secs(4))).unwrap();
+    let res = other.get("/api/tasks", "");
+    assert_eq!(status(&res), 200, "{res}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(3));
+    drop(stalled);
+}
+
+/// REVIEW №54: a body over 1 MiB was cut and answered "invalid JSON", so a
+/// database of more than 1 MB could not be pushed; a body over the limit is
+/// 413 now.
+#[test]
+#[cfg(feature = "web")]
+fn r20_a_big_list_goes_through_and_a_too_big_body_is_413() {
+    let sb = Sandbox::with_db("[]");
+    let server = serve(&sb, "", &[]);
+    let mut http = Http::to(server.port);
+    let list: Vec<String> = (1..=3000)
+        .map(|id| format!(r#"{{"id":{id},"text":"task {id} {}"}}"#, "x".repeat(400)))
+        .collect();
+    let body = format!("[{}]", list.join(","));
+    assert!(body.len() > 1_100_000);
+    let res = http.json("PUT", "/api/tasks", &body);
+    assert_eq!(status(&res), 200, "{}", &res[..res.len().min(300)]);
+    assert_eq!(db_tasks(&sb).len(), 3000);
+
+    let res = http.send(
+        "PUT /api/tasks HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 40000000",
+        "",
+    );
+    assert_eq!(status(&res), 413, "{res}");
+}
+
+/// REVIEW №52: a token with a `;` or non-ASCII letters was cut or dropped
+/// on its way into the cookie and could never sign in; the server says so
+/// at start instead. A token with a space inside travels, and serves.
+#[test]
+#[cfg(feature = "web")]
+fn r20_a_token_that_cannot_travel_is_refused_at_start() {
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, &token_config(&sb, "two words"), &[]);
+    let res = Http::to(server.port).get("/api/tasks", "\r\nAuthorization: Bearer two words");
+    assert_eq!(status(&res), 200, "{res}");
+    drop(server);
+
+    for token in ["tok;en", "café", " padded"] {
+        let sb = Sandbox::new();
+        let config = token_config(&sb, token);
+        let mut child = sb
+            .cmd()
+            .env("RUSK_CONFIG", &config)
+            .args(["serve", "--port", "0"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        // A server that starts serves until it is stopped.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while child.try_wait().unwrap().is_none() {
+            if std::time::Instant::now() > deadline {
+                let _ = child.kill();
+                panic!("{token}: the server started with a token that cannot sign in");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let out = child.wait_with_output().unwrap();
+        let err = stderr_of(&out);
+        assert_eq!(out.status.code(), Some(1), "{token}: {err}");
+        assert!(err.contains("web_token may hold printable ASCII only"), "{token}: {err}");
+    }
+}
+
+/// REVIEW №109: a `+` in a bookmarked `/?token=` became a space.
+#[test]
+#[cfg(feature = "web")]
+fn r20_a_bookmark_keeps_a_plus_in_the_token() {
+    let sb = Sandbox::new();
+    let server = serve(&sb, &token_config(&sb, "ab+cd/ef=="), &[]);
+    let res = Http::to(server.port).get("/?token=ab+cd/ef==", "");
+    assert_eq!(status(&res), 303, "{res}");
+    assert!(header_in(&res, "Set-Cookie").unwrap().starts_with("rusk_token=ab+cd/ef==;"));
+}
+
+/// REVIEW №110, №111: HEAD got 404/405; a stale `?token=` got raw JSON.
+#[test]
+#[cfg(feature = "web")]
+fn r20_head_works_and_a_stale_bookmark_gets_the_login_page() {
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, "", &[]);
+    let mut http = Http::to(server.port);
+    for path in ["/", "/api/tasks"] {
+        let res = http.send(&format!("HEAD {path} HTTP/1.1\r\nHost: localhost"), "");
+        assert_eq!(status(&res), 200, "{path}: {res}");
+    }
+    drop(server);
+
+    let sb = Sandbox::new();
+    let server = serve(&sb, &token_config(&sb, "sekret"), &[]);
+    let res = Http::to(server.port).get("/?token=old", "");
+    assert_eq!(status(&res), 401);
+    assert!(header_in(&res, "Content-Type").unwrap().starts_with("text/html"), "{res}");
+    assert!(res.contains("<form"), "{res}");
+}
+
+/// REVIEW №112: the loopback check compared strings: `127.0.0.2`, `[::1]`
+/// and `LOCALHOST` were refused without a token, and `localhost` was bound
+/// on `::1` only.
+#[test]
+#[cfg(feature = "web")]
+fn r20_loopback_is_an_address_not_a_spelling() {
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    // All of 127.0.0.0/8 is there on Linux; elsewhere 127.0.0.1 alone.
+    let hosts: &[&str] = if cfg!(target_os = "linux") {
+        &["127.0.0.2", "LOCALHOST", "localhost", "localhost."]
+    } else {
+        &["LOCALHOST", "localhost", "localhost."]
+    };
+    for &host in hosts {
+        let server = serve(&sb, "", &["--host", host]);
+        if host != "127.0.0.2" {
+            // Bound on 127.0.0.1, where rusk's own http client looks.
+            let res = Http::to(server.port).get("/api/tasks", "");
+            assert_eq!(status(&res), 200, "{host}: {res}");
+        }
+    }
+    let out = sb.cmd().args(["serve", "--port", "0", "--host", "0.0.0.0"]).output().unwrap();
+    assert!(stderr_of(&out).contains("refusing to serve on 0.0.0.0 without authentication"));
+}
+
+/// REVIEW №113, SECURITY.md M2: without a token any `Host` was served, so
+/// a page that rebinds its own name to 127.0.0.1 could change the tasks.
+#[test]
+#[cfg(feature = "web")]
+fn r20_without_a_token_other_host_names_are_refused() {
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, "", &[]);
+    let mut http = Http::to(server.port);
+    let res = http.send(
+        "POST /api/tasks HTTP/1.1\r\nHost: evil.attacker.example\r\nContent-Type: application/json",
+        r#"{"text":"injected"}"#,
+    );
+    assert_eq!(status(&res), 403, "{res}");
+    assert_eq!(db_tasks(&sb).len(), 3);
+    let res = http.send(&format!("GET /api/tasks HTTP/1.1\r\nHost: 127.0.0.1:{}", server.port), "");
+    assert_eq!(status(&res), 200, "{res}");
+}
+
+/// REVIEW №151, №197, №198, №152: `Application/JSON` was 415; a stale
+/// cookie hid a valid Bearer token; the page could be framed by another
+/// site; the cookie lacked `Secure` behind TLS and there was no way out.
+#[test]
+#[cfg(feature = "web")]
+fn r20_headers_the_server_reads_and_sends() {
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, &token_config(&sb, "sekret"), &[]);
+    let mut http = Http::to(server.port);
+    let res = http.send(
+        "POST /api/tasks HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer sekret\r\nContent-Type: Application/JSON; charset=UTF-8",
+        r#"{"text":"mixed case"}"#,
+    );
+    assert_eq!(status(&res), 201, "{res}");
+
+    let res = http.get("/api/tasks", "\r\nCookie: rusk_token=oldtoken\r\nAuthorization: Bearer sekret");
+    assert_eq!(status(&res), 200, "{res}");
+
+    let res = http.get("/", "\r\nAuthorization: Bearer sekret");
+    assert_eq!(header_in(&res, "X-Frame-Options"), Some("DENY"), "{res}");
+    assert_eq!(header_in(&res, "Content-Security-Policy"), Some("frame-ancestors 'none'"));
+
+    // The page behind a token offers to sign out.
+    assert!(res.contains("signedIn: true"), "{res}");
+
+    let res = http.get("/?token=sekret", "\r\nX-Forwarded-Proto: https");
+    assert!(header_in(&res, "Set-Cookie").unwrap().ends_with("; Secure"), "{res}");
+    // Signing out is a POST that says it is JSON (review of R20: a GET
+    // could be sent by any page, or prefetched).
+    let res = http.json("POST", "/logout", "{}");
+    assert_eq!(status(&res), 204, "{res}");
+    assert!(header_in(&res, "Set-Cookie").unwrap().contains("Max-Age=0"), "{res}");
+    assert_eq!(status(&http.get("/logout", "")), 405);
+}
+
+/// Review of R20: requests whose body never came each held one of 32
+/// slots, and then everybody got 503; a sign-in form of 32 MiB was read
+/// before anybody signed in.
+#[test]
+#[cfg(feature = "web")]
+fn r20_stalled_bodies_hold_up_nobody() {
+    use std::io::Write;
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, &token_config(&sb, "sekret"), &[]);
+    let mut http = Http::to(server.port);
+    let form = "POST /auth HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/x-www-form-urlencoded";
+    let res = http.send(form, &format!("token={}", "x".repeat(5000)));
+    assert_eq!(status(&res), 413, "{res}");
+
+    let mut stalled = Vec::new();
+    for i in 0..40 {
+        let mut client = std::net::TcpStream::connect(("127.0.0.1", server.port)).unwrap();
+        let head = if i % 2 == 0 {
+            "POST /auth HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2000\r\n\r\ntoken="
+        } else {
+            "GET /api/tasks HTTP/1.1\r\nHost: localhost\r\nContent-Length: 2000\r\n\r\n"
+        };
+        client.write_all(head.as_bytes()).unwrap();
+        stalled.push(client);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(300));
+
+    let started = std::time::Instant::now();
+    let mut http = Http::to(server.port);
+    http.0.set_read_timeout(Some(std::time::Duration::from_secs(4))).unwrap();
+    let res = http.get("/api/tasks", "\r\nAuthorization: Bearer sekret");
+    assert_eq!(status(&res), 200, "{res}");
+    let res = http.json("POST", "/api/tasks", &format!(r#"{{"text":"{}"}}"#, "long ".repeat(400)));
+    assert_eq!(status(&res), 401, "{res}");
+    let res = http.send(
+        "POST /api/tasks HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer sekret\r\nContent-Type: application/json",
+        &format!(r#"{{"text":"{}"}}"#, "long ".repeat(400)),
+    );
+    assert_eq!(status(&res), 201, "{res}");
+    let res = http.send(form, &format!("token={}", "x".repeat(5000)));
+    assert_eq!(status(&res), 413, "{res}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(3));
+    drop(stalled);
+}
+
+/// Review of R20: when tiny_http could not accept a connection any more
+/// (no file descriptors left) it stopped for good, and the server ended
+/// with success — a supervisor had no reason to start it again.
+#[test]
+#[cfg(all(unix, feature = "web"))]
+fn r20_a_server_that_cannot_accept_fails() {
+    use std::io::BufRead;
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let template = sb.cmd();
+    let mut sh = std::process::Command::new("sh");
+    for (key, value) in template.get_envs() {
+        match value {
+            Some(value) => sh.env(key, value),
+            None => sh.env_remove(key),
+        };
+    }
+    let mut child = sh
+        .current_dir(sb.path())
+        .arg("-c")
+        .arg("ulimit -n 32 && exec \"$0\" serve --port 0")
+        .arg(template.get_program())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut out = std::io::BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    out.read_line(&mut line).unwrap();
+    let port: u16 = line.trim().rsplit(':').next().and_then(|p| p.parse().ok()).expect(&line);
+
+    let mut clients = Vec::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            panic!("the server went on without taking connections");
+        }
+        if clients.len() < 64
+            && let Ok(client) = std::net::TcpStream::connect(("127.0.0.1", port))
+        {
+            clients.push(client);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    let mut err = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut err).unwrap();
+    assert_eq!(status.code(), Some(1), "{err}");
+    assert!(err.contains("stopped taking connections"), "{err}");
+}
+
+/// REVIEW №150: the parts of the API no test spoke to: the login form,
+/// DELETE of the done tasks, `after` over HTTP, a refused PUT, 404 / 405.
+#[test]
+#[cfg(feature = "web")]
+fn r20_the_rest_of_the_api() {
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, &token_config(&sb, "sekret"), &[]);
+    let mut http = Http::to(server.port);
+    let form = "POST /auth HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/x-www-form-urlencoded";
+    let res = http.send(form, "token=nope");
+    assert_eq!(status(&res), 401);
+    let res = http.send(form, "token=sekret");
+    assert_eq!(status(&res), 303, "{res}");
+    let cookie = header_in(&res, "Set-Cookie").unwrap().split(';').next().unwrap().to_string();
+
+    let with = |method: &str, path: &str| {
+        format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nCookie: {cookie}\r\nContent-Type: application/json")
+    };
+    let res = http.send(&with("POST", "/api/tasks"), r#"{"text":"after one","after":[1]}"#);
+    assert_eq!(status(&res), 201, "{res}");
+    assert!(res.contains(r#""after":[1]"#), "{res}");
+    let res = http.send(&with("PATCH", "/api/tasks/4"), r#"{"after":[9]}"#);
+    assert_eq!(status(&res), 400, "{res}");
+    let res = http.send(&with("PATCH", "/api/tasks/2"), r#"{"done":true}"#);
+    assert_eq!(status(&res), 200);
+    let res = http.send(&with("DELETE", "/api/tasks/done"), "");
+    assert_eq!(status(&res), 200, "{res}");
+    assert!(res.contains(r#""deleted":1"#), "{res}");
+    let res = http.send(&with("PUT", "/api/tasks"), r#"[{"id":0,"text":"zero"}]"#);
+    assert_eq!(status(&res), 400, "{res}");
+    let res = http.send(&with("DELETE", "/api/tasks"), "");
+    assert_eq!(status(&res), 405, "{res}");
+    let res = http.send(&with("GET", "/api/nothing"), "");
+    assert_eq!(status(&res), 404, "{res}");
 }

@@ -37,21 +37,71 @@ rusk serve --host 0.0.0.0     # requires web_token in the config
 ```
 
 Defaults come from the config (`web_host`, `web_port`, `web_token`); flags
-override them. The server re-reads the database on **every request**, so CLI
+override them. `localhost` (in any case) binds 127.0.0.1, where clients look
+for it; an IPv6 address may be given with or without brackets (`[::1]`).
+The server re-reads the database on **every request**, so CLI
 edits are instantly visible in the browser and vice versa — you can even
 `rusk sync push` a new file under a running server.
+
+Each request is read, checked and answered on a thread of its own, so a
+client that sends its request body slowly, or never, holds up nobody else;
+the work on the tasks is done by one request at a time, so two changes made
+at the same moment are both kept, whatever the database. A request body may
+be up to 32 MiB (a `PUT` of thousands of tasks is a few MB), the sign-in form
+up to 4 KiB; a bigger one is refused with 413, and one that ends before the
+length it announced with 400. `HEAD` is answered like `GET`, without the
+body, for uptime checks and proxies. If the server cannot take connections
+any more (no file descriptors left), it ends with an error, so that a
+supervisor (`Restart=on-failure`) starts it again.
+
+`rusk serve` runs on [tiny_http](https://github.com/tiny-http/tiny-http),
+which is not made to face hostile clients: every open connection costs a
+thread, a request answered without reading its body (a wrong token, a body
+too big) takes the rest of that body from the connection before it goes —
+the big ones one at a time, so they cannot pile up in memory — and a request
+that announces a body larger than the machine could allocate
+(`Content-Length: 1000000000000000`) aborts the server. Keep it on loopback
+or a trusted network, or put a reverse proxy in front that buffers requests
+and limits their size (nginx does both, see below).
 
 ### Authentication
 
 With `web_token` set, the browser shows a token form once and keeps the
-session in an `HttpOnly` cookie. Alternatives:
+session in an `HttpOnly` cookie (`SameSite=Strict`, one year; `Secure` when
+the request came over TLS — a reverse proxy says so in
+`X-Forwarded-Proto: https` or `Forwarded: proto=https`; of a chain of
+proxies the first entry counts). **Sign out** in the page header drops the
+cookie (a `POST /logout` with `Content-Type: application/json`, like every
+change, so that no other site can sign you out). The cookie holds the token
+itself: to take the access of a copied cookie away, change `web_token`.
+Alternatives:
 
-- `Authorization: Bearer <token>` — for curl and scripts.
+- `Authorization: Bearer <token>` (the scheme in any case) — for curl and
+  scripts. A request is let in when any token it presents matches, so a
+  stale cookie does not hide a valid Bearer token.
 - `http://host:port/?token=<token>` — bookmarkable on a phone; the token is
-  moved into the cookie and stripped from the URL by a redirect.
+  moved into the cookie and stripped from the URL by a redirect. A `+` in
+  the address is a `+`; a `%`, `&` or `#` in the token has to be written
+  `%25`, `%26`, `%23` (base64 tokens have none). A wrong or old token gets
+  the sign-in form — or, when the browser is signed in anyway, the page.
 
-Without a token, rusk **refuses to bind non-loopback addresses** — a CRUD API
-over your tasks should not be world-writable by accident.
+The token travels as it is in a cookie and an HTTP header, so it may hold
+printable ASCII only (spaces inside it are fine), without a `;` and without
+spaces at its ends; `rusk serve` refuses to start with any other
+(`openssl rand -base64 24` makes a good one).
+
+Without a token, rusk **refuses to bind non-loopback addresses** (all of
+127.0.0.0/8, `::1`, `localhost`) — a CRUD API over your tasks should not be
+world-writable by accident — and answers only requests addressed to
+`localhost` or a loopback address (the `Host` header): a web page that points
+a name of its own at 127.0.0.1 (DNS rebinding) is refused with 403, and a
+request with two `Host` headers with 400. Behind **any** reverse proxy, set
+`web_token`: nginx, for one, passes `Host: 127.0.0.1:7272` on by default, and
+the whole internet would be "loopback" to a server without a token.
+
+Every page is sent with `X-Frame-Options: DENY` and
+`Content-Security-Policy: frame-ancestors 'none'`: no other site can show it
+in a frame and lure clicks onto your tasks.
 
 ### Deployment on a VPS
 
@@ -71,7 +121,11 @@ server {
     listen 443 ssl;
     server_name tasks.example.com;
     # ssl_certificate ...; ssl_certificate_key ...;
-    location / { proxy_pass http://127.0.0.1:7272; }
+    client_max_body_size 32m;   # nginx's own default, 1m, would cap `sync push`
+    location / {
+        proxy_pass http://127.0.0.1:7272;
+        proxy_set_header X-Forwarded-Proto $scheme;   # the cookie gets `Secure`
+    }
 }
 ```
 
@@ -131,7 +185,9 @@ A rusk client makes its list follow these rules when it reads it; rusk 0.7.3
 and older did not check texts and `after`, so their `rusk sync push` of such
 a list fails until the client is updated.
 
-Mutating requests must send `Content-Type: application/json` (CSRF guard).
+Mutating requests must send `Content-Type: application/json` (CSRF guard;
+the media type is compared without regard to case, parameters such as
+`; charset=utf-8` aside).
 A request that changes nothing (`PATCH` with the values the task already
 has) is answered as usual but writes nothing: no `.backup` rotation, no git
 commit. Errors come as `{"error": "..."}` with a 4xx/5xx status; the message

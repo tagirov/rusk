@@ -58,9 +58,9 @@ Environment variables always win over config values.
 | `no_color` | bool | `false` | `RUSK_NO_COLOR` / `NO_COLOR` | Disable ANSI colors, in `--help` and argument errors too. The config can only disable colors, never re-enable them over the environment; an empty `RUSK_NO_COLOR` / `NO_COLOR` means nothing |
 | `compact` | bool | `false` | — | Compact `rusk list` view by default (`-c` still forces it per run, `--no-compact` turns it off for one run) |
 | `backup` | bool | `true` | — | Write a `.backup` copy next to the database on every save — locally, and on the remote for an ssh database. With `false` an existing `.backup` is neither refreshed nor removed: `rusk restore` still uses it and warns how old it is |
-| `web_host` | string | `127.0.0.1` | — | Bind address for `rusk serve` (see [WEB.md](WEB.md)) |
+| `web_host` | string | `127.0.0.1` | — | Bind address for `rusk serve` (see [WEB.md](WEB.md)); `localhost` binds 127.0.0.1 |
 | `web_port` | u16 | `7272` | — | Port for `rusk serve` |
-| `web_token` | string | — | — | Access token for `rusk serve`; required for non-loopback hosts |
+| `web_token` | string | — | — | Access token for `rusk serve`; required for non-loopback hosts. Printable ASCII (spaces inside are fine) without `;` and without spaces at its ends (it travels in a cookie and a header as it is) |
 | `sync_remote` | string | — | `RUSK_SYNC_REMOTE` | Remote for `rusk sync`: `[user@]host:/path/tasks.json` (ssh) or `https://host` (serve API), read exactly like a remote `rusk_db` |
 | `sync_token` | string | — | `RUSK_SYNC_TOKEN` | Bearer token for http(s) sync remotes |
 | `keywords` | list | `TEMP INFO FIXME WIP` | — | Keywords highlighted when a task text starts with one (only the first word is matched; space- or comma-separated, case-sensitive; `keywords =` with no value disables). Color comes from the `keyword` theme key |

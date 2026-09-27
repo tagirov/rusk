@@ -71,6 +71,11 @@ h1 { font-size: 18px; margin: 0; color: var(--rusk-list-header); }
   margin-left: auto; align-self: center;
 }
 #dot.off { background: var(--rusk-error); }
+#logout {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  color: var(--muted); font: inherit; font-size: 13px;
+}
+#logout:hover { text-decoration: underline; }
 main { max-width: 640px; margin: 0 auto; padding: 4px 8px 0; }
 .task {
   display: flex;
@@ -197,6 +202,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .55); }
     <h1>rusk</h1>
     <span id="count"></span>
     <span id="dot" hidden></span>
+    <button type="button" id="logout" hidden>Sign out</button>
   </div>
 </header>
 
@@ -251,6 +257,7 @@ const RUSK = {
   mode: "__MODE__",
   tasks: /*__DATA__*/[],
   generated: "__GENERATED__",
+  signedIn: __SIGNED_IN__,
 };
 
 const live = RUSK.mode === "live";
@@ -805,6 +812,15 @@ function submitFromEditor(run) {
 function initLive() {
   $("addbar").hidden = false;
   $("dot").hidden = false;
+  if (RUSK.signedIn) {
+    // A POST that says it is JSON, as every change: no page of another
+    // site can send one.
+    $("logout").hidden = false;
+    $("logout").addEventListener("click", () => {
+      fetch("/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })
+        .finally(() => location.reload());
+    });
+  }
 
   $("list").addEventListener("click", (e) => {
     const r = e.target.closest(".task");

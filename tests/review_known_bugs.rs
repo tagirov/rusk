@@ -1263,7 +1263,13 @@ fn r3_what_rusk_writes_it_reads_back() {
         let path = dir.path().join(name);
         backend(&path).save(&tasks).unwrap();
         let back = backend(&path).load().unwrap();
-        let expected: Vec<(u32, &str)> = (1..).zip(texts).collect();
+        // Markdown writes a first line that is nothing but spaces and a
+        // date token without the spaces (R23, REVIEW №31): with them it
+        // would read as the due date of a task with an empty first line.
+        let expected: Vec<(u32, &str)> = (1..)
+            .zip(texts)
+            .map(|(id, text)| (id, if name.ends_with(".md") { text.trim_start() } else { text }))
+            .collect();
         assert_eq!(ids_and_texts(&back), expected, "{name}: {}", fs::read_to_string(&path).unwrap());
     }
 }
@@ -6461,4 +6467,216 @@ fn r25_date_forms_and_month_offsets() {
     let out = sb.cmd().args(["edit", "1", "-d", "+1m1m"]).output().unwrap();
     assert!(out.status.success(), "{}", stderr_of(&out));
     assert_eq!(date_of(&db_tasks(&sb), 1), "2026-03-31");
+}
+
+// ---------------------------------------------------------------------------
+// R23 — the file formats: what each one keeps, and how a broken one is told
+// ---------------------------------------------------------------------------
+//
+// A debug binary works on its own JSON database whatever `RUSK_DB` says, so
+// the formats are driven through the library: `TaskManager::open_at` loads
+// a file of that format and every change saves it, the way the binary does.
+// The codecs' pure parts are unit-tested in `src/codec/` and the report of
+// a broken JSON file in `src/backend/file.rs`.
+
+/// `{:#}` of the error that loading `path` gives.
+fn load_error(path: &Path) -> String {
+    format!("{:#}", TaskManager::load_tasks_from_path(path).unwrap_err())
+}
+
+/// REVIEW №16, №85: a broken NDJSON file was reported as corrupted JSON
+/// at "line 1" with the advice to delete it; nothing tested the load
+/// errors of CSV and NDJSON, nor the repair of their duplicate ids.
+#[test]
+#[cfg(feature = "fmt-ndjson")]
+fn r23_a_broken_line_file_names_the_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let ndjson = dir.path().join("t.ndjson");
+    fs::write(
+        &ndjson,
+        "{\"id\":1,\"text\":\"a\",\"date\":null,\"done\":false}\n{\"id\":2,\"text\":\"b\",\"date\":null,\"done\":false}\n{\"id\":3,\"text\":\"broken\n",
+    )
+    .unwrap();
+    let err = load_error(&ndjson);
+    assert!(err.contains("Failed to parse the NDJSON database file"), "{err}");
+    assert!(err.contains("NDJSON line 3, column 22: EOF while parsing a string"), "{err}");
+    assert!(!err.contains("line 1") && !err.contains("rm '"), "{err}");
+
+    let csv = dir.path().join("t.csv");
+    fs::write(&csv, "id,text,date,done,priority,after\n1,a,,false,false,\n2,b,2026-13-01,false,false,\n").unwrap();
+    let err = load_error(&csv);
+    assert!(err.contains("Failed to parse the CSV database file") && err.contains("row 3"), "{err}");
+    assert!(err.contains("invalid date '2026-13-01'"), "{err}");
+
+    // Review of R23: a value that is no date names itself.
+    fs::write(&ndjson, "{\"id\":1,\"text\":\"a\"}\n{\"id\":2,\"text\":\"b\",\"date\":\"2026-13-45\"}\n").unwrap();
+    let err = load_error(&ndjson);
+    assert!(err.contains("NDJSON line 2, column 39: invalid date '2026-13-45': input is out of range"), "{err}");
+
+    // Two tasks with one id: the second gets a new one, `add` the next.
+    fs::write(&ndjson, "{\"id\":1,\"text\":\"a\"}\n{\"id\":1,\"text\":\"b\"}\n").unwrap();
+    let mut tm = TaskManager::open_at(ndjson.clone()).unwrap();
+    tm.add_task(vec!["c".into()], None).unwrap();
+    let on_disk = backend(&ndjson).load().unwrap();
+    assert_eq!(ids_and_texts(&on_disk), [(1, "a"), (2, "b"), (3, "c")]);
+}
+
+/// REVIEW №174: the report of a broken one-line (minified) JSON database
+/// held the whole file.
+#[test]
+fn r23_a_broken_minified_database_gets_a_short_report() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = dir.path().join("min.json");
+    let tasks: Vec<String> = (1..=3000).map(|i| format!(r#"{{"id":{i},"text":"task number {i}"}}"#)).collect();
+    fs::write(&json, format!("[{},]", tasks.join(","))).unwrap();
+    let err = load_error(&json);
+    assert!(err.len() < 1500, "{} bytes: {}", err.len(), &err[..300]);
+    assert!(err.contains("trailing comma") && err.contains('…'), "{err}");
+}
+
+/// REVIEW №31, №88, №89, №90: Markdown lost the priority of a task whose
+/// first line is empty (its `!` went into the text), the spaces at the end
+/// of a first line, numbered items and marks other than `[ ]`/`[x]`, and
+/// continuation lines indented with a tab.
+#[test]
+#[cfg(feature = "fmt-markdown")]
+fn r23_markdown_keeps_what_it_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    let md = dir.path().join("m.md");
+    fs::write(
+        &md,
+        "# Todo\n\n- [ ] !  <!-- id:1 -->\n  Actual text\n- [ ] first line   <!-- id:2 -->\n  second\n\
+         1. [ ] ordered item\n- [-] cancelled item\n- [/] in progress\n\
+         - [ ] tabbed <!-- id:9 -->\n\tsecond line\n\
+         - [ ]  <!-- id:10 -->\n  ! call mom\n\
+         - [ ] Plan <!-- id:11 -->\n  - [-] dropped idea\n  1. [ ] step\n* [b] bookmark\n",
+    )
+    .unwrap();
+    let mut tm = TaskManager::open_at(md.clone()).unwrap();
+    tm.mark_tasks(vec![1]).unwrap();
+    tm.add_task(vec!["added".into()], None).unwrap();
+
+    let tasks = backend(&md).load().unwrap();
+    let one = &tasks[0];
+    assert!(one.priority && one.done, "{one:?}");
+    assert_eq!(one.text, "\nActual text");
+    // Of the three spaces before the comment, one is rusk's.
+    assert_eq!(tasks[1].text, "first line  \nsecond");
+    let rest: Vec<(&str, bool)> = tasks[2..].iter().map(|t| (t.text.as_str(), t.done)).collect();
+    assert_eq!(
+        rest,
+        [
+            ("ordered item", false),
+            ("cancelled item", true),
+            ("in progress", false),
+            ("tabbed\nsecond line", false),
+            // Review of R23: an empty first line stays empty, so the line
+            // after it does not become markup; the continuation lines of
+            // a text 0.7.3 wrote stay the text's; any one-character mark
+            // is a checkbox.
+            ("\n! call mom", false),
+            ("Plan\n- [-] dropped idea\n1. [ ] step", false),
+            ("bookmark", false),
+            ("added", false),
+        ]
+    );
+    assert!(!tasks[6].priority);
+    let file = fs::read_to_string(&md).unwrap();
+    assert!(file.contains("- [x] cancelled item") && file.contains("\n  second line\n"), "{file}");
+    assert!(file.contains("- [ ]  <!-- id:10 -->\n  ! call mom\n"), "{file}");
+}
+
+/// `ics` without the VTODO of the task `text`, as a client deletes it.
+#[cfg(feature = "fmt-ics")]
+fn without_todo(ics: &str, text: &str) -> String {
+    const END: &str = "END:VTODO\r\n";
+    let mut out = String::new();
+    let mut rest = ics;
+    while let Some(start) = rest.find("BEGIN:VTODO\r\n") {
+        let end = start + rest[start..].find(END).expect("an unterminated VTODO") + END.len();
+        out.push_str(&rest[..start]);
+        if !rest[start..end].contains(&format!("SUMMARY:{text}\r\n")) {
+            out.push_str(&rest[start..end]);
+        }
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The UID and DTSTAMP lines of the VTODO of the task `text`.
+#[cfg(feature = "fmt-ics")]
+fn ics_identity(ics: &str, text: &str) -> (String, String) {
+    let unfolded = ics.replace("\r\n ", "");
+    let todo = unfolded
+        .split("BEGIN:VTODO")
+        .find(|todo| todo.contains(&format!("SUMMARY:{text}\r\n")))
+        .unwrap_or_else(|| panic!("no VTODO for {text}: {ics}"));
+    let line = |name: &str| {
+        todo.lines()
+            .find_map(|l| l.strip_prefix(name))
+            .unwrap_or_else(|| panic!("no {name} in {todo}"))
+            .to_string()
+    };
+    (line("UID:"), line("DTSTAMP:"))
+}
+
+/// REVIEW №91, №92, №93, №94, №179: iCalendar wrote a dependency as a
+/// parent, took a task completed elsewhere without a STATUS for open, gave
+/// a new task the UID of a deleted one that had its id, cut a value at a
+/// `:` inside a quoted parameter, and stamped every VTODO on every save.
+#[test]
+#[cfg(feature = "fmt-ics")]
+fn r23_icalendar_keeps_identities_and_reads_what_clients_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let ics = dir.path().join("i.ics");
+    let mut tm = TaskManager::open_at(ics.clone()).unwrap();
+    tm.add_task(vec!["first".into()], None).unwrap();
+    tm.add_task(vec!["second".into()], None).unwrap();
+    tm.add_task_full("blocked".into(), None, vec![1, 2]).unwrap();
+    let before = fs::read_to_string(&ics).unwrap();
+    let (first_uid, _) = ics_identity(&before, "first");
+    let (second_uid, second_stamp) = ics_identity(&before, "second");
+    assert!(before.contains(&format!("RELATED-TO;RELTYPE=DEPENDS-ON:{first_uid}")), "{before}");
+
+    // A client deletes "first" and "blocked"; rusk adds a task, which gets
+    // id 1 again, and marks "second" a second later.
+    fs::write(&ics, without_todo(&without_todo(&before, "first"), "blocked")).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let mut tm = TaskManager::open_at(ics.clone()).unwrap();
+    let id = tm.add_task(vec!["brand new".into()], None).unwrap();
+    assert_eq!(id, 1);
+    let after_add = fs::read_to_string(&ics).unwrap();
+    let (new_uid, _) = ics_identity(&after_add, "brand new");
+    assert_ne!(new_uid, first_uid, "a new task took the UID of the deleted one");
+    assert_eq!(ics_identity(&after_add, "second"), (second_uid.clone(), second_stamp.clone()));
+    tm.mark_tasks(vec![2]).unwrap();
+    let after_mark = fs::read_to_string(&ics).unwrap();
+    let (uid, stamp) = ics_identity(&after_mark, "second");
+    assert_eq!(uid, second_uid);
+    assert_ne!(stamp, second_stamp, "a changed task is stamped again");
+
+    // What another client wrote.
+    fs::write(
+        &ics,
+        "BEGIN:VCALENDAR\r\nBEGIN:VTODO\r\nUID:a@elsewhere\r\nSUMMARY:finished elsewhere\r\n\
+         COMPLETED:20260102T100000Z\r\nPERCENT-COMPLETE:100\r\nEND:VTODO\r\nBEGIN:VTODO\r\nUID:q1\r\n\
+         SUMMARY;X-NOTE=\"see: here\":real summary\r\nDUE;TZID=\"Etc/GMT+1\":20270301T090000\r\n\
+         RELATED-TO;RELTYPE=PARENT:rusk-1@rusk\r\nEND:VTODO\r\n\
+         BEGIN:VTODO\r\nUID:rusk-2024-standup@company.example\r\nSUMMARY:standup\r\nEND:VTODO\r\n\
+         BEGIN:VTODO\r\nUID:rusk-5@aaaa.rusk\r\nSUMMARY:Plan trip\r\nEND:VTODO\r\n\
+         BEGIN:VTODO\r\nUID:c0ffee@nextcloud\r\nSUMMARY;X-NOTE=\"unclosed:Book hotel\r\n\
+         RELATED-TO:rusk-5@aaaa.rusk\r\nEND:VTODO\r\nEND:VCALENDAR\r\n",
+    )
+    .unwrap();
+    let tasks = backend(&ics).load().unwrap();
+    assert!(tasks[0].done, "{tasks:?}");
+    assert_eq!(tasks[1].text, "real summary");
+    assert_eq!(tasks[1].date, chrono::NaiveDate::from_ymd_opt(2027, 3, 1));
+    assert!(tasks[1].after.is_empty(), "a parent is no dependency");
+    // Review of R23: a foreign UID that starts like a rusk one pins no id;
+    // a quote left open quotes nothing; a subtask a client made under a
+    // rusk task is no dependency.
+    assert_eq!((tasks[2].id, tasks[2].text.as_str()), (3, "standup"));
+    assert_eq!((tasks[4].text.as_str(), tasks[4].after.as_slice()), ("Book hotel", &[][..]));
 }

@@ -165,7 +165,30 @@ impl DbFormat {
             #[cfg(feature = "fmt-ndjson")]
             DbFormat::Ndjson => ndjson::encode(tasks),
             #[cfg(feature = "fmt-ics")]
-            DbFormat::Ics => Ok(ics::encode(tasks)),
+            DbFormat::Ics => Ok(ics::encode(tasks, None)),
+        }
+    }
+
+    /// Whether a save needs the content it replaces (see
+    /// [`encode_replacing`](Self::encode_replacing)).
+    pub fn keeps_identities(self) -> bool {
+        match self {
+            #[cfg(feature = "fmt-ics")]
+            DbFormat::Ics => true,
+            _ => false,
+        }
+    }
+
+    /// [`encode`](Self::encode) for a save that replaces `previous`, the
+    /// content there now. iCalendar keeps the UID of every task and the
+    /// DTSTAMP of every unchanged one from it, so that calendar clients see
+    /// only what changed as changed; the other formats have nothing to keep.
+    #[cfg_attr(not(feature = "fmt-ics"), allow(unused_variables))]
+    pub fn encode_replacing(self, tasks: &[Task], previous: Option<&str>) -> Result<String> {
+        match self {
+            #[cfg(feature = "fmt-ics")]
+            DbFormat::Ics => Ok(ics::encode(tasks, previous.map(content))),
+            _ => self.encode(tasks),
         }
     }
 

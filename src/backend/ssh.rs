@@ -37,6 +37,10 @@ pub struct SshBackend {
     /// What the last load, or our own last write, left on the remote, and
     /// when. `None` until then: the caller replaces unconditionally.
     seen: Mutex<Option<(Seen, Instant)>>,
+    /// The content behind `seen`, kept for a format whose save keeps what
+    /// the content it replaces says of each task (see
+    /// [`DbFormat::encode_replacing`]).
+    content: Mutex<Option<String>>,
 }
 
 /// One look at the remote file.
@@ -44,6 +48,7 @@ struct Fetched {
     tasks: Vec<Task>,
     /// The content it was read from — or that there was no file.
     seen: Seen,
+    text: Option<String>,
 }
 
 impl SshBackend {
@@ -73,6 +78,7 @@ impl SshBackend {
             path,
             format,
             seen: Mutex::new(None),
+            content: Mutex::new(None),
         })
     }
 
@@ -100,6 +106,13 @@ impl SshBackend {
         *self.seen.lock().unwrap_or_else(|e| e.into_inner()) = Some((seen, Instant::now()));
     }
 
+    /// Keeps `text` as the remote content, where the format needs it.
+    fn set_content(&self, text: Option<String>) {
+        if self.format.keeps_identities() {
+            *self.content.lock().unwrap_or_else(|e| e.into_inner()) = text;
+        }
+    }
+
     /// Reads the remote file. A file that is not there is no database yet
     /// and reads as no tasks; one that cannot be read is an error, so that
     /// the next save does not replace what is still on the remote (see the
@@ -111,6 +124,7 @@ impl SshBackend {
             return Ok(Fetched {
                 tasks: Vec::new(),
                 seen: Seen::Missing,
+                text: None,
             });
         };
         let seen = Seen::Content(Fingerprint::of(&raw));
@@ -143,6 +157,7 @@ impl SshBackend {
         Ok(Fetched {
             tasks: super::normalized(records, &self.describe())?,
             seen,
+            text: Some(text),
         })
     }
 
@@ -153,6 +168,7 @@ impl SshBackend {
     pub fn read(&self) -> Result<Loaded> {
         let fetched = self.fetch()?;
         self.set_seen(fetched.seen);
+        self.set_content(fetched.text);
         Ok(Loaded {
             tasks: fetched.tasks,
             missing: fetched.seen == Seen::Missing,
@@ -174,11 +190,20 @@ impl SshBackend {
     }
 
     fn write(&self, tasks: &[Task]) -> Result<()> {
-        let data = self.format.encode(tasks)?;
+        let previous = self.content.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        self.write_over(tasks, previous.as_deref())
+    }
+
+    /// Writes `tasks` in place of `previous`, the remote content they
+    /// replace; `seen` and `content` move together, and only when the write
+    /// went through.
+    fn write_over(&self, tasks: &[Task], previous: Option<&str>) -> Result<()> {
+        let data = self.format.encode_replacing(tasks, previous)?;
         let backup = crate::config::config().backup;
         transport::ssh_write_file(&self.destination, &self.path, data.as_bytes(), backup)
             .with_context(|| format!("failed to save tasks to {}", self.describe()))?;
         self.set_seen(Seen::Content(Fingerprint::of(data.as_bytes())));
+        self.set_content(Some(data));
         Ok(())
     }
 
@@ -209,10 +234,15 @@ impl SshBackend {
         let base = reread.as_ref().map_or(snapshot, |fetched| &fetched.tasks[..]);
         let (tasks, value, changed) = super::apply(base, change)?;
         let stored = changed || reread.is_some() || snapshot_is_clean;
-        if changed {
-            self.write(&tasks)?;
-        } else if let Some(fetched) = reread {
-            self.set_seen(fetched.seen);
+        match (changed, reread) {
+            // What the write replaces is the content read again, if it was.
+            (true, Some(fetched)) => self.write_over(&tasks, fetched.text.as_deref())?,
+            (true, None) => self.write(&tasks)?,
+            (false, Some(fetched)) => {
+                self.set_seen(fetched.seen);
+                self.set_content(fetched.text);
+            }
+            (false, None) => {}
         }
         Ok(Updated {
             tasks,

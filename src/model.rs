@@ -55,6 +55,7 @@ pub struct Task {
     #[serde(default, deserialize_with = "null_as_default")]
     pub id: TaskId,
     pub text: String,
+    #[serde(default, deserialize_with = "stored_date")]
     pub date: Option<NaiveDate>,
     #[serde(default, deserialize_with = "null_as_default")]
     pub done: bool,
@@ -70,6 +71,22 @@ pub struct Task {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub after: Vec<TaskId>,
+}
+
+/// A stored date, as chrono reads one: any year (see [`YEARS`]). One it
+/// cannot read is named, with the reason — "input is out of range" alone
+/// said neither which field nor which value (review of R23).
+fn stored_date<'de, D>(deserializer: D) -> Result<Option<NaiveDate>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match Option::<String>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(s) => s
+            .parse::<NaiveDate>()
+            .map(Some)
+            .map_err(|e| serde::de::Error::custom(format!("invalid date '{s}': {e}"))),
+    }
 }
 
 /// `null` reads as the field's empty value, the same as leaving it out.
@@ -651,6 +668,23 @@ mod tests {
         }
         assert_eq!(parse_iso_date("2026-02-30").unwrap_err(), "date '2026-02-30' is no day of the calendar");
         assert_eq!(parse_iso_date("0999-12-31").unwrap_err(), "date '0999-12-31' is outside the years 1000-9999");
+    }
+
+    /// Review of R23: a stored date that is no date names itself; any
+    /// year chrono reads is read (see `a_date_outside_the_years_is_kept_and_named`).
+    #[test]
+    fn a_stored_date_that_is_no_date_is_named() {
+        let err = serde_json::from_str::<Task>(r#"{"text":"a","date":"2026-13-45"}"#).unwrap_err();
+        assert!(err.to_string().starts_with("invalid date '2026-13-45': input is out of range"), "{err}");
+        for (json, date) in [
+            (r#"{"text":"a","date":"0205-01-01"}"#, NaiveDate::from_ymd_opt(205, 1, 1)),
+            (r#"{"text":"a","date":"+20255-01-11"}"#, NaiveDate::from_ymd_opt(20255, 1, 11)),
+            (r#"{"text":"a","date":"2026-7-1"}"#, NaiveDate::from_ymd_opt(2026, 7, 1)),
+            (r#"{"text":"a","date":null}"#, None),
+            (r#"{"text":"a"}"#, None),
+        ] {
+            assert_eq!(serde_json::from_str::<Task>(json).unwrap().date, date, "{json}");
+        }
     }
 
     #[test]

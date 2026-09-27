@@ -294,9 +294,23 @@ impl FileBackend {
     }
 
     pub(super) fn write(&self, tasks: &[Task], change: Change) -> Result<()> {
-        let data = self.format.encode(tasks)?;
         let _lock = self.lock()?;
+        let data = self.encode(tasks)?;
         self.write_raw(data.as_bytes(), tasks.len(), change)
+    }
+
+    /// `tasks` in the file's format, as the content that replaces what the
+    /// file holds now: iCalendar keeps the UIDs and stamps of the tasks
+    /// there (see [`DbFormat::encode_replacing`]). The caller holds the
+    /// writer lock. A file that cannot be read has nothing to keep; whether
+    /// it may be replaced is for the write to decide.
+    fn encode(&self, tasks: &[Task]) -> Result<String> {
+        let previous = if self.format.keeps_identities() {
+            self.read_text().ok().flatten()
+        } else {
+            None
+        };
+        self.format.encode_replacing(tasks, previous.as_deref())
     }
 
     /// Applies `change` to the task list and stores the result as one step
@@ -325,7 +339,7 @@ impl FileBackend {
         // caller gets back: after a failure both stay as they were.
         let stored = changed || reread.is_some() || snapshot_is_clean;
         if changed {
-            let data = self.format.encode(&tasks)?;
+            let data = self.encode(&tasks)?;
             self.replace(data.as_bytes(), tasks.len(), Change::Update)?;
         } else if let Some((_, seen)) = reread {
             self.set_seen(seen);
@@ -432,6 +446,31 @@ fn error_byte_in_file(data: &str, line: usize, column: usize) -> Option<usize> {
     Some(line_start + col0)
 }
 
+/// A line of the file as the error report shows it: at most
+/// `CLIP` characters — around the error's `column` (1-based, in bytes, as
+/// serde counts) or from the start — with `…` where it was cut. A minified
+/// database is one line, and the report held all of it (REVIEW №174).
+fn clip_line(line: &str, column: Option<usize>) -> String {
+    const CLIP: usize = 80;
+    let line = line.trim_end();
+    let count = line.chars().count();
+    // A line a little longer is shown whole: cutting it would hide as much
+    // as the `…` takes.
+    if count <= CLIP + 8 {
+        return line.to_string();
+    }
+    let at = column.map_or(0, |column| {
+        line.char_indices()
+            .take_while(|&(byte, _)| byte < column.saturating_sub(1))
+            .count()
+    });
+    let start = at.saturating_sub(CLIP / 2).min(count - CLIP);
+    let shown: String = line.chars().skip(start).take(CLIP).collect();
+    let before = if start > 0 { "…" } else { "" };
+    let after = if start + CLIP < count { "…" } else { "" };
+    format!("{before}{shown}{after}")
+}
+
 fn json_error_line_context(data: &str, e: &serde_json::Error) -> Option<String> {
     let n = e.line();
     if n == 0 {
@@ -462,7 +501,7 @@ fn json_error_line_context(data: &str, e: &serde_json::Error) -> Option<String> 
         .unwrap_or_default();
 
     let ctx = (i.saturating_sub(1)..(i + 2).min(lines.len()))
-        .map(|j| format!("{}: {}", j + 1, lines[j].trim_end()))
+        .map(|j| format!("{}: {}", j + 1, clip_line(lines[j], (j == i).then(|| e.column()))))
         .collect::<Vec<_>>()
         .join(" | ");
 
@@ -475,5 +514,30 @@ fn json_error_line_context(data: &str, e: &serde_json::Error) -> Option<String> 
         Some(ctx)
     } else {
         Some(format!("{parts}: {ctx}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// REVIEW №174: a minified database put the whole file in the report.
+    #[test]
+    fn a_long_line_is_clipped_around_the_error() {
+        let minified = format!("[{}]", r#"{"id":1,"text":"x"},"#.repeat(1000));
+        let e = serde_json::from_str::<Vec<Task>>(&minified).unwrap_err();
+        let context = json_error_line_context(&minified, &e).unwrap();
+        assert!(context.len() < 300, "{context}");
+        assert!(context.contains(": …") && context.ends_with(r#""text":"x"},]"#), "{context}");
+
+        assert_eq!(clip_line("short line  ", Some(3)), "short line");
+        // The error at the Ω: byte 51, column 52.
+        let line = "a".repeat(50) + "Ω" + &"b".repeat(100);
+        let clipped = clip_line(&line, Some(52));
+        assert!(clipped.starts_with("…a") && clipped.ends_with("b…"), "{clipped}");
+        assert!(clipped.contains('Ω'));
+        assert_eq!(clipped.chars().count(), 82);
+        // A neighbor line shows its start.
+        assert!(clip_line(&line, None).starts_with("aaaa") && clip_line(&line, None).ends_with('…'));
     }
 }

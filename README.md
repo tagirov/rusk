@@ -472,16 +472,42 @@ Notes on the text formats:
   edits made in Sheets have to be exported back manually. A row typed in
   with an empty id cell is a new task; rows of empty cells are skipped.
 - **Markdown**: `- [x] text @2026-07-15 <!-- id:3 -->`, a leading `!` marks
-  priority, continuation lines are indented by two spaces. Items added by
-  hand without the id comment get the lowest free id on the next run. rusk
-  owns the file: headers and prose around the list are dropped on save.
+  priority, continuation lines are indented by two spaces (or a tab). Items
+  added by hand without the id comment get the lowest free id on the next
+  run. Numbered items (`1. [ ] …`) are tasks too, and so are the other
+  one-character checkbox marks of Obsidian and its themes: `[-]` (cancelled)
+  reads as done, `[/]`, `[>]`, `[?]`, `[b]` and the rest as not done; every
+  task is written back as `- [ ]` or `- [x]`. That is for items at the start
+  of a line: an indented line is a continuation of the task above unless it
+  is a `- [ ]`/`- [x]` item. rusk owns the file: headers and prose around
+  the list are dropped on save. A text comes back as it was — a CRLF line
+  break inside it comes back as LF, and a first line that is nothing but
+  spaces and a date token loses the spaces — unless it looks like the
+  markup: a first line that starts with `! ` or ends with ` @YYYY-MM-DD`, or
+  a later line that is a `- [ ]` item.
 - **todo.txt**: `x (A) text due:2026-07-15 id:3`; projects/contexts stay in
   the task text; newlines are stored as a literal `\n`. A word of the text
   that would read as metadata — `x`, `(B)` or a date first, a `due:`/`id:`/
   `after:` tag anywhere — is written with a `\` in front (`\x marks the
-  spot`), so the text comes back as it was.
-- **iCalendar**: one VTODO per task; foreign components (VEVENT, VALARM) are
-  ignored and not preserved.
+  spot`), so the text comes back as it was. rusk has one priority flag: any
+  priority `(A)`–`(Z)` reads as priority and is written back as `(A)`, and
+  completion and creation dates (`x 2026-07-09 2026-07-01 …`) are dropped.
+- **iCalendar**: one VTODO per task; foreign components (VEVENT, VALARM),
+  properties and relations are ignored and not preserved. `STATUS:COMPLETED`
+  or `CANCELLED` is done — without a `STATUS`, so is a `COMPLETED` time or
+  `PERCENT-COMPLETE:100`. A dependency is `RELATED-TO;RELTYPE=DEPENDS-ON`
+  (or `FINISHTOSTART`); a `RELATED-TO` without `RELTYPE` is one only to a UID
+  of the form rusk wrote up to 0.7.3 (`rusk-3@rusk`), otherwise it is the
+  parent of a subtask. A save keeps the UID rusk gave each task and, while
+  the task is unchanged, its `DTSTAMP`, so a calendar client sees only what
+  changed as changed. A task new to the file gets a UID made of its id and
+  its text (`rusk-3@<hash>.rusk`): a new task that got the id of a deleted
+  one has a UID of its own — unless one save does both, as a `rusk sync`
+  that brings both changes can: the file knows tasks by id only, and the new
+  task is then an edit of the old one. A task that came with the UID of
+  another client gets a rusk UID on the first save, which pins its id. A
+  text has no carriage returns in iCalendar (a CRLF line break comes back as
+  LF).
 
 Every format can be edited by hand or by another tool; whatever rusk reads is
 held to the same rules before anything uses it:

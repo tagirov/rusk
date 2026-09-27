@@ -335,6 +335,10 @@ These tests are designed to run in CI/CD pipelines:
   needs a pty — an empty `NO_COLOR` on a terminal, clap's colors, the `del`
   prompt, the editor's report after a failed save — was checked against a
   release binary (see the R19 status in REVIEW.md).
+  R23's `r23_*` tests drive the file formats through the library
+  (`TaskManager::open_at`; a debug binary ignores `RUSK_DB`); the codecs'
+  pure parts are unit-tested in `src/codec/` (`markdown`, `ics`, `ndjson`)
+  and the report of a broken JSON file in `src/backend/file.rs`.
   R25's config parser is unit-tested in `src/config.rs` (comments, quotes,
   bytes, `default`, the template), the date parser in `src/parser/date.rs`
   (the shape and range of a year, months first), stored dates outside the

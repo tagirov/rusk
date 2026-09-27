@@ -15,12 +15,20 @@ pub fn encode(tasks: &[Task]) -> Result<String> {
     Ok(out)
 }
 
+/// Every line that is not blank is a task. A line that is none is named
+/// with its line number in the file and the column in it; serde counts the
+/// line as line 1 of its own (REVIEW №16).
 pub fn decode(data: &str) -> Result<Vec<Task>> {
     data.lines()
         .enumerate()
         .filter(|(_, line)| !line.trim().is_empty())
         .map(|(i, line)| {
-            serde_json::from_str(line).with_context(|| format!("NDJSON line {}", i + 1))
+            serde_json::from_str(line).map_err(|e| {
+                let what = e.to_string();
+                let at = format!(" at line {} column {}", e.line(), e.column());
+                let what = what.strip_suffix(&at).unwrap_or(&what);
+                anyhow::anyhow!("NDJSON line {}, column {}: {what}", i + 1, e.column())
+            })
         })
         .collect()
 }
@@ -61,7 +69,10 @@ mod tests {
         let err = decode("{\"id\":1,\"text\":\"a\",\"date\":null,\"done\":false}\nnot json\n")
             .unwrap_err()
             .to_string();
-        assert!(err.contains("line 2"), "{err}");
+        assert_eq!(err, "NDJSON line 2, column 2: expected ident");
+        // A task that is JSON but not a task says what is wrong with it.
+        let err = decode("{\"id\":1}\n").unwrap_err().to_string();
+        assert!(err.starts_with("NDJSON line 1, column 8: missing field `text`"), "{err}");
     }
 
     #[test]

@@ -366,6 +366,27 @@ pushed with what it reads back), so there the same rules are a check: a
 list `normalize` would change is refused with 400. In JSON only `text` is
 required; any other field may be absent or `null`.
 
+A save replaces the whole file, and one format needs to know what it
+replaces: iCalendar clients know a task by its UID and see a new DTSTAMP as
+a change. So a backend hands the encoder the content it is replacing
+(`DbFormat::encode_replacing`; the file backend reads it under the writer
+lock, the ssh backend keeps what it fetched), and `codec::ics` keeps each
+task's UID (by id) and, for an unchanged task, its DTSTAMP from there. A task
+new to the file gets `rusk-<id>@<hash of id and text>.rusk`: not the UID of
+a deleted task that had the id (unless one save both deletes and reuses
+it), the same in a local file and its sync remote, and readable by rusk up
+to 0.7.3, which takes the digits before the `@`. The other formats have
+nothing to keep. Markdown writes a text as it is and takes off exactly what
+it writes around it (the one space before the date token and the id
+comment), so spaces, an empty first line and the `! ` in front of it come
+back as they were; numbered items and one-character checkbox marks at the
+start of a line are tasks, written back as `- [ ]`/`- [x]` (an indented line
+is a new item only as `- [ ]`/`- [x]`, so the continuation lines of a text
+stay text). A broken NDJSON line is named by its line and column in the
+file, and the report of a broken JSON file shows at most 80 characters of
+each line around the error (`backend::file::clip_line`), a minified
+database included.
+
 ### Missing, empty, unreadable
 
 Three different answers, never folded into one, because the contract

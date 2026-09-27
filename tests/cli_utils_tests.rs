@@ -227,8 +227,11 @@ fn test_jump_prev_word_second_word() {
 
 #[test]
 fn test_jump_prev_word_with_punctuation() {
+    // From inside "world", back to its start: one word, not two (REVIEW №9).
     let result = HandlerCLI::jump_prev_word("hello, world!", 10);
-    assert_eq!(result, 0); // Should jump to start of "hello"
+    assert_eq!(result, 7);
+    // From behind the punctuation, back over it to the start of "hello".
+    assert_eq!(HandlerCLI::jump_prev_word("hello, world!", 7), 0);
 }
 
 #[test]
@@ -476,9 +479,10 @@ fn test_ml_move_right_at_buffer_end_is_noop() {
 
 #[test]
 fn test_ml_word_left_within_line() {
-    // jump_prev_word skips the current word and stops at the start of the previous one.
+    // Back to the start of the word the cursor is in (REVIEW №9).
     let lines = vec!["one two three".to_string()];
-    assert_eq!(HandlerCLI::ml_word_left(&lines, 0, 10), (0, 4));
+    assert_eq!(HandlerCLI::ml_word_left(&lines, 0, 10), (0, 8));
+    assert_eq!(HandlerCLI::ml_word_left(&lines, 0, 8), (0, 4));
 }
 
 #[test]
@@ -549,14 +553,13 @@ fn test_ml_delete_joins_with_next_line() {
 
 #[test]
 fn test_ml_delete_word_left_within_line() {
-    // Using a 3-word buffer so jump_prev_word lands inside the second word,
-    // leaving the first word and the trailing space untouched.
+    // One word goes, the space before it stays (REVIEW №9).
     let mut lines = vec!["one two three".to_string()];
     let mut row = 0usize;
     let mut col = 13usize;
     HandlerCLI::ml_delete_word_left(&mut lines, &mut row, &mut col);
-    assert_eq!(lines, vec!["one ".to_string()]);
-    assert_eq!((row, col), (0, 4));
+    assert_eq!(lines, vec!["one two ".to_string()]);
+    assert_eq!((row, col), (0, 8));
 }
 
 #[test]

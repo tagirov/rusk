@@ -88,17 +88,23 @@ impl EditorState {
     }
 
     /// Delete the current selection if any; returns `true` when something was
-    /// removed so callers can skip further work.
+    /// removed so callers can skip further work. Either way the selection is
+    /// over: every edit goes through here, and an empty selection left
+    /// behind (Shift+End at the end of a line, Ctrl+A on an empty buffer)
+    /// made the next character typed with Shift a selection of its own,
+    /// replaced by the character after it (REVIEW №45).
     pub fn delete_selection(&mut self) -> bool {
-        if let Some((s, e)) = self.selection_range() {
-            let (r, c) = text_ops::delete_selection_range(&mut self.lines, s, e);
-            self.row = r;
-            self.col = c;
-            self.anchor = None;
-            true
-        } else {
-            false
-        }
+        let removed = match self.selection_range() {
+            Some((s, e)) => {
+                let (r, c) = text_ops::delete_selection_range(&mut self.lines, s, e);
+                self.row = r;
+                self.col = c;
+                true
+            }
+            None => false,
+        };
+        self.anchor = None;
+        removed
     }
 
     pub fn joined(&self) -> String {
@@ -632,6 +638,27 @@ mod tests {
         let mut s = state_with(&["one"], 0, 1);
         s.soft_up_n(100, VW);
         assert_eq!((s.row, s.col), (0, 1));
+    }
+
+    /// REVIEW №45: an empty selection outlived the edit, so the first
+    /// capital typed after Ctrl+A on an empty buffer (or after Shift+End at
+    /// the end of a line) was selected and replaced by the next character.
+    #[test]
+    fn an_edit_ends_even_an_empty_selection() {
+        let mut s = state_with(&[""], 0, 0);
+        s.select_all(VW);
+        // Typed with Shift: the key loop does not clear the selection.
+        s.insert_char('B', VW);
+        assert_eq!(s.anchor, None);
+        s.insert_char('u', VW);
+        assert_eq!(s.lines, ["Bu"]);
+
+        let mut s = state_with(&["x"], 0, 1);
+        s.start_selection_if_needed();
+        s.goto_line_end(VW);
+        s.insert_char('H', VW);
+        s.insert_char('e', VW);
+        assert_eq!(s.lines, ["xHe"]);
     }
 
     #[test]

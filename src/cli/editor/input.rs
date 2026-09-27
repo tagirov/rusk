@@ -33,6 +33,43 @@ pub(super) struct EditorContext<'a> {
     pub prefill_lines: &'a [String],
 }
 
+/// One edit, one undo step: the state before it goes on the undo stack only
+/// when the text changed. A key that edits nothing — Backspace at the start,
+/// Delete at the end, Ctrl+W on an empty line — left a step that undid
+/// nothing, and a held Delete pushed the real history out of the stack
+/// (REVIEW №116).
+fn edit(
+    state: &mut EditorState,
+    history: &mut History,
+    kind: OpKind,
+    change: impl FnOnce(&mut EditorState),
+) {
+    let before = state.snapshot();
+    change(state);
+    if state.lines != before.lines {
+        history.record(before, kind);
+    } else {
+        history.break_run();
+    }
+}
+
+/// Whether a key pressed with these modifiers types its character. Shift only
+/// picks the character; Ctrl, Alt, Super, Hyper or Meta make it a shortcut,
+/// and a shortcut that is not bound does nothing to the text rather than
+/// type the bare letter (REVIEW №46). Windows reports AltGr as Ctrl+Alt along
+/// with the character it made (`@`, `€`), so there that pair types; a unix
+/// terminal sends such a character without modifiers.
+fn types_text(modifiers: KeyModifiers) -> bool {
+    let ctrl = modifiers.contains(KeyModifiers::CONTROL);
+    let alt = modifiers.contains(KeyModifiers::ALT);
+    let other = modifiers.intersects(KeyModifiers::SUPER | KeyModifiers::HYPER | KeyModifiers::META);
+    match (ctrl, alt) {
+        (false, false) => !other,
+        (true, true) => cfg!(windows) && !other,
+        _ => false,
+    }
+}
+
 /// Shared frame of every movement arm: when shift is held, anchor the
 /// selection (if not yet anchored) before moving. The selection survives
 /// because the epilogue only clears it on non-shift moves.
@@ -66,6 +103,13 @@ pub(super) fn handle_key(
     } = ev;
     let shift = modifiers.contains(KeyModifiers::SHIFT);
     let ctrl = modifiers.contains(KeyModifiers::CONTROL);
+    // Under Ctrl a letter is its key, whatever its case: Windows puts Caps
+    // Lock in the case (Ctrl+S arrives as `S`), and a terminal that reports
+    // Ctrl+Shift+K may send the capital along with the Shift.
+    let code = match code {
+        KeyCode::Char(c) if ctrl && c.is_ascii_uppercase() => KeyCode::Char(c.to_ascii_lowercase()),
+        code => code,
+    };
     let alt = modifiers.contains(KeyModifiers::ALT);
     let vw = view::editor_text_layout(ctx.cols as usize, ctx.prompt_width).0;
 
@@ -91,9 +135,10 @@ pub(super) fn handle_key(
         (KeyCode::Char('x'), true, _) => {
             if let Some(text) = state.selection_text() {
                 clipboard.copy(&text);
-                history.record(state.snapshot(), OpKind::Other);
-                state.delete_selection();
-                state.recompute_desired(vw);
+                edit(state, history, OpKind::Other, |s| {
+                    s.delete_selection();
+                    s.recompute_desired(vw);
+                });
             }
         }
         (KeyCode::Char('v'), true, _) => {
@@ -101,8 +146,7 @@ pub(super) fn handle_key(
             // Nothing left once cleaned: no edit, no undo step, and the
             // selection is not replaced by nothing.
             if !text_ops::clean_input(&pasted).is_empty() {
-                history.record(state.snapshot(), OpKind::Other);
-                state.insert_str(&pasted, vw);
+                edit(state, history, OpKind::Other, |s| s.insert_str(&pasted, vw));
             }
         }
 
@@ -132,20 +176,13 @@ pub(super) fn handle_key(
             return Ok(Action::ShowHelp);
         }
         (KeyCode::Char('r'), true, _) => {
-            history.record(state.snapshot(), OpKind::Other);
-            state.reset_to_prefill(ctx.prefill_lines, vw);
+            edit(state, history, OpKind::Other, |s| s.reset_to_prefill(ctx.prefill_lines, vw));
         }
         (KeyCode::Esc, _, _) => return Ok(Action::Cancel),
 
         // ── Structural editing ──────────────────────────────────────────────
-        (KeyCode::Enter, _, _) => {
-            history.record(state.snapshot(), OpKind::Other);
-            state.insert_newline(vw);
-        }
-        (KeyCode::Tab, _, _) => {
-            history.record(state.snapshot(), OpKind::Other);
-            state.insert_tab(vw);
-        }
+        (KeyCode::Enter, _, _) => edit(state, history, OpKind::Other, |s| s.insert_newline(vw)),
+        (KeyCode::Tab, _, _) => edit(state, history, OpKind::Other, |s| s.insert_tab(vw)),
 
         // ── Word movement ───────────────────────────────────────────────────
         (KeyCode::Left, true, _) => selectable_move(state, history, shift, |s| s.word_left(vw)),
@@ -196,24 +233,28 @@ pub(super) fn handle_key(
         (KeyCode::Char('w'), true, _)
         | (KeyCode::Char('h'), true, _)
         | (KeyCode::Backspace, true, _) => {
-            history.record(state.snapshot(), OpKind::Other);
-            state.delete_word_left(vw);
+            edit(state, history, OpKind::Other, |s| s.delete_word_left(vw));
         }
         (KeyCode::Delete, true, _) => {
-            history.record(state.snapshot(), OpKind::Other);
-            state.delete_word_right(vw);
+            edit(state, history, OpKind::Other, |s| s.delete_word_right(vw));
         }
+        // Ctrl+Shift+K deletes the line, where the terminal tells it from
+        // Ctrl+K by reporting the Shift (kitty sends CSI 107;6u, and so do
+        // others in their CSI u mode — with a capital `K` too, which is no
+        // letter to type any more, REVIEW №47); elsewhere the key sends the
+        // byte of Ctrl+K and kills to the end of the line. Caps Lock alone
+        // is no Shift.
         (KeyCode::Char('k'), true, _) => {
-            history.record(state.snapshot(), OpKind::Other);
-            if shift {
-                state.delete_line(vw);
-            } else {
-                state.kill_to_eol(vw);
-            }
+            edit(state, history, OpKind::Other, |s| {
+                if shift {
+                    s.delete_line(vw);
+                } else {
+                    s.kill_to_eol(vw);
+                }
+            });
         }
         (KeyCode::Char('u'), true, _) => {
-            history.record(state.snapshot(), OpKind::Other);
-            state.kill_to_bol(vw);
+            edit(state, history, OpKind::Other, |s| s.kill_to_bol(vw));
         }
 
         // ── Character-level editing ─────────────────────────────────────────
@@ -223,8 +264,7 @@ pub(super) fn handle_key(
             } else {
                 OpKind::Backspace
             };
-            history.record(state.snapshot(), kind);
-            state.backspace(vw);
+            edit(state, history, kind, |s| s.backspace(vw));
         }
         (KeyCode::Delete, _, _) => {
             let kind = if state.anchor.is_some() {
@@ -232,9 +272,10 @@ pub(super) fn handle_key(
             } else {
                 OpKind::DeleteChar
             };
-            history.record(state.snapshot(), kind);
-            state.delete(vw);
+            edit(state, history, kind, |s| s.delete(vw));
         }
+        // A shortcut nothing is bound to: nothing happens to the text.
+        (KeyCode::Char(_), _, _) if !types_text(modifiers) => history.break_run(),
         // Any other control character a terminal reports as one has no place
         // in the buffer (`insert_char` drops it): no undo step for nothing.
         (KeyCode::Char(ch), _, _)
@@ -251,8 +292,7 @@ pub(super) fn handle_key(
             } else {
                 OpKind::InsertChar
             };
-            history.record(state.snapshot(), kind);
-            state.insert_char(ch, vw);
+            edit(state, history, kind, |s| s.insert_char(ch, vw));
         }
 
         _ => history.break_run(),
@@ -352,13 +392,14 @@ pub(super) fn handle_mouse(
             // Nothing left once cleaned: no edit, no undo step, and the
             // selection is not replaced by nothing.
             if !text_ops::clean_input(&pasted).is_empty() {
-                history.record(state.snapshot(), OpKind::Other);
                 state.follow_cursor = true;
                 let (r, c) = at(state, mouse::Reach::Visible);
-                state.row = r;
-                state.col = c;
-                state.anchor = None;
-                state.insert_str(&pasted, vw);
+                edit(state, history, OpKind::Other, |s| {
+                    s.row = r;
+                    s.col = c;
+                    s.anchor = None;
+                    s.insert_str(&pasted, vw);
+                });
             }
         }
         MouseEventKind::Drag(MouseButton::Left) => {
@@ -407,8 +448,148 @@ pub(super) fn handle_paste(
     if text_ops::clean_input(&pasted).is_empty() {
         return Ok(Action::Continue);
     }
-    history.record(state.snapshot(), OpKind::Other);
     state.follow_cursor = true;
-    state.insert_str(&pasted, vw);
+    edit(state, history, OpKind::Other, |s| s.insert_str(&pasted, vw));
     Ok(Action::Continue)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The editor after `keys` on a buffer of `text` with the cursor at
+    /// `col` of its only line.
+    struct Keys {
+        state: EditorState,
+        history: History,
+        clipboard: EditorClipboard,
+    }
+
+    impl Keys {
+        fn on(text: &str, col: usize) -> Self {
+            let mut state = EditorState::from_prefill(&[text.to_string()], true, 60);
+            state.col = col;
+            Self {
+                state,
+                history: History::new(),
+                clipboard: EditorClipboard::detached(),
+            }
+        }
+
+        fn press(&mut self, code: KeyCode, modifiers: KeyModifiers) -> &mut Self {
+            let ctx = EditorContext {
+                prompt_width: 4,
+                editor_row: 0,
+                cols: 80,
+                rows: 24,
+                prefill_lines: &[],
+            };
+            let ev = KeyEvent::new(code, modifiers);
+            handle_key(ev, &mut self.state, &mut self.history, &mut self.clipboard, &ctx).unwrap();
+            self
+        }
+
+        fn press_action(&mut self, code: KeyCode, modifiers: KeyModifiers) -> Action {
+            let ctx = EditorContext {
+                prompt_width: 4,
+                editor_row: 0,
+                cols: 80,
+                rows: 24,
+                prefill_lines: &[],
+            };
+            let ev = KeyEvent::new(code, modifiers);
+            handle_key(ev, &mut self.state, &mut self.history, &mut self.clipboard, &ctx).unwrap()
+        }
+
+        fn char(&mut self, c: char) -> &mut Self {
+            self.press(KeyCode::Char(c), KeyModifiers::NONE)
+        }
+
+        fn text(&self) -> String {
+            self.state.joined()
+        }
+    }
+
+    const CTRL: KeyModifiers = KeyModifiers::CONTROL;
+
+    /// REVIEW №46: an unbound Ctrl+letter, Alt+letter or Ctrl+Space typed
+    /// its bare character.
+    #[test]
+    fn an_unbound_shortcut_types_nothing() {
+        let mut k = Keys::on("ab", 2);
+        k.press(KeyCode::Char('e'), CTRL)
+            .press(KeyCode::Char('d'), CTRL)
+            .press(KeyCode::Char('b'), KeyModifiers::ALT)
+            .press(KeyCode::Char(' '), CTRL)
+            .press(KeyCode::Char('q'), KeyModifiers::ALT | KeyModifiers::SHIFT);
+        assert_eq!(k.text(), "ab");
+        // Shift alone picks the character.
+        k.press(KeyCode::Char('C'), KeyModifiers::SHIFT);
+        assert_eq!(k.text(), "abC");
+        // AltGr on Windows is Ctrl+Alt with the character it made.
+        k.press(KeyCode::Char('@'), CTRL | KeyModifiers::ALT);
+        assert_eq!(k.text(), if cfg!(windows) { "abC@" } else { "abC" });
+    }
+
+    /// REVIEW №47: Ctrl+Shift+K reported with the capital letter typed a
+    /// `K`; reported with Shift it deletes the line, and plain Ctrl+K kills
+    /// to the end of the line — a capital without Shift (Caps Lock on
+    /// Windows) too.
+    #[test]
+    fn ctrl_shift_k_deletes_the_line_however_it_is_reported() {
+        for (code, modifiers) in [
+            (KeyCode::Char('k'), CTRL | KeyModifiers::SHIFT),
+            (KeyCode::Char('K'), CTRL | KeyModifiers::SHIFT),
+        ] {
+            let mut k = Keys::on("hello world", 3);
+            k.press(KeyCode::Enter, KeyModifiers::NONE);
+            k.state.row = 0;
+            k.state.col = 3;
+            k.press(code, modifiers);
+            assert_eq!(k.text(), "lo world", "{code:?} {modifiers:?}");
+        }
+        for code in [KeyCode::Char('k'), KeyCode::Char('K')] {
+            let mut k = Keys::on("hello world", 3);
+            k.press(code, CTRL);
+            assert_eq!(k.text(), "hel", "{code:?}");
+        }
+    }
+
+    /// Review of R24: with Caps Lock on, Windows reports Ctrl+Z as `Z`; the
+    /// shortcuts are the keys, not their case.
+    #[test]
+    fn a_shortcut_is_its_key_in_either_case() {
+        let mut k = Keys::on("", 0);
+        k.char('a').char('b');
+        k.press(KeyCode::Char('Z'), CTRL);
+        assert_eq!(k.text(), "");
+        let ctx_save = Keys::on("x", 1).press_action(KeyCode::Char('S'), CTRL);
+        assert!(matches!(ctx_save, Action::Save));
+        // Super and friends make a shortcut too.
+        let mut k = Keys::on("ab", 2);
+        k.press(KeyCode::Char('a'), KeyModifiers::SUPER);
+        assert_eq!(k.text(), "ab");
+    }
+
+    /// REVIEW №116: a key that changed nothing still pushed an undo step,
+    /// so Ctrl+Z undid nothing, and a held Delete at the end pushed the
+    /// real history out.
+    #[test]
+    fn only_a_real_edit_is_a_step_to_undo() {
+        let mut k = Keys::on("", 0);
+        k.char('a').char('b');
+        k.press(KeyCode::Left, KeyModifiers::NONE).press(KeyCode::Left, KeyModifiers::NONE);
+        k.press(KeyCode::Backspace, KeyModifiers::NONE);
+        k.press(KeyCode::Char('w'), CTRL);
+        k.press(KeyCode::Char('z'), CTRL);
+        assert_eq!(k.text(), "", "Ctrl+Z undoes the typing, not a Backspace that did nothing");
+
+        let mut k = Keys::on("", 0);
+        k.char('a').char('b').char('c');
+        for _ in 0..205 {
+            k.press(KeyCode::Delete, KeyModifiers::NONE);
+        }
+        k.press(KeyCode::Char('z'), CTRL);
+        assert_eq!(k.text(), "");
+    }
 }

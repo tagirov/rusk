@@ -57,38 +57,25 @@ pub fn first_non_space(line: &str) -> usize {
 
 // ── Word jumps ──────────────────────────────────────────────────────────────
 
+/// Start of the word before `cursor`: the separators right before it are
+/// skipped, then one word. That is where Ctrl+← lands and what Ctrl+W
+/// deletes back to; with nothing but separators before the cursor, it is
+/// the start of the line (REVIEW №9: two words were skipped, and a line
+/// that began with separators stopped one character short of its start).
 pub fn jump_prev_word(buffer: &str, cursor: usize) -> usize {
-    if cursor == 0 {
-        return 0;
+    let mut pos = cursor.min(buffer.len());
+    while !buffer.is_char_boundary(pos) {
+        pos -= 1;
     }
-    let mut pos = cursor;
-    if !buffer.is_char_boundary(pos) {
-        pos = prev_char_boundary(buffer, pos);
+    let mut before = buffer[..pos].char_indices().rev().peekable();
+    let mut start = pos;
+    while let Some((at, _)) = before.next_if(|&(_, c)| !is_word_char(c)) {
+        start = at;
     }
-    let chars: Vec<(usize, char)> = buffer
-        .char_indices()
-        .take_while(|(idx, _)| *idx < pos)
-        .collect();
-    if chars.is_empty() {
-        return 0;
+    while let Some((at, _)) = before.next_if(|&(_, c)| is_word_char(c)) {
+        start = at;
     }
-    let mut i = chars.len() - 1;
-    while i > 0 && is_word_char(chars[i].1) {
-        i -= 1;
-    }
-    while i > 0 && !is_word_char(chars[i].1) {
-        i -= 1;
-    }
-    if i < chars.len() && is_word_char(chars[i].1) {
-        while i > 0 && is_word_char(chars[i - 1].1) {
-            i -= 1;
-        }
-        chars[i].0
-    } else if i + 1 < chars.len() {
-        chars[i + 1].0
-    } else {
-        chars[i].0
-    }
+    start
 }
 
 pub fn jump_next_word(buffer: &str, cursor: usize) -> usize {
@@ -444,6 +431,49 @@ mod tests {
 
     fn lines(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
+    }
+
+    // ── Word jumps ──────────────────────────────────────────────────────────
+
+    /// REVIEW №9: Ctrl+← / Ctrl+W went back two words, and from behind
+    /// leading separators stopped at byte 1 instead of the line start.
+    #[test]
+    fn a_word_back_is_one_word() {
+        for (text, cursor, lands) in [
+            ("one two three", 13, 8),
+            ("one two three", 10, 8),
+            ("one two three", 8, 4),
+            ("buy milk", 4, 0),
+            ("hello, world!", 10, 7),
+            ("hello, world!", 13, 7),
+            (", abc", 5, 2),
+            ("    hi", 4, 0),
+            (",,,abc", 3, 0),
+            ("   ", 3, 0),
+            ("x", 0, 0),
+            ("καλή μέρα", 17, 9),
+            ("καλή μέρα", 9, 0),
+        ] {
+            assert_eq!(jump_prev_word(text, cursor), lands, "{text:?} from {cursor}");
+        }
+        // A cursor inside a character counts as the start of that one.
+        assert_eq!(jump_prev_word("ab γδ x", 4), jump_prev_word("ab γδ x", 3));
+        assert_eq!(jump_prev_word("ab γδ x", 6), 3);
+    }
+
+    #[test]
+    fn deleting_a_word_back_takes_one_word() {
+        let mut l = lines(&["note buy milk"]);
+        let (mut row, mut col) = (0, 13);
+        ml_delete_word_left(&mut l, &mut row, &mut col);
+        assert_eq!((l[0].as_str(), col), ("note buy ", 9));
+
+        // The spaces of a Tab on a line of its own go, and nothing more.
+        let mut l = lines(&["a", "    "]);
+        let (mut row, mut col) = (1, 4);
+        ml_delete_word_left(&mut l, &mut row, &mut col);
+        assert_eq!(l, ["a", ""]);
+        assert_eq!((row, col), (1, 0));
     }
 
     // ── selection_range ─────────────────────────────────────────────────────

@@ -22,6 +22,15 @@ impl EditorClipboard {
         }
     }
 
+    /// A clipboard that has not reached for the system one yet (tests).
+    #[cfg(test)]
+    pub fn detached() -> Self {
+        Self {
+            internal: String::new(),
+            system: None,
+        }
+    }
+
     fn system(&mut self) -> Option<&mut arboard::Clipboard> {
         if self.system.is_none() {
             self.system = arboard::Clipboard::new().ok();

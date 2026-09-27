@@ -260,7 +260,7 @@ const HELP_ROWS: &[HelpRow] = &[
     HelpRow::Pair("Ctrl+W, Ctrl+Backspace", "delete word to the left"),
     HelpRow::Pair("Ctrl+Delete", "delete word to the right"),
     HelpRow::Pair("Ctrl+K", "kill to end of line"),
-    HelpRow::Pair("Ctrl+Shift+K", "delete whole line"),
+    HelpRow::Pair("Ctrl+Shift+K", "delete line (if the terminal tells it apart)"),
     HelpRow::Pair("Ctrl+U", "kill to beginning of line"),
     HelpRow::Pair("Ctrl+R", "restore original text"),
     HelpRow::Blank,
@@ -289,6 +289,8 @@ const HELP_ROWS: &[HelpRow] = &[
         "+2w, +10d5w",
         "relative to current due date (today if none)",
     ),
+    HelpRow::Pair("_ 2d fix", "no date; the text is `2d fix`"),
+    HelpRow::Pair("5-1-2027 _ 2d fix", "a `_` after the date keeps `2d` text"),
     HelpRow::Note("Recognized tokens are colored: green = today/future, red = past."),
 ];
 

@@ -252,3 +252,116 @@ impl Sandbox {
         cmd
     }
 }
+
+/// What `rusk` did in a pseudo-terminal (see [`Sandbox::in_pty`]).
+#[cfg(unix)]
+#[allow(dead_code)]
+pub struct PtyRun {
+    /// Exit code; `None` when it did not exit in time and was killed.
+    pub code: Option<i32>,
+    /// Everything that was written to the terminal, escape sequences and all.
+    pub screen: Vec<u8>,
+}
+
+#[cfg(unix)]
+#[allow(dead_code)]
+impl PtyRun {
+    /// What was printed after the editor gave the screen back: what the
+    /// user sees in the shell once it is over.
+    pub fn after_editor(&self) -> String {
+        const LEAVE: &[u8] = b"\x1b[?1049l";
+        let tail = match self.screen.windows(LEAVE.len()).rposition(|w| w == LEAVE) {
+            Some(at) => &self.screen[at + LEAVE.len()..],
+            None => &self.screen[..],
+        };
+        String::from_utf8_lossy(tail).into_owned()
+    }
+
+    /// Whether the terminal was sent `bytes` at some point.
+    pub fn saw(&self, bytes: &[u8]) -> bool {
+        self.screen.windows(bytes.len()).any(|w| w == bytes)
+    }
+}
+
+/// Drives a program in a pseudo-terminal: answers the queries a terminal
+/// answers (device attributes; the kitty keyboard flags when asked to act
+/// as kitty), waits for a marker on the screen, then types step by step.
+#[cfg(unix)]
+const PTY_DRIVER: &str = include_str!("pty_driver.py");
+
+#[cfg(unix)]
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(unix)]
+fn unhex(text: &str) -> Vec<u8> {
+    (0..text.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).expect("hex from the pty driver"))
+        .collect()
+}
+
+#[cfg(unix)]
+#[allow(dead_code)]
+impl Sandbox {
+    /// Runs `rusk <args>` in an 80x24 pseudo-terminal with this sandbox's
+    /// environment. Once `wait_for` is on the screen (`\x1b[?1049h` for the
+    /// editor), each step's bytes are typed after its pause in
+    /// milliseconds. `kitty` makes the terminal answer the kitty keyboard
+    /// protocol's query. `None` when there is no python3 to drive the pty,
+    /// or no pty to be had.
+    pub fn in_pty(
+        &self,
+        args: &[&str],
+        wait_for: &[u8],
+        steps: &[(u64, &[u8])],
+        kitty: bool,
+    ) -> Option<PtyRun> {
+        let bin = require_rusk_bin().expect("rusk binary not found, run cargo build");
+        let mut argv = vec![bin.display().to_string()];
+        argv.extend(args.iter().map(|a| a.to_string()));
+        let spec = serde_json::json!({
+            "argv": argv,
+            "steps": steps.iter().map(|(ms, bytes)| serde_json::json!([ms, hex(bytes)])).collect::<Vec<_>>(),
+            "wait_for": hex(wait_for),
+            "kitty": kitty,
+            "timeout_ms": 20000,
+        });
+        let template = self.cmd();
+        let mut python = Command::new("python3");
+        for (key, value) in template.get_envs() {
+            match value {
+                Some(value) => python.env(key, value),
+                None => python.env_remove(key),
+            };
+        }
+        // The editor's clipboard would reach the desktop's own: a test that
+        // copies must not overwrite what the developer copied.
+        python.env_remove("DISPLAY").env_remove("WAYLAND_DISPLAY");
+        let out = match python
+            .current_dir(self.path())
+            .arg("-c")
+            .arg(PTY_DRIVER)
+            .arg(spec.to_string())
+            .stdin(std::process::Stdio::null())
+            .output()
+        {
+            Ok(out) => out,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(e) => panic!("cannot run the pty driver: {e}"),
+        };
+        assert!(out.status.success(), "the pty driver failed: {}", String::from_utf8_lossy(&out.stderr));
+        let report: serde_json::Value = serde_json::from_slice(&out.stdout).expect("the pty driver's report");
+        if report["no_pty"].as_bool() == Some(true) {
+            return None;
+        }
+        let screen = unhex(report["output"].as_str().unwrap_or_default());
+        let code = if report["timed_out"].as_bool().unwrap_or(true) {
+            None
+        } else {
+            report["code"].as_i64().map(|c| c as i32)
+        };
+        Some(PtyRun { code, screen })
+    }
+}

@@ -20,7 +20,8 @@
 // routine), R15 (the ssh protocol), R16 (web UI: one way to change a task;
 // its browser half is checked black-box, see REVIEW.md), R18 (the lifecycle
 // of a SQLite connection) — all of R1-R18 — and of the clusters for the
-// rest of REVIEW.md: R19 (output, terminals and messages). R6 and R8 need a pty
+// rest of REVIEW.md: R19 (output, terminals and messages), R24 (the editor:
+// keys, words, selection, undo, the first-line date). R6 and R8 need a pty
 // for most of their repros: what Command can drive is here, the draft rules
 // are unit-tested in `src/cli/editor/draft.rs`, and the rest is driven by a
 // pty script against a release binary (see REVIEW.md).
@@ -4965,4 +4966,238 @@ fn r19_compact_view_marks_a_task_it_shortened() {
     for line in list_lines(&out) {
         assert!(cells(&line) <= 80, "{} cells: {line}", cells(&line));
     }
+}
+
+// ---------------------------------------------------------------------------
+// R24 — the editor: keys, words, selection, undo, the first-line date
+// ---------------------------------------------------------------------------
+//
+// Driven in a pseudo-terminal (`Sandbox::in_pty`, python's `pty`; skipped
+// without python3): the editor is started, the keys are typed once it has
+// the screen, and what counts is what it saved. The pure parts are
+// unit-tested in `src/cli/editor/` (`text_ops`, `state`, `input`) and in
+// `src/cli/handlers.rs` (the prefill and the first-line date).
+
+/// The editor has the screen (alternate screen entered).
+#[cfg(all(unix, feature = "interactive"))]
+const EDITOR_UP: &[u8] = b"\x1b[?1049h";
+#[cfg(all(unix, feature = "interactive"))]
+const CTRL_S: &[u8] = b"\x13";
+
+/// `rusk <args>` in a pty, keys typed 150 ms apart once the editor is up.
+#[cfg(all(unix, feature = "interactive"))]
+fn in_editor(sb: &Sandbox, args: &[&str], keys: &[&[u8]], kitty: bool) -> Option<common::PtyRun> {
+    let steps: Vec<(u64, &[u8])> = keys.iter().map(|k| (150, *k)).collect();
+    let run = sb.in_pty(args, EDITOR_UP, &steps, kitty)?;
+    assert!(run.code.is_some(), "the editor did not exit: {}", String::from_utf8_lossy(&run.screen));
+    Some(run)
+}
+
+/// REVIEW №9: Ctrl+W and Ctrl+← went back two words.
+#[test]
+#[cfg(all(unix, feature = "interactive"))]
+fn r24_a_word_back_is_one_word() {
+    let sb = Sandbox::new();
+    let Some(run) = in_editor(&sb, &["add"], &[b"note buy milk", b"\x17", CTRL_S], false) else {
+        return;
+    };
+    assert_eq!(run.code, Some(0), "{}", run.after_editor());
+    let Some(_) = in_editor(&sb, &["add"], &[b"buy milk", b"\x1b[1;5D", b"X", CTRL_S], false) else {
+        return;
+    };
+    let tasks = db_tasks(&sb);
+    assert_eq!(text_of(&tasks, 1), "note buy");
+    assert_eq!(text_of(&tasks, 2), "buy Xmilk");
+}
+
+/// REVIEW №45: after Ctrl+A on an empty buffer (or Shift+End at the end of
+/// a line) the first capital typed was lost.
+#[test]
+#[cfg(all(unix, feature = "interactive"))]
+fn r24_a_capital_after_an_empty_selection_is_kept() {
+    let sb = Sandbox::new();
+    let Some(_) = in_editor(&sb, &["add"], &[b"\x01", b"Buy milk", CTRL_S], false) else {
+        return;
+    };
+    let Some(_) = in_editor(&sb, &["add"], &[b"x", b"\x1b[1;2F", b"Hello", CTRL_S], false) else {
+        return;
+    };
+    let tasks = db_tasks(&sb);
+    assert_eq!(text_of(&tasks, 1), "Buy milk");
+    assert_eq!(text_of(&tasks, 2), "xHello");
+}
+
+/// REVIEW №46: an unbound Ctrl+letter, Alt+letter or Ctrl+Space typed its
+/// bare character into the text.
+#[test]
+#[cfg(all(unix, feature = "interactive"))]
+fn r24_an_unbound_shortcut_types_nothing() {
+    let sb = Sandbox::new();
+    let keys: &[&[u8]] = &[b"ab", b"\x05", b"\x04", b"\x1bb", b"\x00", b"\x02", CTRL_S];
+    let Some(_) = in_editor(&sb, &["add"], keys, false) else {
+        return;
+    };
+    assert_eq!(text_of(&db_tasks(&sb), 1), "ab");
+}
+
+/// REVIEW №47: Ctrl+Shift+K could not be told from Ctrl+K, and reported
+/// with the capital letter it typed a `K`. A terminal that reports the
+/// Shift gets the line deleted; the editor does not switch the kitty
+/// keyboard protocol on for it (review of R24: in a non-Latin layout that
+/// protocol reports Ctrl+S as the letter of that layout, and no shortcut
+/// worked), so the terminal is left as it was.
+#[test]
+#[cfg(all(unix, feature = "interactive"))]
+fn r24_ctrl_shift_k_deletes_the_line_where_the_terminal_can_say_so() {
+    let sb = Sandbox::with_db(r#"[{"id":1,"text":"hello world\nsecond line"},{"id":2,"text":"one\ntwo"}]"#);
+    // Kitty sends Ctrl+Shift+K as CSI 107;6u without being asked; xterm's
+    // CSI u form of modifyOtherKeys sends the capital, CSI 75;6u.
+    for (id, key) in [("1", &b"\x1b[107;6u"[..]), ("2", b"\x1b[75;6u")] {
+        let Some(run) = in_editor(&sb, &["edit", id], &[b"\x1b[C\x1b[C", key, CTRL_S], true) else {
+            return;
+        };
+        assert!(!run.saw(b"\x1b[?u") && !run.saw(b"\x1b[>"), "the keyboard protocol was touched");
+        // Nor is the terminal asked anything: one that does not answer
+        // kept the screen blank for two seconds per task.
+        assert!(!run.saw(b"\x1b[c"), "the terminal was queried");
+    }
+    let tasks = db_tasks(&sb);
+    assert_eq!(text_of(&tasks, 1), "second line");
+    assert_eq!(text_of(&tasks, 2), "two");
+
+    // Ctrl+K kills to the end of the line.
+    let Some(_) = in_editor(&sb, &["edit", "2"], &[b"\x1b[C", b"\x0b", CTRL_S], false) else {
+        return;
+    };
+    assert_eq!(text_of(&db_tasks(&sb), 2), "t");
+}
+
+/// REVIEW №116: a key that changed nothing still made a step to undo:
+/// Ctrl+Z after a Backspace at the start undid nothing.
+#[test]
+#[cfg(all(unix, feature = "interactive"))]
+fn r24_only_a_real_edit_is_undone() {
+    let sb = Sandbox::new();
+    let keys: &[&[u8]] = &[b"ab", b"\x1b[D", b"\x1b[D", b"\x7f", b"\x1a", b"x", CTRL_S];
+    let Some(_) = in_editor(&sb, &["add"], keys, false) else {
+        return;
+    };
+    assert_eq!(text_of(&db_tasks(&sb), 1), "x");
+}
+
+/// REVIEW №33: `rusk add tomorrow call mom`, then `rusk edit 1` and Ctrl+S
+/// untouched made "tomorrow" the due date and dropped it from the text.
+#[test]
+#[cfg(all(unix, feature = "interactive"))]
+fn r24_a_date_like_first_word_stays_text() {
+    let sb = Sandbox::new();
+    for text in ["tomorrow call mom", "2d fix", "_ note"] {
+        let out = sb.cmd().args(["add", text]).output().unwrap();
+        assert!(out.status.success(), "{}", stderr_of(&out));
+    }
+    let before = sb.read_db();
+    for id in ["1", "2", "3"] {
+        let Some(run) = in_editor(&sb, &["edit", id], &[CTRL_S], false) else {
+            return;
+        };
+        assert!(run.after_editor().contains("Task unchanged"), "{}", run.after_editor());
+    }
+    assert_eq!(sb.read_db(), before);
+
+    // Edited elsewhere, the word is still text.
+    let Some(_) = in_editor(&sb, &["edit", "1"], &[b"\x1b[F", b"!", CTRL_S], false) else {
+        return;
+    };
+    let tasks = db_tasks(&sb);
+    assert_eq!(text_of(&tasks, 1), "tomorrow call mom!");
+    assert_eq!(date_of(&tasks, 1), serde_json::Value::Null);
+
+    // Review of R24: a date typed in front of the `_` left the `_` in the
+    // text; the `_` right after a date marks the word after it as text.
+    let Some(_) = in_editor(&sb, &["edit", "2"], &[b"01-01-2027 ", CTRL_S], false) else {
+        return;
+    };
+    let tasks = db_tasks(&sb);
+    assert_eq!(text_of(&tasks, 2), "2d fix");
+    assert_eq!(date_of(&tasks, 2), "2027-01-01");
+    // With a date, the text opens as `01-01-2027 _ 2d fix`: the date
+    // deleted, the `_` is the empty date and `2d` still text.
+    let Some(_) = in_editor(&sb, &["edit", "2"], &[b"\x1b[3~".repeat(11).as_slice(), CTRL_S], false) else {
+        return;
+    };
+    let tasks = db_tasks(&sb);
+    assert_eq!(text_of(&tasks, 2), "2d fix");
+    assert_eq!(date_of(&tasks, 2), serde_json::Value::Null);
+}
+
+/// Review of R24: whether the first word reads as a date was judged on the
+/// stored text, the editor reads it from the text it shows — without the
+/// control characters. `2<ESC>d fix` saved untouched lost `2d`.
+#[test]
+#[cfg(all(unix, feature = "interactive"))]
+fn r24_a_date_behind_a_control_character_stays_text() {
+    let sb = Sandbox::with_db(r#"[{"id":1,"text":"2\u001bd fix"},{"id":2,"text":"tomorrow\u0000 call"}]"#);
+    for id in ["1", "2"] {
+        let Some(_) = in_editor(&sb, &["edit", id], &[CTRL_S], false) else {
+            return;
+        };
+    }
+    let tasks = db_tasks(&sb);
+    assert_eq!(date_of(&tasks, 1), serde_json::Value::Null);
+    assert_eq!(date_of(&tasks, 2), serde_json::Value::Null);
+    assert!(text_of(&tasks, 1).ends_with("d fix") && text_of(&tasks, 1).starts_with('2'), "{tasks:?}");
+    assert!(text_of(&tasks, 2).starts_with("tomorrow"), "{tasks:?}");
+}
+
+/// Review of R24: `rusk add -d` restoring a draft that begins with `_`
+/// stored the `_` as text. The date of the command line takes its place.
+#[test]
+#[cfg(all(unix, feature = "interactive"))]
+fn r24_a_restored_draft_takes_the_date_of_the_command_line() {
+    let sb = Sandbox::new();
+    let draft = serde_json::json!({
+        "key": "new-task",
+        "base": rusk::revision::text_revision(""),
+        "text": "_ tomorrow call",
+        "timestamp": "2026-09-27T10:00:00+00:00",
+    });
+    std::fs::write(sb.path().join("rusk_debug").join("editor-new-task.draft"), draft.to_string()).unwrap();
+    let steps: &[(u64, &[u8])] = &[(150, b"y"), (800, CTRL_S)];
+    let Some(run) = sb.in_pty(&["add", "-d", "01-01-2027"], b"Restore unsaved draft", steps, false) else {
+        return;
+    };
+    assert_eq!(run.code, Some(0), "{}", run.after_editor());
+    let tasks = db_tasks(&sb);
+    assert_eq!(text_of(&tasks, 1), "tomorrow call");
+    assert_eq!(date_of(&tasks, 1), "2027-01-01");
+}
+
+/// REVIEW №32, №118: a date alone on the first line, or empty lines at the
+/// end, were stored as a text with an empty line in front or behind.
+#[test]
+#[cfg(all(unix, feature = "interactive"))]
+fn r24_empty_lines_around_the_text_are_not_stored() {
+    let sb = Sandbox::new();
+    let keys: &[&[u8]] = &[b"19-09-2026", b"\r", b"buy milk", b"\r", b"\r", CTRL_S];
+    let Some(_) = in_editor(&sb, &["add"], keys, false) else {
+        return;
+    };
+    let tasks = db_tasks(&sb);
+    assert_eq!(text_of(&tasks, 1), "buy milk");
+    assert_eq!(date_of(&tasks, 1), "2026-09-19");
+}
+
+/// REVIEW №117: a text with CRLF opened "dirty": Esc asked whether to
+/// discard changes nobody made.
+#[test]
+#[cfg(all(unix, feature = "interactive"))]
+fn r24_a_crlf_text_opens_unchanged() {
+    let sb = Sandbox::with_db(r#"[{"id":1,"text":"a\r\nb"}]"#);
+    let before = sb.read_db();
+    let Some(run) = in_editor(&sb, &["edit", "1"], &[b"\x1b"], false) else {
+        return;
+    };
+    assert_eq!(run.code, Some(0));
+    assert!(!String::from_utf8_lossy(&run.screen).contains("Discard"), "a clean buffer asked to discard");
+    assert_eq!(sb.read_db(), before);
 }

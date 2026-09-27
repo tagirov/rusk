@@ -27,7 +27,7 @@ struct EditorSession<'a> {
     /// part of the task's identity.
     prefill: String,
     /// The due date `-d` put in front, if there was one.
-    seed_date: Option<&'a str>,
+    seed_date: Option<chrono::NaiveDate>,
     relative_date_base: Option<chrono::NaiveDate>,
     cursor_at_start: bool,
     allow_skip: bool,
@@ -104,6 +104,31 @@ impl HandlerCLI {
         Ok(None)
     }
 
+    /// A restored draft with the due date of `rusk add -d` put in front. A
+    /// draft holds text, not a due date, so the date on the command line
+    /// applies to the restored text too — unless the draft already begins
+    /// with a date of its own, which the user typed and which wins. Saying
+    /// so beats letting the argument disappear. A draft that begins with
+    /// `_`, the empty date, gets the date in its place, laid out as the
+    /// editor would open it: the words after it stay text.
+    #[cfg(feature = "interactive")]
+    fn with_seed_date(text: String, seed: Option<chrono::NaiveDate>) -> String {
+        let Some(seed) = seed else {
+            return text;
+        };
+        match Self::extract_leading_date(&text, None) {
+            (Some(own), _) => {
+                crate::backend::warn_once(&format!(
+                    "Warning: the restored draft already starts with a date \
+                     ({}), so it is used instead of the one on the command line",
+                    own.format("%d-%m-%Y")
+                ));
+                text
+            }
+            (None, body) => Self::edit_prefill(&body, Some(seed)),
+        }
+    }
+
     /// Runs the multi-line editor with draft persistence wired up.
     #[cfg(feature = "interactive")]
     fn run_editor_with_draft(session: EditorSession<'_>) -> Result<String> {
@@ -118,25 +143,8 @@ impl HandlerCLI {
             allow_skip,
         } = session;
         let slot = Self::draft_slot(draft_key, base);
-        let restored = Self::offer_draft(&slot, what)?;
-        // A draft holds text, not a due date, so a `-d` on the command line
-        // applies to the restored text too — unless the draft already
-        // begins with a date of its own, which the user typed and which
-        // wins. Saying so beats letting the argument disappear.
-        let restored = restored.map(|text| {
-            match (seed_date, Self::extract_leading_date(&text, None).0) {
-                (Some(seed), None) => format!("{seed} {text}"),
-                (Some(_), Some(own)) => {
-                    crate::backend::warn_once(&format!(
-                        "Warning: the restored draft already starts with a date \
-                         ({}), so it is used instead of the one on the command line",
-                        own.format("%d-%m-%Y")
-                    ));
-                    text
-                }
-                _ => text,
-            }
-        });
+        let restored = Self::offer_draft(&slot, what)?
+            .map(|text| Self::with_seed_date(text, seed_date));
 
         let extras = EditorExtras {
             draft: Some(slot),
@@ -203,9 +211,7 @@ impl HandlerCLI {
         let after = tm.validate_after(None, &after)?;
         let seed = match date.as_deref() {
             // `_` is "no date", which is what a new task has anyway.
-            Some(d) if !is_cli_date_clear_value(d) => {
-                Some(parse_cli_date_for_edit(d, None)?.format("%d-%m-%Y").to_string())
-            }
+            Some(d) if !is_cli_date_clear_value(d) => Some(parse_cli_date_for_edit(d, None)?),
             _ => None,
         };
         // There is no task yet, so every new-task draft is pinned to the
@@ -215,8 +221,8 @@ impl HandlerCLI {
             draft_key: "new-task",
             what: "new task",
             base: "",
-            prefill: seed.as_ref().map_or(String::new(), |s| format!("{s} ")),
-            seed_date: seed.as_deref(),
+            prefill: seed.map_or(String::new(), |s| format!("{} ", s.format("%d-%m-%Y"))),
+            seed_date: seed,
             relative_date_base: None,
             cursor_at_start: false,
             allow_skip: false,
@@ -257,14 +263,33 @@ impl HandlerCLI {
         }
     }
 
-    #[cfg(feature = "interactive")]
     /// What the editor opens on for a task: its date as an editable prefix
     /// on the first line, then its text. Also what its draft is pinned to.
+    ///
+    /// The first word of the buffer is where the editor reads a date, and a
+    /// `_` word right after that date (or after `_`, the empty date) marks
+    /// the word after it as text (see [`extract_leading_date`]). So a text
+    /// that starts with a word that reads as a date ("tomorrow call mom",
+    /// "2d fix") opens as `_ tomorrow call mom` without a date and as
+    /// `01-01-2027 _ tomorrow call mom` with one, and a text that starts
+    /// with `_` gets the mark too. Saved as it is — or with the date typed
+    /// in front, deleted or replaced by `_` — the text keeps that word
+    /// instead of losing it to a due date (REVIEW №33).
+    ///
+    /// [`extract_leading_date`]: Self::extract_leading_date
     #[cfg(feature = "interactive")]
     fn edit_prefill(current: &str, task_date: Option<chrono::NaiveDate>) -> String {
-        match task_date {
-            Some(date) => format!("{} {}", date.format("%d-%m-%Y"), current),
-            None => current.to_string(),
+        // Judged on the text as the editor will hold it (control characters
+        // dropped): that is what it reads the date from.
+        let shown = super::editor::text_ops::split_multi_line_prefill(current);
+        let first = shown.first().map_or("", String::as_str);
+        match (task_date, Self::leading_date_token(first, task_date)) {
+            (Some(date), Some(_)) => format!("{} _ {current}", date.format("%d-%m-%Y")),
+            (Some(date), None) => format!("{} {current}", date.format("%d-%m-%Y")),
+            // The empty date, then the mark: a `_` right after `_` is one.
+            (None, Some(None)) => format!("_ _ {current}"),
+            (None, Some(Some(_))) => format!("_ {current}"),
+            (None, None) => current.to_string(),
         }
     }
 
@@ -315,41 +340,59 @@ impl HandlerCLI {
         Ok(Some((parsed_date, new_text, edited)))
     }
 
+    /// The first word of the first line of `text` when the editor reads it
+    /// as a date: `Some(Some(date))`, or `Some(None)` for `_`, the empty date.
+    #[cfg(feature = "interactive")]
+    fn leading_date_token(
+        text: &str,
+        task_date: Option<chrono::NaiveDate>,
+    ) -> Option<Option<chrono::NaiveDate>> {
+        let first = text.split('\n').next().unwrap_or("");
+        let token = first.split(char::is_whitespace).next().unwrap_or("");
+        if token.is_empty() {
+            None
+        } else if is_cli_date_clear_value(token) {
+            Some(None)
+        } else {
+            crate::parse_cli_date_for_edit(token, task_date).ok().map(Some)
+        }
+    }
+
+    /// The date at the head of an editor buffer and the text after it. The
+    /// first word is the date when it reads as one (`_` is the empty date).
+    /// A `_` word right after it marks the word after that as text and goes
+    /// too (see [`edit_prefill`](Self::edit_prefill)).
     #[cfg(feature = "interactive")]
     fn extract_leading_date(
         edited: &str,
         task_date: Option<chrono::NaiveDate>,
     ) -> (Option<chrono::NaiveDate>, String) {
-        let mut parts = edited.splitn(2, '\n');
-        let first = parts.next().unwrap_or("");
-        let rest = parts.next();
-        let token: String = first.chars().take_while(|c| !c.is_whitespace()).collect();
-        if token.is_empty() {
+        let Some(date) = Self::leading_date_token(edited, task_date) else {
             return (None, edited.to_string());
-        }
-
-        // Text with the leading token removed, dropping exactly one separating
-        // whitespace after it if present.
-        let text_without_token = || {
-            let mut tail = first.chars().skip(token.chars().count());
-            let peek = tail.clone().next();
-            if matches!(peek, Some(c) if c.is_whitespace()) {
-                tail.next();
-            }
-            let first_rest: String = tail.collect();
-            match rest {
-                Some(r) => format!("{}\n{}", first_rest, r),
-                None => first_rest,
-            }
         };
-
-        if is_cli_date_clear_value(&token) {
-            return (None, text_without_token());
+        let (first, rest) = match edited.split_once('\n') {
+            Some((first, rest)) => (first, Some(rest)),
+            None => (edited, None),
+        };
+        // `line` without its first word and one whitespace after it.
+        let skip_word = |line: &str| -> (usize, usize) {
+            let word = line.split(char::is_whitespace).next().unwrap_or("").len();
+            let space = line[word..].chars().next().filter(|c| c.is_whitespace()).map_or(0, char::len_utf8);
+            (word, word + space)
+        };
+        let mut first_rest = &first[skip_word(first).1..];
+        let (word, next) = skip_word(first_rest);
+        if &first_rest[..word] == "_" {
+            first_rest = &first_rest[next..];
         }
-        match crate::parse_cli_date_for_edit(&token, task_date) {
-            Ok(date) => (Some(date), text_without_token()),
-            Err(_) => (None, edited.to_string()),
-        }
+        let text = match rest {
+            // The date had the first line to itself: the text starts on
+            // the next one, not with an empty line (REVIEW №32).
+            Some(rest) if first_rest.is_empty() => rest.to_string(),
+            Some(rest) => format!("{first_rest}\n{rest}"),
+            None => first_rest.to_string(),
+        };
+        (date, text)
     }
 
     #[cfg(feature = "interactive")]
@@ -871,6 +914,111 @@ mod tests {
         let told = report("typed text");
         assert!(told.contains("kept as a draft: run `rusk edit 1`"), "{told}");
         assert!(!told.contains("typed text"), "{told}");
+    }
+
+    /// REVIEW №33: a task without a date whose text starts with a word that
+    /// reads as a date lost the word to the date on a save, even untouched.
+    #[cfg(feature = "interactive")]
+    #[test]
+    fn a_date_like_first_word_stays_text_through_the_editor() {
+        let date = chrono::NaiveDate::from_ymd_opt(2027, 1, 1);
+        let round_trip = |text: &str, task_date| {
+            let prefill = HandlerCLI::edit_prefill(text, task_date);
+            assert_eq!(
+                HandlerCLI::extract_leading_date(&prefill, task_date),
+                (task_date, text.to_string()),
+                "{prefill:?}"
+            );
+            prefill
+        };
+        for text in ["tomorrow call mom", "Tomorrow call mom", "2d fix", "11-jan-25 x", "+1w later"] {
+            assert_eq!(round_trip(text, None), format!("_ {text}"));
+            assert_eq!(round_trip(text, date), format!("01-01-2027 _ {text}"));
+        }
+        // A text that starts with `_` gets the mark after the empty date.
+        assert_eq!(round_trip("_ note", None), "_ _ _ note");
+        assert_eq!(round_trip("_ note", date), "01-01-2027 _ _ note");
+        assert_eq!(round_trip("_", None), "_ _ _");
+        assert_eq!(round_trip("call mom tomorrow", None), "call mom tomorrow");
+        assert_eq!(round_trip("call mom", date), "01-01-2027 call mom");
+        assert_eq!(round_trip("_note", None), "_note");
+    }
+
+    /// Review of R24: the date typed in front of the `_`, the date deleted
+    /// or replaced by `_` — the word after the mark stays text.
+    #[cfg(feature = "interactive")]
+    #[test]
+    fn a_date_edited_around_the_mark_leaves_the_text_alone() {
+        let date = chrono::NaiveDate::from_ymd_opt(2027, 1, 1);
+        for (buffer, expected) in [
+            ("01-01-2027 _ tomorrow call mom", (date, "tomorrow call mom")),
+            ("_ tomorrow call mom", (None, "tomorrow call mom")),
+            ("_ _ tomorrow call mom", (None, "tomorrow call mom")),
+            ("01-01-2027 _\ntomorrow", (date, "tomorrow")),
+            // Only one mark goes, and only a whole `_` word.
+            ("01-01-2027 _ _ x", (date, "_ x")),
+            ("01-01-2027 _x", (date, "_x")),
+            ("01-01-2027 x _ y", (date, "x _ y")),
+        ] {
+            let (date, text) = expected;
+            assert_eq!(HandlerCLI::extract_leading_date(buffer, None), (date, text.to_string()), "{buffer:?}");
+        }
+    }
+
+    /// Review of R24: the check ran on the stored text, while the editor
+    /// reads the date from the text it shows, control characters dropped.
+    #[cfg(feature = "interactive")]
+    #[test]
+    fn a_date_hidden_behind_a_control_character_is_marked_too() {
+        for (text, shown) in [("2\u{1b}d fix", "2d fix"), ("tomorrow\u{0} call", "tomorrow call")] {
+            let prefill = HandlerCLI::edit_prefill(text, None);
+            assert_eq!(prefill, format!("_ {text}"));
+            let buffer = crate::cli::editor::text_ops::split_multi_line_prefill(&prefill).join("\n");
+            assert_eq!(HandlerCLI::extract_leading_date(&buffer, None), (None, shown.to_string()));
+        }
+    }
+
+    /// `rusk add -d` on a restored draft: the date goes in front, a date
+    /// of the draft's own wins, and `_` gives its place to the date.
+    #[cfg(feature = "interactive")]
+    #[test]
+    fn a_restored_draft_gets_the_date_of_the_command_line() {
+        let seed = chrono::NaiveDate::from_ymd_opt(2027, 1, 1);
+        for (draft, buffer) in [
+            ("buy milk", "01-01-2027 buy milk"),
+            ("_ tomorrow call", "01-01-2027 _ tomorrow call"),
+            ("_ buy milk", "01-01-2027 buy milk"),
+            ("_ _ _ note", "01-01-2027 _ _ note"),
+            ("05-05-2027 buy milk", "05-05-2027 buy milk"),
+        ] {
+            let restored = HandlerCLI::with_seed_date(draft.to_string(), seed);
+            assert_eq!(restored, buffer, "{draft:?}");
+        }
+        assert_eq!(HandlerCLI::with_seed_date("_ x".to_string(), None), "_ x");
+        // What is stored is the date and the text after the mark.
+        let restored = HandlerCLI::with_seed_date("_ tomorrow call".to_string(), seed);
+        assert_eq!(HandlerCLI::extract_leading_date(&restored, None), (seed, "tomorrow call".to_string()));
+    }
+
+    /// REVIEW №32: a date alone on the first line left the text starting
+    /// with an empty line.
+    #[cfg(feature = "interactive")]
+    #[test]
+    fn a_date_alone_on_the_first_line_leaves_no_empty_line() {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 9, 19);
+        for (buffer, text) in [
+            ("19-09-2026\nbuy milk", "buy milk"),
+            ("19-09-2026 \nbuy milk", "buy milk"),
+            ("19-09-2026 first\nsecond", "first\nsecond"),
+            ("19-09-2026 only", "only"),
+        ] {
+            assert_eq!(HandlerCLI::extract_leading_date(buffer, None), (date, text.to_string()));
+        }
+        assert_eq!(
+            HandlerCLI::extract_leading_date("no date here", None),
+            (None, "no date here".to_string())
+        );
+        assert_eq!(HandlerCLI::extract_leading_date("_\nplain", None), (None, "plain".to_string()));
     }
 
     /// What `printf %b` makes of the field is the text again.

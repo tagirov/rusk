@@ -94,7 +94,7 @@ third line …
 | Key | Action |
 |-----|--------|
 | `←` / `→` | Move by character. |
-| `Ctrl+←` / `Ctrl+→` | Jump by word. |
+| `Ctrl+←` / `Ctrl+→` | Jump by word: back to the start of the word before the cursor, forward to the start of the next one. |
 | `↑` / `↓` | Move between visual (soft-wrapped) rows. |
 | `Ctrl+↑` / `Ctrl+↓` | Move by 5 visual rows. |
 | `Home` / `End` | Smart Home (first non-space, then col 0) / end of line. |
@@ -122,11 +122,17 @@ third line …
 | `Ctrl+R` | Restore the original task text (prefill). |
 | `Backspace` | Delete left character / selection. |
 | `Delete` | Delete right character / selection. |
-| `Ctrl+W`, `Ctrl+Backspace` | Delete word to the left. |
+| `Ctrl+W`, `Ctrl+Backspace` | Delete the word to the left (with the spaces between it and the cursor). |
 | `Ctrl+Delete` | Delete word to the right. |
 | `Ctrl+K` | Kill from cursor to end of line (or join with next line at EOL). |
-| `Ctrl+Shift+K` | Delete the whole current line. |
+| `Ctrl+Shift+K` | Delete the whole current line — where the terminal reports the `Shift` (kitty does, as `CSI 107;6u`; so do terminals in xterm's `CSI u` key format). Elsewhere the key arrives as `Ctrl+K` and kills to the end of the line, or — in xterm's default `modifyOtherKeys` format — does nothing. |
 | `Ctrl+U` | Kill from beginning of line to cursor. |
+
+A `Ctrl` or `Alt` shortcut that is not in these tables types nothing into
+the text (on Windows `Ctrl+Alt` is also how `AltGr` arrives, so there it
+types what the layout puts on that key). Typing always ends a selection,
+even an empty one, so a capital right after `Ctrl+A` on an empty buffer is
+kept.
 
 ### Clipboard and undo
 
@@ -135,7 +141,7 @@ third line …
 | `Ctrl+C` | Copy selection to the system clipboard. |
 | `Ctrl+X` | Cut selection to the system clipboard. |
 | `Ctrl+V` | Paste from the system clipboard. |
-| `Ctrl+Z` | Undo (consecutive single-char inserts collapse into one step). |
+| `Ctrl+Z` | Undo (consecutive single-char inserts collapse into one step; a key that changed nothing, such as `Backspace` at the start, is no step). |
 | `Ctrl+Y` | Redo. |
 
 Copy targets the system clipboard through
@@ -239,7 +245,8 @@ exists so that the next edit of that task can offer the text back.
   reused its id.
 - `rusk add -d <date>` keeps its date when a draft is restored: the draft
   holds text, not a due date, so the date is put back in front unless the
-  draft already begins with one.
+  draft already begins with one. A draft that begins with `_` (no date) gets
+  the date in its place, and the words after it stay text.
 - A draft that cannot be read is not thrown away — it is kept as
   `editor-task-3.draft.corrupt` and rusk says where it went, because the text
   inside it may still be readable by a human.
@@ -255,7 +262,20 @@ leading `+` (`+2w`, `+10d5w`, …; if the task had no due date yet, `+` uses
 today, same as `rusk add -d`). Use `_` as the only date token to clear
 the deadline. A **recognized** token is **highlighted in color** on that line
 (green for today or later, red if before today); text that does not parse as a
-date is not colored. The following text are the body.
+date is not colored. The following text are the body. A date alone on the
+first line is fine: the text starts on the next one. Empty lines before and
+after the text are not stored.
+
+A `_` word right after the date — or right after the `_` that is no date —
+is dropped too, and the word after it stays text: `01-01-2027 _ 2d fix` is
+due on 1 January with the text `2d fix`. So a text that starts with a word
+that reads as a date (`tomorrow call mom`, `2d fix`) opens as
+`_ tomorrow call mom` for a task without a due date, and as
+`01-01-2027 _ tomorrow call mom` for one with a date: the word stays text
+when you save it untouched, type a date in front, delete the date or replace
+it with `_`. Delete the `_ ` together with its space and the word becomes the
+due date, which the coloring shows before you save. (A text that starts with
+a `_` word gets the mark too: `_ _ _ note`.)
 
 `rusk edit <id> -d <date>` (with a value; same relative rules as this first-line
 token, including leading `+`) sets the date without opening the TUI. **Bare** `-d` / `--date` (no value) is not supported;
@@ -268,11 +288,18 @@ in-editor help (`Ctrl+G` / `F1`).
 
 ## Output after editing
 
-The editor is intentionally quiet on exit: no task body is echoed back to the
-terminal. Only the status line and the task id are printed:
+Each task that was saved, left unchanged or skipped gets a status line with
+its id once its editor is closed, and when something was saved the task list
+follows, as after a one-shot `rusk edit <id> <text>`. `Esc` on the last (or
+only) task cancels: nothing more is printed, and what was saved before it
+stays saved.
 
 ```
 Edited task: 3
 Task unchanged: 4
 Skipped task: 5
+
+  #  id    date       task
+  ──────────────────────────
+  ...
 ```

@@ -8,8 +8,9 @@ This directory contains comprehensive unit and integration tests for the rusk ta
 ```
 tests/
 ├── README.md                       # This file
-├── common/                         # Shared test utilities
-│   └── mod.rs                      # Helper functions for creating test tasks
+├── common/                         # Shared test utilities (Sandbox, the pty driver for the editor)
+│   ├── mod.rs                      # Test tasks, the per-test Sandbox, Sandbox::in_pty
+│   └── pty_driver.py               # Drives rusk in a pseudo-terminal (python pty) for the editor tests
 ├── completions/                    # Shell completion tests (see completions/README.md)
 │   └── ...
 ├── cli_tests.rs                    # CLI command tests (TaskManager API)
@@ -25,7 +26,7 @@ tests/
 ├── persistence_tests.rs            # Data persistence and save/load tests
 ├── restore_tests.rs                # Backup restore functionality tests
 ├── review_urgent_tests.rs          # Regression tests for the urgent REVIEW.md fixes (№1, №6, №7, №154, №161)
-├── review_known_bugs.rs            # REVIEW.md repros by refactor cluster: #[ignore]d while open, regressions once closed (R1–R19)
+├── review_known_bugs.rs            # REVIEW.md repros by refactor cluster: #[ignore]d while open, regressions once closed (R1–R19, R24)
 ├── unchanged_detection_tests.rs    # Unchanged task detection tests
 └── completions.rs                  # Completion test entry point
 ```
@@ -290,8 +291,18 @@ These tests are designed to run in CI/CD pipelines:
   does not drive the terminal, R8 the draft
   lifecycle, R9 restore, R10/R13 reading a location value, R11 quoting in
   the completion scripts, R12 lost updates, R14 atomic writes, R15 the ssh
-  protocol, R16 web UI, R18 the SQLite connection and R19 output, terminals
-  and messages) stay in the file as its regression suite.
+  protocol, R16 web UI, R18 the SQLite connection, R19 output, terminals
+  and messages, R24 the editor's keys) stay in the file as its regression
+  suite.
+  R24 drives the editor itself: `Sandbox::in_pty` (`tests/common`) runs the
+  binary in a pseudo-terminal through python's `pty` (`tests/common/pty_driver.py`,
+  which answers the terminal queries — as kitty, when asked — waits for a
+  marker on the screen, the alternate screen or a prompt, and types the keys);
+  the tests are skipped without python3 or without a pty to be had. The
+  driver runs without `DISPLAY` and `WAYLAND_DISPLAY`, so the editor never
+  reaches the desktop's clipboard. A draft is put in place as the file the
+  editor writes (`rusk_debug/editor-new-task.draft`). Its pure parts are unit-tested in `src/cli/editor/` (`text_ops`,
+  `state`, `input`) and `src/cli/handlers.rs`.
   R19 closes stdout under a command with `std::io::pipe` (reader dropped
   before the spawn, so every write gets EPIPE), writes it to `/dev/full`, and
   takes a terminal away with `setsid` (no controlling terminal for crossterm to

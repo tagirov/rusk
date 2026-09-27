@@ -193,6 +193,22 @@ into its buffer (`text_ops::clean_input`: opened text, restored draft, paste, a 
 tabs become spaces there. Opening a task that holds such characters and saving it untouched
 leaves the stored text as it was.
 
+Keys: Ctrl+←/Ctrl+W go back one word (`text_ops::jump_prev_word`: separators, then one
+word, to the line start at most); every edit ends the selection, an empty one included
+(`EditorState::delete_selection`); a Ctrl or Alt shortcut nothing is bound to does nothing
+(`input::types_text`; Ctrl+Alt types only on Windows, where it is AltGr); an edit is an undo
+step only when the text changed (`input::edit`). Under Ctrl a letter is its key in either case
+(Caps Lock on Windows); Ctrl+Shift+K deletes the line where the terminal reports the Shift
+(kitty's `CSI 107;6u`), elsewhere it is the byte of Ctrl+K. The editor does not switch the
+kitty keyboard protocol on: with it, a non-Latin layout reports Ctrl+S as the letter of that
+layout and no shortcut works. The first word of the buffer is the date, `_` the empty date,
+and a `_` word right after either is a mark that the word after it is text
+(`handlers::extract_leading_date`); `handlers::edit_prefill` puts the mark in front of a text
+whose first word — as the editor shows it, control characters dropped — reads as a date or is
+`_`, so the word stays text however the date is edited, and `rusk add -d` on a restored draft
+that begins with `_` puts the date in its place (`handlers::with_seed_date`). A date alone on
+the first line gives no leading empty line.
+
 The editor's view is state of its own (`EditorState::view_top` + `follow_cursor`): the wheel
 moves only the view — cursor and selection stay, the terminal cursor is hidden while it is
 out of sight — and the next key, click or paste brings the view back to the cursor. Every

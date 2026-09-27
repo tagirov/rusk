@@ -22,7 +22,8 @@
 // of a SQLite connection) — all of R1-R18 — and of the clusters for the
 // rest of REVIEW.md: R19 (output, terminals and messages), R24 (the editor:
 // keys, words, selection, undo, the first-line date), R20 (`rusk serve`:
-// requests, tokens, hosts, headers), R21 (`rusk sync` and the transports).
+// requests, tokens, hosts, headers), R21 (`rusk sync` and the transports),
+// R22 (`git_backend`).
 // R6 and R8 need a pty
 // for most of their repros: what Command can drive is here, the draft rules
 // are unit-tested in `src/cli/editor/draft.rs`, and the rest is driven by a
@@ -6028,4 +6029,220 @@ fn r21_a_remote_is_one_however_it_is_spelled() {
     let out = sync(with_slash.trim_end_matches('/'), &[]);
     assert!(out.status.success(), "{}", stderr_of(&out));
     assert!(stdout_of(&out).contains("Pushed 4 task(s)"), "{}", stdout_of(&out));
+}
+
+// ---------------------------------------------------------------------------
+// R22 — `git_backend`
+// ---------------------------------------------------------------------------
+//
+// The binary with `git_backend = true` saving into a directory of the
+// sandbox, and the system `git` looking at the result (skipped without git).
+
+/// `git` in `dir`, without the developer's configuration; its stdout.
+/// The run must succeed.
+#[cfg(feature = "backend-git")]
+fn git_out(dir: &Path, args: &[&str]) -> String {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("LC_ALL", "C")
+        .env("GIT_CONFIG_GLOBAL", if cfg!(windows) { "NUL" } else { "/dev/null" })
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git {args:?}: {}", stderr_of(&out));
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// A sandbox whose root is a git repository of Alice's, with `git_backend`
+/// on; the database lives in `rusk_debug/` below the root.
+#[cfg(feature = "backend-git")]
+fn in_alices_repository() -> (Sandbox, std::path::PathBuf) {
+    let sb = Sandbox::new();
+    git_out(sb.path(), &["init", "-q"]);
+    git_out(sb.path(), &["config", "user.name", "Alice"]);
+    git_out(sb.path(), &["config", "user.email", "alice@example.com"]);
+    let config = sb.path().join("git.cfg");
+    fs::write(&config, "git_backend = true\n").unwrap();
+    (sb, config)
+}
+
+/// REVIEW №21: every commit was `rusk <rusk@localhost>`, whatever identity
+/// the repository had.
+#[test]
+#[cfg(feature = "backend-git")]
+fn r22_a_configured_identity_is_kept() {
+    if !git_available() {
+        return;
+    }
+    let (sb, config) = in_alices_repository();
+    let out = sb.cmd().env("RUSK_CONFIG", &config).args(["add", "proj task"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let log = git_out(sb.path(), &["log", "--format=%an <%ae> / %cn <%ce> / %s"]);
+    assert_eq!(log.trim(), "Alice <alice@example.com> / Alice <alice@example.com> / rusk: update tasks.json (1 tasks)");
+}
+
+/// SECURITY.md M1: a hook of the repository ran as the user on every save.
+#[test]
+#[cfg(all(unix, feature = "backend-git"))]
+fn r22_no_hook_of_the_repository_runs() {
+    use std::os::unix::fs::PermissionsExt;
+    if !git_available() {
+        return;
+    }
+    let (sb, config) = in_alices_repository();
+    let ran = sb.path().join("HOOK_EXECUTED");
+    for hook in ["pre-commit", "commit-msg", "post-commit"] {
+        let path = sb.path().join(".git").join("hooks").join(hook);
+        fs::write(&path, format!("#!/bin/sh\ntouch '{}'\n", ran.display())).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let out = sb.cmd().env("RUSK_CONFIG", &config).args(["add", "trigger"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(!ran.exists(), "a hook ran");
+    assert!(git_out(sb.path(), &["log", "--oneline"]).contains("rusk: update"));
+}
+
+/// REVIEW №100: in a repository rusk did not create, `.backup`, `.lock`
+/// and the like showed up in `git status`.
+#[test]
+#[cfg(feature = "backend-git")]
+fn r22_the_auxiliary_files_stay_out_of_git_status() {
+    if !git_available() {
+        return;
+    }
+    let (sb, config) = in_alices_repository();
+    for text in ["one", "two"] {
+        let out = sb.cmd().env("RUSK_CONFIG", &config).args(["add", text]).output().unwrap();
+        assert!(out.status.success(), "{}", stderr_of(&out));
+    }
+    assert!(sb.db_path().with_extension("json.backup").exists());
+    let status = git_out(sb.path(), &["status", "--short"]);
+    assert!(!status.contains("rusk_debug/"), "{status}");
+    // Only the database's own: a `.backup` of the user's elsewhere is theirs.
+    fs::write(sb.path().join("notes.backup"), "mine").unwrap();
+    assert!(git_out(sb.path(), &["status", "--short"]).contains("notes.backup"));
+}
+
+/// REVIEW №177: any failure of `git rev-parse` — a repository of another
+/// owner, above all — was taken for "no repository", and rusk created one
+/// inside the user's, splitting the history for good.
+#[test]
+#[cfg(feature = "backend-git")]
+fn r22_a_repository_git_will_not_use_is_no_reason_to_create_one() {
+    if !git_available() {
+        return;
+    }
+    let (sb, config) = in_alices_repository();
+    // A git that knows no test switch for another owner has nothing to show.
+    let refused = std::process::Command::new("git")
+        .arg("-C")
+        .arg(sb.path())
+        .args(["rev-parse", "--git-dir"])
+        .env("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+        .output()
+        .is_ok_and(|out| !out.status.success());
+    if !refused {
+        return;
+    }
+    let out = sb
+        .cmd()
+        .env("RUSK_CONFIG", &config)
+        .env("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1")
+        .args(["add", "two"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let err = stderr_of(&out);
+    assert!(err.contains("belongs to another user, and git does not trust it"), "{err}");
+    // Not git's advice to trust it anyway: its config would run as the user.
+    assert!(!err.contains("safe.directory"), "{err}");
+    assert!(!sb.db_path().parent().unwrap().join(".git").exists(), "a nested repository was created");
+}
+
+/// Review of R22: the identity git has — from `EMAIL` here — was replaced
+/// by `rusk <rusk@localhost>` wherever `user.email` was not configured.
+#[test]
+#[cfg(feature = "backend-git")]
+fn r22_git_s_own_identity_is_used() {
+    if !git_available() {
+        return;
+    }
+    let sb = Sandbox::new();
+    git_out(sb.path(), &["init", "-q"]);
+    let config = sb.path().join("git.cfg");
+    fs::write(&config, "git_backend = true\n").unwrap();
+    let out = sb
+        .cmd()
+        .env("RUSK_CONFIG", &config)
+        .env("EMAIL", "bob@example.com")
+        .args(["add", "one"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert_eq!(git_out(sb.path(), &["log", "-1", "--format=%ae / %ce"]).trim(), "bob@example.com / bob@example.com");
+}
+
+/// Review of R22: an `info/exclude` that could not be written stopped the
+/// commit; an enclosing repository that ignores the database was a
+/// cryptic `git add` failure on every save.
+#[test]
+#[cfg(all(unix, feature = "backend-git"))]
+fn r22_what_keeps_the_history_from_going_on_is_said() {
+    use std::os::unix::fs::PermissionsExt;
+    if !git_available() {
+        return;
+    }
+    let (sb, config) = in_alices_repository();
+    let exclude = sb.path().join(".git").join("info").join("exclude");
+    fs::write(&exclude, "").unwrap();
+    fs::set_permissions(&exclude, fs::Permissions::from_mode(0o444)).unwrap();
+    let out = sb.cmd().env("RUSK_CONFIG", &config).args(["add", "one"]).output().unwrap();
+    assert!(stderr_of(&out).contains("failed to update"), "{}", stderr_of(&out));
+    assert!(git_out(sb.path(), &["log", "--oneline"]).contains("rusk: update"), "no commit");
+
+    fs::set_permissions(&exclude, fs::Permissions::from_mode(0o644)).unwrap();
+    fs::write(sb.path().join(".gitignore"), "rusk_debug/\n").unwrap();
+    let out = sb.cmd().env("RUSK_CONFIG", &config).args(["add", "two"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let err = stderr_of(&out);
+    assert!(err.contains("ignores tasks.json, so nothing is committed"), "{err}");
+}
+
+/// REVIEW №98: a database right in the home directory made the home
+/// directory a git repository, without a word.
+#[test]
+#[cfg(feature = "backend-git")]
+fn r22_the_home_directory_is_not_made_a_repository() {
+    if !git_available() {
+        return;
+    }
+    let sb = Sandbox::new();
+    let config = sb.path().join("git.cfg");
+    fs::write(&config, "git_backend = true\n").unwrap();
+    let home = sb.db_path().parent().unwrap().to_path_buf();
+    let out = sb
+        .cmd()
+        .env("RUSK_CONFIG", &config)
+        .env("HOME", &home)
+        .args(["add", "first"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(stderr_of(&out).contains("directly in your home directory"), "{}", stderr_of(&out));
+    assert!(!home.join(".git").exists());
+}
+
+/// REVIEW №59: `git_backend = true` was taken in silence by a build that
+/// cannot commit.
+#[test]
+#[cfg(not(feature = "backend-git"))]
+fn r22_git_backend_without_the_feature_is_said() {
+    let sb = Sandbox::new();
+    let config = sb.path().join("git.cfg");
+    fs::write(&config, "git_backend = true\n").unwrap();
+    let out = sb.cmd().env("RUSK_CONFIG", &config).args(["add", "one"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(stderr_of(&out).contains("needs the 'backend-git' feature"), "{}", stderr_of(&out));
 }

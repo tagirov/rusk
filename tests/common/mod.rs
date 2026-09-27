@@ -212,6 +212,14 @@ impl Sandbox {
             .env_remove("RUSK_SYNC_REMOTE")
             .env_remove("RUSK_SYNC_TOKEN")
             .env_remove("RUSK_DB_TOKEN")
+            // git_backend's git: the sandbox's home holds its configuration;
+            // not the machine's, and no identity from the environment.
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env_remove("EMAIL")
+            .env_remove("GIT_AUTHOR_NAME")
+            .env_remove("GIT_AUTHOR_EMAIL")
+            .env_remove("GIT_COMMITTER_NAME")
+            .env_remove("GIT_COMMITTER_EMAIL")
             .current_dir(self.root.path());
         cmd
     }

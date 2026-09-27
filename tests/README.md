@@ -26,7 +26,7 @@ tests/
 ├── persistence_tests.rs            # Data persistence and save/load tests
 ├── restore_tests.rs                # Backup restore functionality tests
 ├── review_urgent_tests.rs          # Regression tests for the urgent REVIEW.md fixes (№1, №6, №7, №154, №161)
-├── review_known_bugs.rs            # REVIEW.md repros by refactor cluster: #[ignore]d while open, regressions once closed (R1–R21, R24)
+├── review_known_bugs.rs            # REVIEW.md repros by refactor cluster: #[ignore]d while open, regressions once closed (R1–R22, R24)
 ├── unchanged_detection_tests.rs    # Unchanged task detection tests
 └── completions.rs                  # Completion test entry point
 ```
@@ -292,8 +292,14 @@ These tests are designed to run in CI/CD pipelines:
   lifecycle, R9 restore, R10/R13 reading a location value, R11 quoting in
   the completion scripts, R12 lost updates, R14 atomic writes, R15 the ssh
   protocol, R16 web UI, R18 the SQLite connection, R19 output, terminals
-  and messages, R20 `rusk serve`, R21 `rusk sync`, R24 the editor's keys)
-  stay in the file as its regression suite.
+  and messages, R20 `rusk serve`, R21 `rusk sync`, R22 `git_backend`, R24
+  the editor's keys) stay in the file as its regression suite.
+  R22 saves with `git_backend = true` into repositories of the sandbox and
+  asks the system `git` what happened (skipped without git); `Sandbox::cmd`
+  and the tests' own git run without the machine's git configuration and
+  identity. What needs a repository of a particular shape (hooks of its
+  config, filters, permissions, ceilings, symlinks) is unit-tested in
+  `src/backend/git.rs`.
   R21 syncs through the fake `ssh` of `tests/common` — one that counts its
   calls and lets another writer change the remote right after rusk's write
   — through a real `rusk serve`, and through a fake `curl` that shows its

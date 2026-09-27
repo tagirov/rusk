@@ -68,6 +68,22 @@ pub(crate) fn normalized(mut tasks: Vec<Task>, location: &str) -> Result<Vec<Tas
     Ok(tasks)
 }
 
+/// `git_backend = true` commits a file database on this machine; `what`
+/// is not one, and is not committed — said rather than done in silence
+/// (review of R22).
+#[cfg_attr(
+    not(any(feature = "backend-sqlite", feature = "backend-http", feature = "backend-ssh")),
+    allow(dead_code)
+)]
+fn git_backend_does_not_apply(what: &str) {
+    if crate::config::config().git_backend {
+        warn_once(&format!(
+            "Warning: git_backend = true commits a database file on this machine; {what} is \
+             not committed"
+        ));
+    }
+}
+
 /// A warning about what was read, said once per process: the same file read
 /// again (the re-read of an `update`, the second look before an ssh save,
 /// `rusk serve` reading it for every request) has nothing new to say until
@@ -253,6 +269,7 @@ impl Backend {
             Location::Local(path) => Self::from_local_path(path),
             #[cfg(feature = "backend-http")]
             Location::Http(url) => {
+                git_backend_does_not_apply("a database behind `rusk serve`");
                 let token = crate::config::env_or_config(
                     "RUSK_DB_TOKEN",
                     &crate::config::config().db_token,
@@ -265,7 +282,10 @@ impl Backend {
                  does not include it — rebuild with `--features backend-http`"
             ),
             #[cfg(feature = "backend-ssh")]
-            Location::Ssh(ssh) => Ok(Backend::Ssh(ssh::SshBackend::new(&ssh)?)),
+            Location::Ssh(ssh) => {
+                git_backend_does_not_apply("a database over ssh");
+                Ok(Backend::Ssh(ssh::SshBackend::new(&ssh)?))
+            }
             #[cfg(not(feature = "backend-ssh"))]
             Location::Ssh(ssh) => bail!(
                 "'{}:{}' is an ssh database location; this rusk build \
@@ -281,7 +301,10 @@ impl Backend {
     pub fn from_local_path(path: PathBuf) -> Result<Self> {
         if is_sqlite_path(&path) {
             #[cfg(feature = "backend-sqlite")]
-            return Ok(Backend::Sqlite(sqlite::SqliteBackend::new(path)));
+            {
+                git_backend_does_not_apply("a SQLite database");
+                return Ok(Backend::Sqlite(sqlite::SqliteBackend::new(path)));
+            }
             #[cfg(not(feature = "backend-sqlite"))]
             bail!(
                 "'{}' is a SQLite database; this rusk build does not include \

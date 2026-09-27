@@ -304,7 +304,14 @@ replaced file is kept. Two kinds of destination are told apart:
 Auto-backup to `<db>.backup` on every save for local backends
 (`backup = false` disables; a zero-byte database is never copied over an
 existing backup); `git_backend = true` additionally commits every save to a
-git repository in the database directory. `rusk restore` reads the backup
+git repository in the database directory (`backend::git`). git runs with the repository's
+config, as a `git commit` there would, but no hook runs (hook scripts via `core.hooksPath`,
+config hooks by name, fsmonitor), and not at all in a repository other users can change —
+its config could run anything. git's own identity is kept. A repository is created only
+where git says there is none and none git would find is above (its ceilings and filesystem
+boundaries respected) — never in the home directory, the root or a directory others can
+write to — and the auxiliary files are excluded through `info/exclude`. One `rev-parse`
+tells everything about the repository. `rusk restore` reads the backup
 strictly and read-only (an empty file, unrecognized content or a SQLite file
 without a `tasks` table is refused), keeps a copy of the current database in
 `<db>.before_restore[.N]` (never overwriting an earlier copy) and then puts

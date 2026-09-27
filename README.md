@@ -536,9 +536,22 @@ git_backend = true                      # commit every save of a local file data
   editor or a prompt the file is read again and compared before it is
   replaced, which leaves a window of one round trip.
 - **git_backend** gives full history (`git log`, `git revert`) beyond the
-  single `.backup` copy. An existing enclosing repository is used as-is;
-  otherwise a repo is initialized in the database directory with a
-  `.gitignore` for the auxiliary files. Uses the system `git`.
+  single `.backup` copy. An existing enclosing repository is used as-is,
+  with git's own identity for it (`rusk <rusk@localhost>` stands in only
+  for what git has not got); otherwise a repo is initialized in the
+  database directory with a `.gitignore` for the auxiliary files, and rusk
+  says so. It is never initialized in your home directory, the filesystem
+  root or a directory other users can write to (the temp directory), nor
+  when git cannot use a repository it finds above (another owner's, for
+  one) — that is reported instead. The auxiliary files (`.backup`, `.lock`,
+  drafts, …) are kept out of `git status` through the repository's
+  `.git/info/exclude`. No hook runs — neither a hook script of the
+  repository nor a hook its config defines — and rusk does not run git in a
+  repository other users can change (its config could run anything: a
+  filter, `gpg.program`); in your own repository git runs with its config,
+  as `git commit` there would. A symlinked database is committed where the
+  file is. Works on a database file on this machine (not SQLite, not a
+  remote one — rusk says so). Uses the system `git`, 2.9 or newer.
 
 ### Disabling Colors
 

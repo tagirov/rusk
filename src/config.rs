@@ -317,7 +317,17 @@ fn apply_setting(
             Ok(b) => match key {
                 "no_color" => config.no_color = b,
                 "compact" => config.compact = b,
-                "git_backend" => config.git_backend = b,
+                "git_backend" => {
+                    // A build without the git layer would take the setting
+                    // and commit nothing, in silence (REVIEW №59).
+                    if b && cfg!(not(feature = "backend-git")) {
+                        warnings.push(format!(
+                            "cfg:{line}: git_backend = true needs the 'backend-git' feature, \
+                             which this build lacks; saves are not committed"
+                        ));
+                    }
+                    config.git_backend = b;
+                }
                 _ => config.backup = b,
             },
             Err(e) => warn(format!("invalid value for '{key}': {e}")),

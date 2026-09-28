@@ -17,9 +17,12 @@
 //! database reads fine. A file without any table is an empty database; one
 //! whose tables are all another program's is refused, never furnished with
 //! a `tasks` table. The write that needs it brings an older table up to
-//! date (see [`Layout`]). Deleted rows are overwritten (`secure_delete`),
-//! a save that leaves much of the file free gives the space back, and
-//! `.backup` is the image SQLite makes of the committed database.
+//! date (see [`Layout`]) and marks the header as rusk's, with the schema
+//! it holds (`application_id`, `user_version`): a file a newer rusk wrote,
+//! or another program marked as its own, is neither read nor written.
+//! Deleted rows are overwritten (`secure_delete`), a save that leaves much
+//! of the file free gives the space back, and `.backup` is the image SQLite
+//! makes of the committed database.
 
 use super::file::Change;
 use super::{ChangeFn, StaleDatabase, Updated};
@@ -41,6 +44,48 @@ const SCHEMA: &str = "CREATE TABLE tasks (
     priority INTEGER NOT NULL DEFAULT 0,
     \"after\" TEXT
 )";
+
+/// The header of a database rusk makes says whose file it is and what it
+/// holds: `application_id` is "rusk" in ASCII, `user_version` the schema.
+const APPLICATION_ID: i64 = 0x7275_736B;
+/// The schema of [`SCHEMA`]. A file of a later one was written by a newer
+/// rusk: this one neither reads it as its own nor writes it.
+const SCHEMA_VERSION: i64 = 1;
+
+/// `application_id` and `user_version` of the file.
+fn header(conn: &Connection, at: At<'_>) -> Result<(i64, i64)> {
+    let get = |pragma: &str| conn.query_row(pragma, [], |row| row.get::<_, i64>(0));
+    Ok((
+        get("PRAGMA application_id").map_err(at.failed("Failed to read the header"))?,
+        get("PRAGMA user_version").map_err(at.failed("Failed to read the header"))?,
+    ))
+}
+
+/// Inside the write transaction, once the file holds [`SCHEMA`]: the
+/// header says so. A file whose `user_version` somebody set without an
+/// application id keeps its header as it is — the number is theirs — and
+/// so does one that holds tables of another program beside `tasks`
+/// (review of R27): the file is not rusk's alone to mark.
+fn stamp_header(tx: &Connection, at: At<'_>) -> Result<()> {
+    let (application_id, version) = header(tx, at)?;
+    let others: i64 = tx
+        .query_row(
+            "SELECT count(*) FROM sqlite_master
+             WHERE type = 'table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
+               AND lower(name) <> 'tasks'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(at.failed("Failed to look at the tables"))?;
+    let unclaimed = application_id == 0 && version == 0 && others == 0;
+    if unclaimed || (application_id == APPLICATION_ID && version < SCHEMA_VERSION) {
+        tx.execute_batch(&format!(
+            "PRAGMA application_id = {APPLICATION_ID}; PRAGMA user_version = {SCHEMA_VERSION};"
+        ))
+        .map_err(at.failed("Failed to write the header"))?;
+    }
+    Ok(())
+}
 
 /// What the file holds as far as rusk is concerned. Looked at inside the
 /// transaction that reads or writes: a read takes the file as it is, a
@@ -351,6 +396,7 @@ fn is_current(tx: &Connection, expected: Expected, layout: &Layout, at: At<'_>) 
 /// file hold the current [`SCHEMA`]. A table with the one-byte id CHECK is
 /// made anew — its rows are replaced right after anyway, and SQLite cannot
 /// drop a constraint in place; one that only lacks `after` gets the column.
+/// Then the header says what the file now is (see [`stamp_header`]).
 fn upgrade_schema(tx: &Connection, layout: &Layout, at: At<'_>) -> Result<()> {
     let sql = match layout {
         Layout::Empty => SCHEMA.to_string(),
@@ -360,10 +406,12 @@ fn upgrade_schema(tx: &Connection, layout: &Layout, at: At<'_>) -> Result<()> {
         Layout::Tasks {
             has_after: false, ..
         } => "ALTER TABLE tasks ADD COLUMN \"after\" TEXT".to_string(),
-        Layout::Tasks { .. } | Layout::Foreign(_) => return Ok(()),
+        Layout::Tasks { .. } => String::new(),
+        Layout::Foreign(_) => return Ok(()),
     };
     tx.execute_batch(&sql)
-        .map_err(at.failed("Failed to bring the tasks table up to date"))
+        .map_err(at.failed("Failed to bring the tasks table up to date"))?;
+    stamp_header(tx, at)
 }
 
 /// The committed database as one self-contained file, made by SQLite from
@@ -483,6 +531,48 @@ impl SqliteBackend {
         Ok(conn)
     }
 
+    /// What the header says about the file: one of a newer rusk, or of
+    /// another program that marked it as its own, is refused — read and
+    /// written alike. A file without an application id is taken on its
+    /// tables (an older rusk wrote none).
+    fn check_header(&self, conn: &Connection, at: At<'_>) -> Result<()> {
+        let (application_id, version) = header(conn, at)?;
+        // The header holds 32 bits; SQLite hands them over signed.
+        let id = application_id as u32;
+        let backup = at.doing == Doing::ReadingBackup;
+        if application_id == APPLICATION_ID && version > SCHEMA_VERSION {
+            if backup {
+                bail!(
+                    "the backup '{}' was written by a newer rusk (schema {version}; this rusk \
+                     knows schema {SCHEMA_VERSION}); refusing to replace the database with it",
+                    self.path.display()
+                );
+            }
+            bail!(
+                "the SQLite database '{}' was written by a newer rusk (schema {version}; this \
+                 rusk knows schema {SCHEMA_VERSION}): upgrade rusk to use it",
+                self.path.display()
+            );
+        }
+        if application_id != 0 && application_id != APPLICATION_ID {
+            if backup {
+                bail!(
+                    "the backup '{}' belongs to another program (its application id is \
+                     {id:#010x}): it is not a rusk database; refusing to replace the database \
+                     with it",
+                    self.path.display()
+                );
+            }
+            bail!(
+                "the SQLite database '{}' belongs to another program (its application id is \
+                 {id:#010x}), and rusk leaves it alone — point rusk_db / RUSK_DB at a file of \
+                 its own",
+                self.path.display()
+            );
+        }
+        Ok(())
+    }
+
     /// The rows of the table `layout` describes; another program's database
     /// is refused.
     fn read_layout(&self, conn: &Connection, layout: &Layout, at: At<'_>) -> Result<Vec<Task>> {
@@ -535,6 +625,9 @@ impl SqliteBackend {
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )
         .map_err(at.failed("Failed to open the file"))?;
+        // What the header says first: a backup of a later schema may have
+        // no `tasks` table at all.
+        self.check_header(&conn, at)?;
         let has_tasks_table = conn
             .prepare(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tasks' COLLATE NOCASE",
@@ -647,6 +740,7 @@ impl SqliteBackend {
             let tx = conn
                 .unchecked_transaction()
                 .map_err(at.failed("Failed to start a read transaction"))?;
+            self.check_header(&tx, at)?;
             let tasks = self.read_layout(&tx, &layout(&tx, at)?, at)?;
             let version = data_version(&tx, at)?;
             tx.commit()
@@ -799,6 +893,7 @@ impl SqliteBackend {
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(at.failed("Failed to start a transaction"))?;
+        self.check_header(&tx, at)?;
         let layout = layout(&tx, at)?;
         if replaced || !is_current(&tx, *expected, &layout, at)? {
             return Err(StaleDatabase::at(self.path.display()));
@@ -833,6 +928,7 @@ impl SqliteBackend {
         let tx = conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(at.failed("Failed to start a transaction"))?;
+        self.check_header(&tx, at)?;
         let layout = layout(&tx, at)?;
         let reread = if !replaced && is_current(&tx, *expected, &layout, at)? {
             None

@@ -311,7 +311,6 @@ fn print_visual_chunk(
     start_byte: usize,
     content: &str,
     sel: Option<((usize, usize), (usize, usize))>,
-    full_text_valid: Option<bool>,
     date_len: usize,
     date_past: bool,
 ) -> Result<()> {
@@ -363,11 +362,7 @@ fn print_visual_chunk(
                 stdout.queue(Print(theme().editor_date.paint(text).bold()))?;
             }
         } else {
-            match full_text_valid {
-                Some(true) => stdout.queue(Print(theme().success.paint(text)))?,
-                Some(false) => stdout.queue(Print(theme().error.paint(text)))?,
-                _ => stdout.queue(Print(text))?,
-            };
+            stdout.queue(Print(text))?;
         }
         Ok(())
     };
@@ -540,7 +535,6 @@ pub(super) struct RenderInput<'a> {
     pub cursor_col: usize,
     pub view_top: &'a mut usize,
     pub follow_cursor: bool,
-    pub validate: Option<&'a fn(&str) -> bool>,
     pub selection: Option<((usize, usize), (usize, usize))>,
     pub dirty: bool,
     pub relative_date_base: Option<chrono::NaiveDate>,
@@ -565,11 +559,6 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
         available_text,
         visuals.len(),
     );
-
-    let full_text_valid = r.validate.map(|v| {
-        let full = r.lines.join("\n");
-        full.trim().is_empty() || v(full.as_str())
-    });
 
     // Clear from the top; text starts at `editor_row` (vertically centered when width allows).
     stdout.queue(MoveTo(0, 0))?;
@@ -611,7 +600,6 @@ pub(super) fn render(stdout: &mut io::Stdout, r: RenderInput<'_>) -> Result<()> 
             range.start,
             content,
             sel_range,
-            full_text_valid,
             date_len,
             date_past,
         )?;

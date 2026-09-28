@@ -147,7 +147,8 @@ rusk mark 1 --priority
 rusk add deploy --after 19,22
 rusk a deploy -a 19,22
 
-# Change or clear the dependency list of an existing task
+# Change or clear the dependency list of an existing task. The list is a
+# set: the same ids in another order change nothing
 rusk edit 1 --after 19,22
 rusk edit 1 --after _
 
@@ -173,7 +174,9 @@ rusk edit 1 --date +2w
 rusk edit 1 -- -x means exclude
 rusk edit 1 -- 42
 
-# Delete a task: asks for confirmation on the terminal first
+# Delete a task: asks for confirmation on the terminal first. The question
+# names the tasks that depend on it, and the deletion says which of them no
+# longer do (`Task 3 no longer depends on 1.`)
 rusk del 1
 
 # Delete all completed tasks
@@ -243,7 +246,8 @@ and built from a single embedded template — no separate frontend to install.
 Full guide (auth, VPS deployment behind Caddy/nginx, API): [WEB.md](WEB.md)
 
 ```bash
-# Generate a self-contained read-only HTML page with all tasks
+# Generate a self-contained read-only HTML page with all tasks (never over
+# the database or a file rusk keeps beside it)
 rusk gen -o index.html
 
 # Serve the interactive UI (full task editing from a phone)
@@ -456,8 +460,11 @@ each one re-reads the table inside its transaction when another process wrote
 after it loaded, and applies its change to that (see
 [Concurrent Writers](#concurrent-writers)). Reading never changes the file
 (a write-protected database is listed fine); a database of an older rusk is
-brought up to date by the first save. A SQLite file of another program — one
-with tables but no `tasks` table — is refused rather than written to. Deleted
+brought up to date by the first save, which also marks the file as rusk's in
+its header (`application_id`, and the schema in `user_version`). A SQLite
+file of another program — one with tables but no `tasks` table, or one its
+header marks as another program's — is refused rather than written to, and so
+is one a newer rusk wrote in a later schema. Deleted
 tasks are overwritten in the file (`secure_delete`), and a save that frees
 much of it compacts it.
 

@@ -58,6 +58,9 @@ pub struct ConfirmedDeletion {
     pub changed: Vec<TaskId>,
     /// Already deleted by another process.
     pub gone: Vec<TaskId>,
+    /// The tasks that stay and depended on a deleted one, with the ids
+    /// they no longer depend on.
+    pub unlinked: Vec<(TaskId, Vec<TaskId>)>,
 }
 
 /// Position of the task with this id.
@@ -169,12 +172,33 @@ pub fn validate_after(
     Ok(clean)
 }
 
-/// Removes the given ids from every task's `after` list (deleted tasks
-/// must not linger as dependencies: their ids get reused).
-fn strip_deps(tasks: &mut [Task], removed: &[TaskId]) {
+/// Takes the `removed` ids off every dependency list (deleted tasks must
+/// not linger as dependencies: their ids get reused). Returns the tasks
+/// that lost some, with the ids each one lost.
+fn strip_deps(tasks: &mut [Task], removed: &[TaskId]) -> Vec<(TaskId, Vec<TaskId>)> {
+    let mut unlinked = Vec::new();
     for task in tasks {
-        task.after.retain(|dep| !removed.contains(dep));
+        let lost: Vec<TaskId> =
+            task.after.iter().copied().filter(|dep| removed.contains(dep)).collect();
+        if !lost.is_empty() {
+            task.after.retain(|dep| !removed.contains(dep));
+            unlinked.push((task.id, lost));
+        }
     }
+    unlinked
+}
+
+/// The tasks whose dependency list names `id`.
+pub fn dependents_of(tasks: &[Task], id: TaskId) -> Vec<TaskId> {
+    tasks.iter().filter(|t| t.after.contains(&id)).map(|t| t.id).collect()
+}
+
+/// Whether storing the dependency list `new` changes `stored`. The list is
+/// a set: the same ids in another order are no change, and the stored
+/// order stays.
+pub fn deps_change(stored: &[TaskId], new: &[TaskId]) -> bool {
+    let set = |ids: &[TaskId]| ids.iter().copied().collect::<std::collections::BTreeSet<_>>();
+    set(stored) != set(new)
 }
 
 /// Deletes the tasks with these ids, along with every dependency on them.
@@ -413,23 +437,6 @@ impl TaskManager {
         validate_after(&self.tasks, own_id, after)
     }
 
-    /// Dependencies of the task that still exist and are not done yet
-    /// (ids of deleted tasks count as satisfied).
-    pub fn unfinished_deps(&self, id: TaskId) -> Vec<TaskId> {
-        let Some(idx) = self.find_task_by_id(id) else {
-            return Vec::new();
-        };
-        self.tasks[idx]
-            .after
-            .iter()
-            .copied()
-            .filter(|dep| {
-                self.find_task_by_id(*dep)
-                    .is_some_and(|dep_idx| !self.tasks[dep_idx].done)
-            })
-            .collect()
-    }
-
     pub fn delete_tasks(&mut self, ids: Vec<TaskId>) -> Result<Vec<TaskId>> {
         let mut sorted_ids = ids;
         sorted_ids.sort_unstable_by(|a, b| b.cmp(a));
@@ -459,7 +466,7 @@ impl TaskManager {
                     None => outcome.gone.push(shown.id),
                 }
             }
-            strip_deps(tasks, &outcome.deleted);
+            outcome.unlinked = strip_deps(tasks, &outcome.deleted);
             Ok(outcome)
         })
     }
@@ -574,7 +581,7 @@ impl TaskManager {
                 }
 
                 if let Some(new_after) = new_after
-                    && task.after != new_after
+                    && deps_change(&task.after, &new_after)
                 {
                     task.after = new_after;
                     was_changed = true;
@@ -668,15 +675,6 @@ impl TaskManager {
         Ok(())
     }
 
-    /// The local database file path this build would use, ignoring remote
-    /// locations (test/debug runs are pinned to a temp file anyway).
-    pub fn resolve_db_path() -> PathBuf {
-        Backend::resolve()
-            .ok()
-            .and_then(|b| b.local_path().map(Path::to_path_buf))
-            .unwrap_or_else(|| PathBuf::from(".rusk").join("tasks.json"))
-    }
-
     /// Directory for auxiliary local state (editor drafts). Remote databases
     /// have no local directory, so those fall back to a temp subdirectory.
     pub fn get_db_dir() -> PathBuf {
@@ -707,8 +705,8 @@ impl TaskManager {
 
 #[cfg(test)]
 mod tests {
-    use super::TaskManager;
-    use crate::model::TaskId;
+    use super::{TaskManager, dependents_of, deps_change, strip_deps};
+    use crate::model::{Task, TaskId};
     use chrono::NaiveDate;
 
     #[test]
@@ -818,17 +816,31 @@ mod tests {
     }
 
     #[test]
-    fn unfinished_deps_ignore_done_and_deleted_tasks() {
-        let mut tm = tm_with_tasks(3);
-        tm.edit_tasks_with_after(vec![3], None, None, Some(vec![1, 2]))
-            .unwrap();
-        assert_eq!(tm.unfinished_deps(3), vec![1, 2]);
+    fn a_dependency_list_is_a_set() {
+        assert!(!deps_change(&[1, 2], &[2, 1]));
+        assert!(!deps_change(&[], &[]));
+        assert!(deps_change(&[1, 2], &[1]));
+        assert!(deps_change(&[1], &[1, 2]));
+        assert!(deps_change(&[1, 2], &[1, 3]));
+    }
 
-        tm.mark_tasks(vec![1]).unwrap();
-        assert_eq!(tm.unfinished_deps(3), vec![2]);
-
-        tm.delete_tasks(vec![2]).unwrap();
-        assert_eq!(tm.unfinished_deps(3), Vec::<TaskId>::new());
+    #[test]
+    fn a_deletion_says_which_lists_it_changed() {
+        let mut tasks: Vec<Task> = (1..=4)
+            .map(|id| Task {
+                id,
+                text: format!("task {id}"),
+                date: None,
+                done: false,
+                priority: false,
+                after: Vec::new(),
+            })
+            .collect();
+        tasks[2].after = vec![1, 2];
+        tasks[3].after = vec![2];
+        assert_eq!(dependents_of(&tasks, 2), [3, 4]);
+        assert_eq!(strip_deps(&mut tasks, &[1, 2]), [(3, vec![1, 2]), (4, vec![2])]);
+        assert!(strip_deps(&mut tasks, &[1, 2]).is_empty());
     }
 
     #[test]

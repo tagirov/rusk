@@ -402,25 +402,30 @@ impl HandlerCLI {
             Some((run, run_lit)) if *run_lit == lit => run.push_str(piece),
             _ => runs.push((piece.to_string(), lit)),
         };
-        let inside = |at: usize| matches.iter().any(|m| m.start <= at && at < m.end);
+        // The matches are in order and do not overlap: the first one that
+        // ends after `at` is the one `at` is in, or else the next to come.
+        // Looked up by bisection, so painting takes time in proportion to
+        // the text, however many matches it holds.
+        let from = |at: usize| matches.partition_point(|m| m.end <= at);
         for (i, range) in row.iter().enumerate() {
             if i > 0 {
                 // The space stands for the whitespace between two words: lit
                 // when a match runs on across it.
                 let gap = row[i - 1].end..range.start;
-                let lit = matches.iter().any(|m| m.start < gap.start && gap.end < m.end);
+                let lit = matches
+                    .get(from(gap.start))
+                    .is_some_and(|m| m.start < gap.start && gap.end < m.end);
                 push(" ", lit);
             }
             let mut at = range.start;
             while at < range.end {
-                let lit = inside(at);
                 // Up to the next boundary of a match, or the end of the piece.
-                let next = matches
-                    .iter()
-                    .flat_map(|m| [m.start, m.end])
-                    .filter(|&b| b > at && b < range.end)
-                    .min()
-                    .unwrap_or(range.end);
+                let (lit, next) = match matches.get(from(at)) {
+                    Some(m) if m.start <= at => (true, m.end),
+                    Some(m) => (false, m.start),
+                    None => (false, range.end),
+                };
+                let next = next.min(range.end);
                 push(&text[at..next], lit);
                 at = next;
             }
@@ -751,6 +756,22 @@ mod tests {
         let painted = HandlerCLI::paint_rows("foo bar Foo", 80, Some(&Query::new("foo")));
         assert_eq!(lit(&painted[0]), "foo|Foo");
         assert_eq!(HandlerCLI::paint_rows("foo bar", 80, Some(&Query::new("baz"))), ["foo bar"]);
+    }
+
+    /// REVIEW section 4: every piece of a row looked through all the
+    /// matches, so a text with many took time quadratic in their number (a
+    /// word of 2 000 000 `h`s searched for `hh`: over a minute).
+    #[test]
+    fn many_matches_are_painted_in_time() {
+        let _colors = crate::cli::tests::force_colors();
+        let text = "h".repeat(200_000);
+        let started = std::time::Instant::now();
+        let painted = HandlerCLI::paint_rows(&text, 80, Some(&Query::new("hh")));
+        assert!(started.elapsed() < std::time::Duration::from_secs(10), "{:?}", started.elapsed());
+        assert_eq!(painted.len(), 2_500);
+        // The matches tile the word: each row is one painted run.
+        let styled = theme().search_match.paint(&"h".repeat(80)).bold().to_string();
+        assert!(painted.iter().all(|row| *row == styled));
     }
 
     /// REVIEW №122: quotes are not sentence punctuation; CJK ends are.

@@ -142,9 +142,12 @@ mod tests {
         let impatient = acquire_within(&db, Duration::from_millis(30));
         assert!(!impatient.is_held());
 
-        // Released on drop: the next writer gets it at once.
+        // Released on drop: the next writer gets it. Not necessarily at
+        // once: a process another test thread is starting holds a copy of
+        // every descriptor of this one from its fork to its exec, the lock
+        // with it (seen once under a full `cargo test`).
         drop(first);
-        assert!(acquire_within(&db, Duration::ZERO).is_held());
+        assert!(acquire_within(&db, Duration::from_secs(5)).is_held());
     }
 
     #[test]

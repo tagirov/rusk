@@ -23,7 +23,9 @@
 // rest of REVIEW.md: R19 (output, terminals and messages), R24 (the editor:
 // keys, words, selection, undo, the first-line date), R20 (`rusk serve`:
 // requests, tokens, hosts, headers), R21 (`rusk sync` and the transports),
-// R22 (`git_backend`).
+// R22 (`git_backend`), R25 (config, dates, environment), R23 (the file
+// formats), R26 (completion scripts, docs, tests, build) — and of the leads
+// of section 4: R27 (CLI, storage, SQLite).
 // R6 and R8 need a pty
 // for most of their repros: what Command can drive is here, the draft rules
 // are unit-tested in `src/cli/editor/draft.rs`, and the rest is driven by a
@@ -6768,4 +6770,352 @@ fn r26_rusk_db_names_a_served_database() {
     assert!(stdout_of(&out).contains("over http"), "{}", stdout_of(&out));
     assert_eq!(db_tasks(&server_side).len(), 4);
     assert!(!client.db_path().exists(), "the client wrote a local database");
+}
+
+// ---------------------------------------------------------------------------
+// R27 — CLI, storage and SQLite: the leads of REVIEW.md section 4
+// ---------------------------------------------------------------------------
+//
+// The leads of section 4 that the earlier clusters had not closed in
+// passing. The painting of search matches and the dependency sets are
+// unit-tested in `src/cli/formatter.rs` and `src/storage.rs`.
+
+fn after_of(tasks: &[serde_json::Value], id: u64) -> Vec<u64> {
+    let task = tasks
+        .iter()
+        .find(|t| t["id"] == id)
+        .unwrap_or_else(|| panic!("task {id} is missing"));
+    task["after"]
+        .as_array()
+        .map(|ids| ids.iter().map(|v| v.as_u64().unwrap()).collect())
+        .unwrap_or_default()
+}
+
+/// REVIEW section 4: a `-d` value that is no date, or a text of nothing,
+/// was told only after the database was read: behind a database that
+/// cannot be read (or after a remote one was asked), the user saw the
+/// database's error instead of their own.
+#[test]
+fn r27_a_wrong_argument_is_told_before_the_database_is_read() {
+    let sb = Sandbox::with_db("{broken");
+    for args in [
+        &["add", "x", "-d", "garbage"][..],
+        &["add", "x", "-d", "+zz"],
+        &["edit", "1", "-d", "garbage"],
+        &["edit", "1", "new", "text", "-d", "31-02-2027"],
+    ] {
+        let out = sb.cmd().args(args).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        let err = stderr_of(&out);
+        assert!(err.contains("Invalid date"), "{args:?}: {err}");
+        assert!(!err.contains("database"), "{args:?}: {err}");
+    }
+    for args in [&["add", "  "][..], &["edit", "1", ""], &["edit", "1", " ", " "]] {
+        let out = sb.cmd().args(args).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        let err = stderr_of(&out);
+        assert!(err.contains("Task text cannot be empty"), "{args:?}: {err}");
+        assert!(!err.contains("database"), "{args:?}: {err}");
+    }
+    assert_eq!(sb.read_db(), "{broken");
+}
+
+/// REVIEW section 4: deleting a task that others depend on took it off
+/// their lists in silence (`deploy (1,2)` became `deploy (2)`).
+#[test]
+fn r27_deleting_a_task_tells_who_depended_on_it() {
+    let sb = Sandbox::with_db(
+        r#"[{"id":1,"text":"alpha"},{"id":2,"text":"beta","done":true},
+            {"id":3,"text":"deploy","after":[1,2]},{"id":4,"text":"docs","after":[1]},
+            {"id":5,"text":"free"}]"#,
+    );
+    let out = sb.cmd().args(["del", "1", "--yes"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let said = stdout_of(&out);
+    assert!(said.contains("Task 3 no longer depends on 1."), "{said}");
+    assert!(said.contains("Task 4 no longer depends on 1."), "{said}");
+    assert!(!said.contains("Task 5"), "{said}");
+    assert_eq!(after_of(&db_tasks(&sb), 3), [2]);
+
+    let out = sb.cmd().args(["del", "--done", "--yes"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(stdout_of(&out).contains("Task 3 no longer depends on 2."), "{}", stdout_of(&out));
+    assert!(after_of(&db_tasks(&sb), 3).is_empty());
+
+    // A task with no dependents is deleted as before, nothing more said.
+    let out = sb.cmd().args(["del", "5", "--yes"]).output().unwrap();
+    assert!(!stdout_of(&out).contains("depends"), "{}", stdout_of(&out));
+}
+
+/// The question names the dependents before anything is deleted.
+#[test]
+#[cfg(all(unix, feature = "interactive"))]
+fn r27_the_delete_question_names_who_depends_on_the_task() {
+    let sb = Sandbox::with_db(
+        r#"[{"id":1,"text":"alpha"},{"id":3,"text":"deploy","after":[1]},
+            {"id":5,"text":"docs","after":[1]},{"id":6,"text":"lone","after":[3]}]"#,
+    );
+    let Some(run) = sb.in_pty(&["del", "1,3"], b"y/N", &[(200, b"n"), (400, b"n")], false) else {
+        eprintln!("skipping r27_the_delete_question_names_who_depends_on_the_task: no pty");
+        return;
+    };
+    let screen = String::from_utf8_lossy(&run.screen);
+    assert!(screen.contains("Delete task 1 (tasks 3, 5 depend on it):"), "{screen}");
+    assert!(screen.contains("Delete task 3 (task 6 depends on it):"), "{screen}");
+    assert_eq!(db_tasks(&sb).len(), 4);
+}
+
+/// REVIEW section 4: the dependency list is a set, yet `edit 3 -a 2,1` on
+/// a stored `[1,2]` counted as a change — saved, `.backup` rewritten — and
+/// so did the same list in another order through the API.
+#[test]
+fn r27_the_same_dependencies_in_another_order_are_no_change() {
+    let db = r#"[{"id":1,"text":"a"},{"id":2,"text":"b"},{"id":3,"text":"c","after":[1,2]}]"#;
+    let sb = Sandbox::with_db(db);
+    let out = sb.cmd().args(["edit", "3", "-a", "2,1"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(stdout_of(&out).contains("Task unchanged:"), "{}", stdout_of(&out));
+    assert_eq!(sb.read_db(), db, "the database was written");
+    assert!(!sb.db_path().with_file_name("tasks.json.backup").exists());
+    // Another set is a change, in the order given.
+    let out = sb.cmd().args(["edit", "3", "-a", "2"]).output().unwrap();
+    assert!(stdout_of(&out).contains("Edited task:"), "{}", stdout_of(&out));
+    assert_eq!(after_of(&db_tasks(&sb), 3), [2]);
+}
+
+#[test]
+#[cfg(feature = "web")]
+fn r27_the_api_takes_the_same_dependencies_as_no_change() {
+    use rusk::web::api::update_task;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tasks.json");
+    let mut tm = TaskManager::new_empty_with_path(path.clone());
+    tm.tasks = vec![task(1, "a"), task(2, "b"), Task { after: vec![1, 2], ..task(3, "c") }];
+    tm.save().unwrap();
+    let before = fs::read_to_string(&path).unwrap();
+    let res = update_task(&mut tm, 3, r#"{"after":[2,1]}"#, None);
+    assert_eq!(res.status, 200, "{}", res.body);
+    assert_eq!(fs::read_to_string(&path).unwrap(), before, "the database was written");
+    assert!(res.body.contains(r#""after":[1,2]"#), "{}", res.body);
+}
+
+/// REVIEW section 4 (the list half is closed by R4): `rusk search`
+/// painted its matches in time quadratic in their number — 100 000
+/// characters took 4 s, 2 000 000 more than a minute.
+#[test]
+fn r27_search_paints_a_long_text_in_time() {
+    use std::time::{Duration, Instant};
+    let text = "h".repeat(400_000);
+    let sb = Sandbox::with_db(&format!(r#"[{{"id":1,"text":"{text}"}}]"#));
+    let mut child = sb
+        .cmd()
+        .args(["search", "hh"])
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(status.success());
+            break;
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("searching a text of 400 000 characters took more than 30 s");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// REVIEW section 4: `rusk gen -o` wrote its page over any file, the
+/// database included — bypassing the backend, so without a `.backup`.
+#[test]
+#[cfg(all(unix, feature = "web"))]
+fn r27_gen_never_writes_over_the_database() {
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let db = sb.db_path();
+    let backup = db.with_file_name("tasks.json.backup");
+    fs::write(&backup, THREE_TASKS_DB).unwrap();
+    let link = sb.path().join("link.html");
+    std::os::unix::fs::symlink(&db, &link).unwrap();
+    let targets = [
+        db.display().to_string(),
+        backup.display().to_string(),
+        link.display().to_string(),
+        // Relative to the working directory, and with a detour.
+        "rusk_debug/tasks.json".to_string(),
+        format!("{}/../rusk_debug/tasks.json.sync", db.parent().unwrap().display()),
+    ];
+    for target in &targets {
+        let out = sb.cmd().args(["gen", "-o", target]).output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{target}: {}", stdout_of(&out));
+        assert!(stderr_of(&out).contains("refusing to write the page over"), "{target}: {}", stderr_of(&out));
+    }
+    assert_eq!(sb.read_db(), THREE_TASKS_DB);
+    assert_eq!(fs::read_to_string(&backup).unwrap(), THREE_TASKS_DB);
+    assert!(!db.with_file_name("tasks.json.sync").exists());
+
+    // A page anywhere else is written as before, over an older one too.
+    let page = sb.path().join("index.html");
+    fs::write(&page, "old page").unwrap();
+    let out = sb.cmd().args(["gen", "-o"]).arg(&page).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(fs::read_to_string(&page).unwrap().starts_with("<!DOCTYPE html>"));
+}
+
+/// REVIEW section 4: `rusk completions install bash bash` wrote the file
+/// and printed its instructions twice.
+#[test]
+#[cfg(feature = "completions")]
+fn r27_completions_install_takes_each_shell_once() {
+    let sb = Sandbox::new();
+    let out = sb.cmd().args(["completions", "install", "bash", "bash"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let said = stdout_of(&out);
+    assert_eq!(said.matches("completion installed to").count(), 1, "{said}");
+    assert!(!said.contains("Setup instructions for"), "{said}");
+}
+
+/// Found in passing: `{broken` was reported as "well-formed JSON with a
+/// value rusk cannot read" — serde_json had stopped at `{` because an
+/// object is not the list it expected, before it saw the syntax.
+#[test]
+fn r27_broken_json_is_not_called_well_formed() {
+    for (content, corrupted) in [
+        ("{broken", true),
+        (r#"[{"id":1,"text":"a""#, true),
+        (r#"{"id":1}"#, false),
+        (r#"[{"id":"x","text":"a"}]"#, false),
+        // A BOM belongs to no format (REVIEW №17): the file after it is
+        // what is judged (review of R27).
+        ("\u{feff}[{\"id\":1,\"text\":\"keep me\",\"date\":\"2026-13-01\"}]", false),
+        ("\u{feff}{\"id\":1}", false),
+        ("\u{feff}{broken", true),
+    ] {
+        let sb = Sandbox::with_db(content);
+        let out = sb.cmd().arg("list").output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{content}");
+        let err = stderr_of(&out);
+        assert_eq!(err.contains("appears to be corrupted"), corrupted, "{content}: {err}");
+        assert_eq!(err.contains("well-formed"), !corrupted, "{content}: {err}");
+    }
+    // What is wrong with `{broken` is its syntax, where it is.
+    let sb = Sandbox::with_db("{broken");
+    let err = stderr_of(&sb.cmd().arg("list").output().unwrap());
+    assert!(err.contains("key must be a string at line 1 column 2"), "{err}");
+}
+
+/// REVIEW section 4: rusk neither set nor checked `application_id` and
+/// `user_version`: a file of a later schema would be read as this one, and
+/// another program's file with a `tasks` table was written over.
+#[test]
+#[cfg(feature = "backend-sqlite")]
+fn r27_a_sqlite_database_says_it_is_rusks() {
+    use rusqlite::Connection;
+    const RUSK: i64 = 0x7275_736B;
+    let pragmas = |path: &Path| {
+        let conn = Connection::open(path).unwrap();
+        let get = |name: &str| {
+            conn.query_row(&format!("PRAGMA {name}"), [], |row| row.get::<_, i64>(0))
+                .unwrap()
+        };
+        (get("application_id"), get("user_version"))
+    };
+    let dir = tempfile::tempdir().unwrap();
+
+    // A database rusk makes says so, and which schema it holds.
+    let path = dir.path().join("tasks.db");
+    backend(&path).save(&[task(1, "a")]).unwrap();
+    assert_eq!(pragmas(&path), (RUSK, 1));
+    backend(&path).save(&[task(1, "b")]).unwrap();
+    assert_eq!(pragmas(&path.with_file_name("tasks.db.backup")), (RUSK, 1));
+
+    // A later schema is refused, not read as this one.
+    Connection::open(&path).unwrap().execute_batch("PRAGMA user_version = 2").unwrap();
+    let err = format!("{:#}", backend(&path).load().unwrap_err());
+    assert!(err.contains("a newer rusk"), "{err}");
+    assert!(backend(&path).save(&[task(1, "c")]).is_err());
+
+    // Another program's file is neither read nor written, tasks table or not.
+    let other = dir.path().join("other.db");
+    Connection::open(&other)
+        .unwrap()
+        .execute_batch(
+            "CREATE TABLE tasks (pos INTEGER PRIMARY KEY, id INTEGER, text TEXT);
+             INSERT INTO tasks VALUES (1, 1, 'theirs');
+             PRAGMA application_id = 1234;",
+        )
+        .unwrap();
+    let err = format!("{:#}", backend(&other).load().unwrap_err());
+    assert!(err.contains("another program"), "{err}");
+    assert!(backend(&other).save(&[task(1, "mine")]).is_err());
+    let text: String = Connection::open(&other)
+        .unwrap()
+        .query_row("SELECT text FROM tasks", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(text, "theirs");
+
+    // A table an older rusk made is read as it is and marked by the next save.
+    let legacy = dir.path().join("legacy.db");
+    Connection::open(&legacy)
+        .unwrap()
+        .execute_batch(
+            "CREATE TABLE tasks (pos INTEGER PRIMARY KEY, id INTEGER NOT NULL UNIQUE,
+                 text TEXT NOT NULL, date TEXT, done INTEGER NOT NULL DEFAULT 0,
+                 priority INTEGER NOT NULL DEFAULT 0);
+             INSERT INTO tasks (pos, id, text) VALUES (1, 1, 'old');",
+        )
+        .unwrap();
+    let tasks = backend(&legacy).load().unwrap();
+    assert_eq!(ids_and_texts(&tasks), [(1, "old")]);
+    assert_eq!(pragmas(&legacy), (0, 0), "reading changed the file");
+    backend(&legacy).save(&tasks).unwrap();
+    assert_eq!(pragmas(&legacy), (RUSK, 1));
+
+    // A backup that is another program's, or of a later schema, is not
+    // restored, and the refusal says it is about the backup (review of R27).
+    let restored = dir.path().join("restored.db");
+    backend(&restored).save(&[task(1, "one")]).unwrap();
+    backend(&restored).save(&[task(1, "two")]).unwrap();
+    let backup = restored.with_file_name("restored.db.backup");
+    Connection::open(&backup).unwrap().execute_batch("PRAGMA application_id = -1").unwrap();
+    let err = format!("{:#}", backend(&restored).restore_from_backup().unwrap_err());
+    assert!(err.contains("the backup") && err.contains("refusing to replace the database"), "{err}");
+    assert!(err.contains("0xffffffff") && !err.contains("0xffffffffffffffff"), "{err}");
+    assert!(!err.contains("RUSK_DB"), "{err}");
+    Connection::open(&backup).unwrap().execute_batch(&format!("PRAGMA application_id = {RUSK}; PRAGMA user_version = 9")).unwrap();
+    let err = format!("{:#}", backend(&restored).restore_from_backup().unwrap_err());
+    assert!(err.contains("the backup") && err.contains("a newer rusk"), "{err}");
+    assert_eq!(ids_and_texts(&backend(&restored).load().unwrap()), [(1, "two")]);
+
+    // A file that holds tables of another program beside `tasks` keeps
+    // its header: whatever it counts in `user_version` is not rusk's.
+    let shared = dir.path().join("shared.db");
+    Connection::open(&shared)
+        .unwrap()
+        .execute_batch(
+            "CREATE TABLE tasks (pos INTEGER PRIMARY KEY, id INTEGER, text TEXT, date TEXT,
+                 done INTEGER, priority INTEGER, \"after\" TEXT);
+             CREATE TABLE notes (body TEXT);",
+        )
+        .unwrap();
+    backend(&shared).save(&[task(1, "t")]).unwrap();
+    assert_eq!(pragmas(&shared), (0, 0));
+
+    // A version that is somebody else's, without an application id, is
+    // left as it is.
+    let theirs = dir.path().join("theirs.db");
+    Connection::open(&theirs)
+        .unwrap()
+        .execute_batch(
+            "CREATE TABLE tasks (pos INTEGER PRIMARY KEY, id INTEGER, text TEXT, date TEXT,
+                 done INTEGER, priority INTEGER, \"after\" TEXT);
+             INSERT INTO tasks (pos, id, text) VALUES (1, 1, 'kept');
+             PRAGMA user_version = 42;",
+        )
+        .unwrap();
+    let tasks = backend(&theirs).load().unwrap();
+    backend(&theirs).save(&tasks).unwrap();
+    assert_eq!(pragmas(&theirs), (0, 42));
 }

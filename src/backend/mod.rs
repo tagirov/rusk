@@ -823,9 +823,110 @@ pub(crate) fn aux_path(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
+/// What `candidate` is to the database file `db`, when it is the database
+/// itself or one of the files rusk and SQLite keep beside it (`.backup`,
+/// `.sync`, …) — under any name for it: a relative path, a detour through
+/// `..`, a symbolic or hard link. `rusk gen -o` writes a page, and over one
+/// of those it would replace it without a backup.
+pub fn database_file_role(db: &Path, candidate: &Path) -> Option<&'static str> {
+    let target = real_path(candidate)?;
+    // The database under a name of its own.
+    if let (Ok(a), Ok(b)) = (std::fs::metadata(&target), std::fs::metadata(db))
+        && same_file(&a, &b)
+    {
+        return Some("the database");
+    }
+    // Its siblings go beside the path it is named by, and beside the file
+    // a link names.
+    let bases = [named_path(db), real_path(db)];
+    bases.into_iter().flatten().find_map(|base| {
+        if target.parent() != base.parent() {
+            return None;
+        }
+        let rest = target.file_name()?.to_str()?.strip_prefix(base.file_name()?.to_str()?)?;
+        match rest {
+            "" => Some("the database"),
+            ".backup" => Some("the database's backup"),
+            ".sync" => Some("the database's sync state"),
+            ".lock" => Some("the database's lock file"),
+            "-journal" | "-wal" | "-shm" => Some("a file SQLite keeps beside the database"),
+            ".before_restore" => Some("a copy `rusk restore` kept"),
+            _ => match rest.strip_prefix(".before_restore.") {
+                Some(n) if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => {
+                    Some("a copy `rusk restore` kept")
+                }
+                _ => None,
+            },
+        }
+    })
+}
+
+/// The file `path` names wherever links and `..` lead, whether or not it
+/// exists yet.
+fn real_path(path: &Path) -> Option<PathBuf> {
+    std::fs::canonicalize(path).ok().or_else(|| named_path(path))
+}
+
+/// `path` with its directory resolved and its own name as it is: a link
+/// stays the link.
+fn named_path(path: &Path) -> Option<PathBuf> {
+    let dir = match path.parent() {
+        Some(dir) if !dir.as_os_str().is_empty() => dir,
+        _ => Path::new("."),
+    };
+    Some(std::fs::canonicalize(dir).ok()?.join(path.file_name()?))
+}
+
+#[cfg(unix)]
+fn same_file(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    a.dev() == b.dev() && a.ino() == b.ino()
+}
+
+/// Without device and inode numbers only the names tell (see
+/// [`database_file_role`]).
+#[cfg(not(unix))]
+fn same_file(_: &std::fs::Metadata, _: &std::fs::Metadata) -> bool {
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_files_of_a_database_are_known_by_any_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("tasks.json");
+        std::fs::write(&db, "[]").unwrap();
+        let role = |name: &str| database_file_role(&db, &dir.path().join(name));
+        assert_eq!(role("tasks.json"), Some("the database"));
+        assert_eq!(role("tasks.json.backup"), Some("the database's backup"));
+        assert_eq!(role("tasks.json.sync"), Some("the database's sync state"));
+        assert_eq!(role("tasks.json.before_restore.2"), Some("a copy `rusk restore` kept"));
+        assert_eq!(role("tasks.json.before_restore_notes.html"), None);
+        assert_eq!(role("tasks.json.before_restore."), None);
+        // Windows resolves `..` by the name alone, a missing directory too.
+        #[cfg(unix)]
+        assert_eq!(role("sub/../tasks.json"), None, "no such directory");
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        assert_eq!(role("sub/../tasks.json"), Some("the database"));
+        assert_eq!(role("tasks.json.html"), None);
+        assert_eq!(role("index.html"), None);
+        assert_eq!(role("sub/tasks.json"), None);
+        #[cfg(unix)]
+        {
+            std::fs::hard_link(&db, dir.path().join("hard.html")).unwrap();
+            assert_eq!(role("hard.html"), Some("the database"));
+            // A database named through a link keeps its siblings beside
+            // the link and beside the file.
+            let linked = dir.path().join("sub").join("link.json");
+            std::os::unix::fs::symlink(&db, &linked).unwrap();
+            let role = |path: &Path| database_file_role(&linked, path);
+            assert_eq!(role(&dir.path().join("sub/link.json.backup")), Some("the database's backup"));
+            assert_eq!(role(&dir.path().join("tasks.json.backup")), Some("the database's backup"));
+        }
+    }
 
     #[test]
     fn local_paths_stay_local() {

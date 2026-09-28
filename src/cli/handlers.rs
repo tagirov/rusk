@@ -157,7 +157,6 @@ impl HandlerCLI {
             &prefill,
             restored.as_deref(),
             cursor_at_start,
-            None,
             allow_skip,
             extras,
         )
@@ -474,6 +473,22 @@ impl HandlerCLI {
         )
     }
 
+    /// The tasks that depended on a deleted one and no longer do: a
+    /// dependency list is not changed in silence.
+    fn print_unlinked(unlinked: &[(TaskId, Vec<TaskId>)]) -> Result<()> {
+        for (id, lost) in unlinked {
+            let lost = lost.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ");
+            outln!(
+                "{}{}{}{}",
+                theme().notice.paint("Task "),
+                theme().emphasis.paint(&id.to_string()),
+                theme().notice.paint(" no longer depends on "),
+                theme().notice.paint(&format!("{lost}."))
+            )?;
+        }
+        Ok(())
+    }
+
     /// `rusk del` asks before it deletes, on the terminal; without one there
     /// is nobody to answer (REVIEW №69). That is an error before anything
     /// is asked, and it names the way to delete without asking.
@@ -490,11 +505,12 @@ impl HandlerCLI {
 
     /// The tasks of `tasks` the user agrees to delete, asked one by one.
     #[cfg(feature = "interactive")]
-    fn confirm_each(tasks: Vec<Task>) -> Result<Vec<Task>> {
+    fn confirm_each(tasks: Vec<Task>, all: &[Task]) -> Result<Vec<Task>> {
         Self::check_can_ask()?;
         let mut confirmed = Vec::new();
         for task in tasks {
-            let prompt = Self::print_delete_confirmation_dialog(&task.text, task.id)?;
+            let dependents = crate::storage::dependents_of(all, task.id);
+            let prompt = Self::print_delete_confirmation_dialog(&task.text, task.id, &dependents)?;
             if Self::read_confirmation(&prompt)? {
                 confirmed.push(task);
             } else {
@@ -556,6 +572,7 @@ impl HandlerCLI {
         Self::forget_drafts(&done, &outcome);
         if !outcome.deleted.is_empty() {
             Self::print_deleted(outcome.deleted.len(), " done tasks.")?;
+            Self::print_unlinked(&outcome.unlinked)?;
         }
         Self::report_unconfirmed(&outcome)
     }
@@ -608,7 +625,7 @@ impl HandlerCLI {
         let found = if yes || found.is_empty() {
             found
         } else {
-            Self::confirm_each(found)?
+            Self::confirm_each(found, tm.tasks())?
         };
         #[cfg(not(feature = "interactive"))]
         let _ = yes;
@@ -621,6 +638,7 @@ impl HandlerCLI {
             Self::forget_drafts(&found, &outcome);
             if !outcome.deleted.is_empty() {
                 Self::print_deleted(outcome.deleted.len(), " task(s).")?;
+                Self::print_unlinked(&outcome.unlinked)?;
             }
         }
         Self::print_not_found_ids(&not_found)?;

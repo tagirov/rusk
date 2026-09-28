@@ -71,7 +71,13 @@ impl HandlerCLI {
         }
     }
 
-    pub(crate) fn print_delete_confirmation_dialog(task_text: &str, task_id: TaskId) -> Result<String> {
+    /// `dependents` are the tasks that depend on this one: the question
+    /// names them, since the deletion takes it off their lists.
+    pub(crate) fn print_delete_confirmation_dialog(
+        task_text: &str,
+        task_id: TaskId,
+        dependents: &[TaskId],
+    ) -> Result<String> {
         let max_line_width = Self::get_max_line_width();
         const LEFT_MARGIN: usize = 4;
         const RIGHT_MARGIN: usize = 4;
@@ -93,10 +99,14 @@ impl HandlerCLI {
         let prompt_fits_on_last_line =
             last_line_width + prompt_width <= available_width_for_text;
 
+        let depended_on = depended_on(dependents)
+            .map(|note| theme().notice.paint(&format!(" ({note})")).to_string())
+            .unwrap_or_default();
         outln!(
-            "{}{}{}",
+            "{}{}{}{}",
             theme().accent.paint("Delete task "),
             theme().emphasis.paint(&task_id.to_string()),
+            depended_on,
             theme().accent.paint(":")
         )?;
 
@@ -119,5 +129,37 @@ impl HandlerCLI {
         let indent = " ".repeat(spaces_before_prompt);
 
         Ok(format!("{}{}", indent, prompt_painted))
+    }
+}
+
+/// What the delete question says of the tasks that depend on the one it
+/// asks about: all of them up to a handful, then how many more (review of
+/// R27: a task that 38 depend on made one line of 38 ids).
+fn depended_on(dependents: &[TaskId]) -> Option<String> {
+    const NAMED: usize = 5;
+    let list = |ids: &[TaskId]| ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ");
+    match dependents {
+        [] => None,
+        [one] => Some(format!("task {one} depends on it")),
+        few if few.len() <= NAMED => Some(format!("tasks {} depend on it", list(few))),
+        many => Some(format!(
+            "tasks {} and {} more depend on it",
+            list(&many[..NAMED - 1]),
+            many.len() - (NAMED - 1)
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::depended_on;
+
+    #[test]
+    fn the_question_names_a_handful_of_dependents() {
+        assert_eq!(depended_on(&[]), None);
+        assert_eq!(depended_on(&[3]).as_deref(), Some("task 3 depends on it"));
+        assert_eq!(depended_on(&[3, 5, 8, 9, 10]).as_deref(), Some("tasks 3, 5, 8, 9, 10 depend on it"));
+        let many: Vec<u32> = (2..40).collect();
+        assert_eq!(depended_on(&many).as_deref(), Some("tasks 2, 3, 4, 5 and 34 more depend on it"));
     }
 }

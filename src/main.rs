@@ -10,7 +10,7 @@ use rusk::{
     error::AppError,
     is_cli_date_help_value, output, parse_edit_args, parse_id_args, parse_id_list,
     parser::date::is_cli_date_clear_value,
-    windows_console,
+    validate_cli_date_edit_arg, windows_console,
 };
 #[cfg(feature = "completions")]
 use rusk::{args::CompletionAction, completions::Shell};
@@ -63,6 +63,23 @@ fn ids_or_exit<T>(parsed: Result<T, IdListError>, examples: &str) -> T {
         IdListError::MoreIds { .. } => exit_with_error(err),
         _ => exit_with_error(format!("{err}; e.g. {examples}")),
     })
+}
+
+/// A `-d` value that cannot be a date: said before the database is read,
+/// like every other wrong argument (see `run`). `_` passes (no date).
+fn check_date_or_exit(date: Option<&str>) {
+    if let Some(date) = date
+        && let Err(err) = validate_cli_date_edit_arg(date)
+    {
+        exit_with_error(format!("{err:#}"));
+    }
+}
+
+/// A text of nothing but whitespace, which no task may have.
+fn check_text_or_exit(words: &[String]) {
+    if rusk::storage::clean_text(&words.join(" ")).is_empty() {
+        exit_with_error("Task text cannot be empty");
+    }
 }
 
 /// A `--after` value: task ids, or `_` for "no dependencies" where clearing
@@ -196,6 +213,10 @@ fn run() -> Result<()> {
     match cli.command {
         Some(Command::Add { text, date, after }) => {
             let after_ids = after.as_deref().map_or_else(Vec::new, |raw| after_ids_or_exit(raw, false));
+            check_date_or_exit(date.as_deref());
+            if !text.is_empty() {
+                check_text_or_exit(&text);
+            }
             #[cfg(not(feature = "interactive"))]
             if text.is_empty() {
                 exit_with_error(
@@ -249,6 +270,10 @@ fn run() -> Result<()> {
                 parse_edit_args(&args, &verbatim),
                 "`rusk edit 1` (the editor), `rusk edit 1,2 new text`, `rusk edit 1 -- -x text`",
             );
+            check_date_or_exit(date.as_deref());
+            if let Some(words) = &text {
+                check_text_or_exit(words);
+            }
 
             if text.is_none() && date.is_none() && after.is_none() {
                 #[cfg(not(feature = "interactive"))]
@@ -307,6 +332,16 @@ fn run() -> Result<()> {
         #[cfg(feature = "web")]
         Some(Command::Gen { output }) => {
             let tm = TaskManager::new()?;
+            if output != "-"
+                && let Some(role) = tm
+                    .local_path()
+                    .and_then(|db| rusk::backend::database_file_role(db, std::path::Path::new(&output)))
+            {
+                exit_with_error(format!(
+                    "refusing to write the page over {role} ('{output}'); \
+                     name another file, e.g. `rusk gen -o index.html`"
+                ));
+            }
             let html = rusk::web::render_static_page(tm.tasks())?;
             if output == "-" {
                 rusk::out!("{html}")?;
@@ -341,10 +376,14 @@ fn run() -> Result<()> {
 }
 
 #[cfg(feature = "completions")]
-fn handle_completions_install(shells: Vec<Shell>) -> Result<()> {
-    if shells.is_empty() {
-        exit_with_error("At least one shell must be specified");
-    }
+fn handle_completions_install(mut shells: Vec<Shell>) -> Result<()> {
+    // clap asks for one at least; a shell named twice is installed once.
+    let mut seen = Vec::new();
+    shells.retain(|shell| {
+        let first = !seen.contains(shell);
+        seen.push(*shell);
+        first
+    });
 
     let shells_count = shells.len();
     let mut installed_paths = Vec::new();

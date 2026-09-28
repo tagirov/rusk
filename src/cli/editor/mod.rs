@@ -65,7 +65,6 @@ pub(crate) fn run_editor(
     prefill: &str,
     restored: Option<&str>,
     cursor_at_start: bool,
-    validate: Option<fn(&str) -> bool>,
     allow_skip: bool,
     extras: EditorExtras,
 ) -> Result<String> {
@@ -118,7 +117,6 @@ pub(crate) fn run_editor(
                 cursor_col: state.col,
                 view_top: &mut state.view_top,
                 follow_cursor: state.follow_cursor,
-                validate: validate.as_ref(),
                 selection,
                 dirty,
                 relative_date_base: extras.relative_date_base,
@@ -184,11 +182,6 @@ pub(crate) fn run_editor(
             }
             Action::Save => {
                 let joined = state.joined();
-                if validate.is_some_and(|v| !joined.trim().is_empty() && !v(joined.as_str())) {
-                    // The bell: the text does not pass `validate`.
-                    stdout.write_all(b"\x07").and_then(|()| stdout.flush()).ok();
-                    continue;
-                }
                 // The draft stays until the text is somewhere safer: the
                 // caller removes it once the database holds it, and a save
                 // that fails afterwards leaves the text right here.
@@ -303,19 +296,10 @@ impl HandlerCLI {
         prefill: &str,
         restored: Option<&str>,
         cursor_at_start: bool,
-        validate: Option<fn(&str) -> bool>,
         allow_skip: bool,
         extras: EditorExtras,
     ) -> Result<String> {
-        run_editor(
-            prompt,
-            prefill,
-            restored,
-            cursor_at_start,
-            validate,
-            allow_skip,
-            extras,
-        )
+        run_editor(prompt, prefill, restored, cursor_at_start, allow_skip, extras)
     }
 
     // Public helpers re-exported for tests and external tooling.

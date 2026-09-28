@@ -64,7 +64,9 @@ title = "quoted value"   # quotes make the value literal (no variable resolution
 
 ## Settings
 
-Environment variables always win over config values.
+Environment variables always win over config values. One set to an empty
+value counts as not set, so the config value applies (`RUSK_DB_TOKEN=` does
+not take away a `db_token`); `RUSK_CONFIG=` is the exception, see above.
 
 | Key | Type | Default | Env override | Meaning |
 |---|---|---|---|---|

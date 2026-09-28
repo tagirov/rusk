@@ -40,7 +40,7 @@ pub fn running_as_the_command() {
 
 /// True when running under a test harness (cargo test env vars or a test
 /// binary name). Debug/test runs must not touch the user's real config file,
-/// mirroring the database-path isolation in `TaskManager::resolve_db_path`.
+/// mirroring the database-path isolation in `Backend::resolve`.
 ///
 /// The `rusk` command itself built for release never is: one that finds
 /// `RUST_TEST_THREADS` in its environment, or is installed under a name

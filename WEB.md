@@ -170,7 +170,7 @@ YYYY-MM-DD at line 1 column 25`).
 | `GET /api/tasks` | — | full task list |
 | `GET /api/tasks/{id}` | — | one task |
 | `POST /api/tasks` | `{"text": "...", "date": "2026-08-01" \| null, "after": [1, 2]}` (`date` and `after` optional) | `201` + created task, listed in the place of its id |
-| `PATCH /api/tasks/{id}` | any subset of `{text, date, done, priority, after}`; `"date": null` clears, `after` replaces the whole list (`[]` clears) | `200` + updated task |
+| `PATCH /api/tasks/{id}` | any subset of `{text, date, done, priority, after}`; `"date": null` clears, `after` replaces the whole list (`[]` clears; the same ids in another order are no change) | `200` + updated task |
 | `DELETE /api/tasks/{id}` | — | `204` |
 | `DELETE /api/tasks/done` | — | `{"deleted": n}` |
 | `PUT /api/tasks` | full task array | replaces the whole list (used by sync); `{"count": n, "tasks": [...]}`, the list as the server's database holds it |

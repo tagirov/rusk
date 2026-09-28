@@ -17,8 +17,8 @@
 use crate::model::normalize;
 use crate::revision::{if_match_allows, list_revision, task_revision};
 use crate::storage::{
-    clean_text, insert_by_id, next_free_id, position_of, remove_done, remove_tasks, text_changes,
-    validate_after,
+    clean_text, deps_change, insert_by_id, next_free_id, position_of, remove_done, remove_tasks,
+    text_changes, validate_after,
 };
 use crate::{Task, TaskId, TaskManager};
 use chrono::NaiveDate;
@@ -259,7 +259,9 @@ pub fn update_task(
         if let Some(priority) = patch.priority {
             task.priority = priority;
         }
-        if let Some(after) = new_after {
+        if let Some(after) = new_after
+            && deps_change(&task.after, &after)
+        {
             task.after = after;
         }
         Ok(task.clone())

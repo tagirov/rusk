@@ -37,7 +37,7 @@ use std::path::Path;
 /// format: Windows editors and spreadsheets put one in front of the file
 /// they save, and the database they saved is still a database. Stripped
 /// here, once, for every format — decoders never see one.
-fn content(data: &str) -> &str {
+pub(crate) fn content(data: &str) -> &str {
     data.trim_start_matches('\u{feff}')
 }
 

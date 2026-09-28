@@ -330,7 +330,12 @@ file reads. A file without tables is an empty database; one with tables but
 no `tasks` is another program's and is refused on read and on write. The
 save that needs it brings an older table up to date inside its transaction
 (`after` added; the one-byte `CHECK (id BETWEEN 1 AND 255)` table made anew,
-its rows being replaced right after anyway). Every connection sets
+its rows being replaced right after anyway) and marks the header: the
+`application_id` is "rusk" in ASCII, `user_version` the schema of `SCHEMA`
+(1). A file whose header names another application, or a later schema, is
+refused on read and on write; one without an application id is taken on its
+tables (an older rusk wrote none), and a `user_version` somebody set without
+one is left as it is. Every connection sets
 `secure_delete`, so a deleted text is overwritten in the file and in every
 copy made of it; a save that leaves a quarter of the file free runs a
 `VACUUM`, skipped at once when another process is reading.
@@ -504,10 +509,13 @@ restore from it) — whichever call happened to hit it.
 
 Task ids are `u32` (`TaskId` in `model.rs`): the smallest free id is reused.
 A task may list other task ids in `after` (`--after`): the dependencies are
-shown after the text as `(19,22)` and are stripped automatically when the
-referenced tasks are deleted — and, for lists edited outside rusk, when they
-are read (see Persistence). The ordering is advisory — a hint for agents
-and tooling (`TaskManager::unfinished_deps`); `rusk mark` is never blocked.
+shown after the text as `(19,22)` and are stripped when the referenced
+tasks are deleted — `rusk del` names the dependents in its question and says
+whose lists it changed (`storage::strip_deps` returns them) — and, for lists
+edited outside rusk, when they are read (see Persistence). A list is a set:
+the same ids in another order are no change (`storage::deps_change`). The
+ordering is advisory — a hint for agents and tooling; `rusk mark` is never
+blocked.
 
 ## Output
 

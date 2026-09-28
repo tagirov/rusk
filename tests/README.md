@@ -27,7 +27,7 @@ tests/
 ├── persistence_tests.rs            # Data persistence and save/load tests
 ├── restore_tests.rs                # Backup restore functionality tests
 ├── review_urgent_tests.rs          # Regression tests for the urgent REVIEW.md fixes (№1, №6, №7, №154, №161)
-├── review_known_bugs.rs            # REVIEW.md repros by refactor cluster: #[ignore]d while open, regressions once closed (R1–R26)
+├── review_known_bugs.rs            # REVIEW.md repros by refactor cluster: #[ignore]d while open, regressions once closed (R1–R27)
 ├── unchanged_detection_tests.rs    # Unchanged task detection tests
 ├── web_tests.rs                    # `rusk serve` over HTTP: pages, the API, auth, sync against it
 └── completions.rs                  # Completion test entry point (tests/completions/rust/)
@@ -347,6 +347,12 @@ These tests are designed to run in CI/CD pipelines:
   prints anything while completing fails it (see tests/completions/README.md).
   `r26_rusk_db_names_a_served_database` runs under `cargo test --release`
   only, like `r25_a_release_binary_is_never_in_test_mode`.
+  R27 onwards close the leads of REVIEW.md section 4. R27's pure parts are
+  unit-tested where they live: the dependency set and what a deletion takes
+  off the lists in `src/storage.rs`, the painting of many search matches in
+  `src/cli/formatter.rs`, the files that belong to a database in
+  `src/backend/mod.rs`; `r27_the_delete_question_names_who_depends_on_the_task`
+  drives the `del` prompt in a pty.
   R25's config parser is unit-tested in `src/config.rs` (comments, quotes,
   bytes, `default`, the template), the date parser in `src/parser/date.rs`
   (the shape and range of a year, months first), stored dates outside the

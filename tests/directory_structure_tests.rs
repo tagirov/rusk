@@ -10,7 +10,8 @@ use common::create_test_task;
 fn test_default_directory_structure() -> Result<()> {
     // Test mode pins the path regardless of RUSK_DB, so the process
     // environment is left alone (mutating it races with parallel tests).
-    let db_path = TaskManager::resolve_db_path();
+    let backend = rusk::Backend::resolve()?;
+    let db_path = backend.local_path().expect("a local database").to_path_buf();
 
     // In test mode, should use /tmp/rusk_debug/tasks.json (same as debug mode)
     assert!(db_path.file_name().unwrap() == "tasks.json");

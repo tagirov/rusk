@@ -235,8 +235,21 @@ impl FileBackend {
             // "restore from backup".)
             if self.format == DbFormat::Json
                 && reading == Reading::Database
-                && let Some(json_err) = e.downcast_ref::<serde_json::Error>()
+                && let Some(decode_err) = e.downcast_ref::<serde_json::Error>()
             {
+                // serde_json stops at the first thing that is not a task
+                // list — the `{` of an object, before it has seen whether
+                // the object is well-formed — and calls that a wrong value.
+                // Whether the file is JSON at all is asked on its own, of
+                // what the decoder read: the file after a BOM.
+                let syntax_err = match decode_err.classify() {
+                    serde_json::error::Category::Data => {
+                        serde_json::from_str::<serde::de::IgnoredAny>(crate::codec::content(data))
+                            .err()
+                    }
+                    _ => None,
+                };
+                let json_err = syntax_err.as_ref().unwrap_or(decode_err);
                 let context_line = json_error_line_context(data, json_err)
                     .map(|c| format!(" Context: {c}"))
                     .unwrap_or_default();

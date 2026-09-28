@@ -274,7 +274,30 @@ sync_token = <the web_token of that server>
   `$XDG_RUNTIME_DIR` when there is one, else the temp directory) and removed
   after it — not on its command line, which `ps` shows every user. A Ctrl+C
   while curl runs leaves the file; the next request removes it.
-  `https://host/` and `https://host` are the same remote.
+  `https://host/` and `https://host` are the same remote. A `user:password@`
+  in the URL is basic authentication (for a reverse proxy that asks for it):
+  it reaches curl the same way, in a file, and rusk names the remote with
+  the user alone — in what it prints, in the sync state, and in an error
+  that quotes a value it refuses. With a token as well, the credentials go
+  in `Authorization` for the proxy and the token in the session cookie for
+  `rusk serve` behind it. curl reads no `~/.curlrc` (an `-o` or `-L` there
+  would change what rusk reads back); a proxy is taken from the environment
+  (`https_proxy`, `ALL_PROXY`, `NO_PROXY`), a CA bundle from
+  `CURL_CA_BUNDLE` or `SSL_CERT_FILE`, and anything else — a client
+  certificate, `resolve` — from a curl config file named in
+  `RUSK_CURL_CONFIG` (`curl -K`; rusk's own options come after it and win).
+  curl gives up on a connection that takes more than 30 s, on a transfer
+  that moves nothing for 30 s, and on any transfer after 10 minutes; a slow
+  one that keeps moving runs to its end within that.
+- **A server that is its own database** — its `rusk_db` names the address
+  it serves on, or that of another server whose database it is — answers
+  `508` with a message saying so, at once: each request a server makes to
+  reach its database names the servers it came through (`X-Rusk-Serve`).
+- **After `rusk restore`** of a database that is synced with the configured
+  remote, rusk says what that means when the restored tasks are not what
+  the last sync left here: the next `rusk sync` takes them for a change made
+  here and sends them to the remote, unless the remote has changed too.
+  `rusk sync pull --force` takes the remote's tasks back instead.
 
 ### Conflict detection
 

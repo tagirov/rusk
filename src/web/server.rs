@@ -367,7 +367,54 @@ fn authorized(request: &Request, token: &str) -> bool {
         .any(|presented| token_eq(presented, token))
 }
 
+/// The servers a request came through, by the ids of its
+/// `X-Rusk-Serve` header (see `crate::SERVE_ID`).
+fn serves_of(request: &Request) -> Vec<String> {
+    header_value(request, crate::SERVE_ID_HEADER)
+        .map(|chain| {
+            chain
+                .split(',')
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Keeps the servers of the request this thread answers in
+/// `crate::SERVE_VIA` while it is answered, for the requests it makes.
+struct Via;
+
+impl Via {
+    fn set(serves: Vec<String>) -> Self {
+        crate::SERVE_VIA.with(|via| *via.borrow_mut() = serves);
+        Via
+    }
+}
+
+impl Drop for Via {
+    fn drop(&mut self) {
+        crate::SERVE_VIA.with(|via| via.borrow_mut().clear());
+    }
+}
+
 fn route(request: &mut Request, opts: &ServeOptions) -> Reply {
+    // A request that has come through this server already: made by it to
+    // reach its database, directly or through another server whose
+    // database this one is. Answering it would wait for the answer to
+    // itself (see `crate::SERVE_ID`). Before anything else, the token too:
+    // the answer says nothing of the tasks.
+    let serves = serves_of(request);
+    if crate::SERVE_ID.get().is_some_and(|id| serves.contains(id)) {
+        return Reply::json_error(
+            508,
+            "this rusk serve is its own database: rusk_db / RUSK_DB names the address it \
+             serves on, or that of a server whose database it is — point it at the database \
+             file instead",
+        );
+    }
+    let _via = Via::set(serves);
     let url = request.url().to_string();
     let (path, query) = url.split_once('?').unwrap_or((url.as_str(), ""));
     // HEAD is GET without the body (tiny_http leaves it out): uptime checks
@@ -575,6 +622,7 @@ pub fn run(opts: ServeOptions) -> Result<()> {
         );
     }
 
+    let _ = crate::SERVE_ID.set(format!("{:016x}", crate::atomic::unique()));
     let host = bind_host(&opts.host);
     let server = match host.parse::<IpAddr>() {
         Ok(ip) => Server::http(SocketAddr::new(ip, opts.port)),
@@ -691,6 +739,28 @@ mod tests {
         assert_eq!(bind_host("LOCALHOST"), "127.0.0.1");
         assert_eq!(bind_host("localhost."), "127.0.0.1");
         assert_eq!(bind_host("0.0.0.0"), "0.0.0.0");
+    }
+
+    /// REVIEW section 4: a server whose database is its own address waited
+    /// on itself for every request. Its own requests say whose they are,
+    /// and are answered at once, before the token is looked at.
+    #[test]
+    fn a_request_of_this_server_itself_is_told_at_once() {
+        let _ = crate::SERVE_ID.set("00000000c0ffee00".into());
+        let id = crate::SERVE_ID.get().unwrap().clone();
+        let own = TestRequest::new().with_path("/api/tasks").with_header(header(crate::SERVE_ID_HEADER, &id));
+        let reply = reply_to(own, &with_token(Some("tok")));
+        assert_eq!(reply.status, 508);
+        assert!(reply.body.contains("its own database"), "{}", reply.body);
+        // Another server's is a request like any other.
+        let other = TestRequest::new().with_path("/api/tasks").with_header(header(crate::SERVE_ID_HEADER, "ffff"));
+        assert_eq!(reply_to(other, &with_token(Some("tok"))).status, 401);
+        // One that has come through this server by way of another (review
+        // of R28: two servers, each the other's database).
+        let round = TestRequest::new()
+            .with_path("/api/tasks")
+            .with_header(header(crate::SERVE_ID_HEADER, &format!("ffff, {id}")));
+        assert_eq!(reply_to(round, &with_token(Some("tok"))).status, 508);
     }
 
     #[test]

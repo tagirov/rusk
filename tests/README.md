@@ -27,7 +27,7 @@ tests/
 ├── persistence_tests.rs            # Data persistence and save/load tests
 ├── restore_tests.rs                # Backup restore functionality tests
 ├── review_urgent_tests.rs          # Regression tests for the urgent REVIEW.md fixes (№1, №6, №7, №154, №161)
-├── review_known_bugs.rs            # REVIEW.md repros by refactor cluster: #[ignore]d while open, regressions once closed (R1–R27)
+├── review_known_bugs.rs            # REVIEW.md repros by refactor cluster: #[ignore]d while open, regressions once closed (R1–R28)
 ├── unchanged_detection_tests.rs    # Unchanged task detection tests
 ├── web_tests.rs                    # `rusk serve` over HTTP: pages, the API, auth, sync against it
 └── completions.rs                  # Completion test entry point (tests/completions/rust/)
@@ -352,7 +352,12 @@ These tests are designed to run in CI/CD pipelines:
   off the lists in `src/storage.rs`, the painting of many search matches in
   `src/cli/formatter.rs`, the files that belong to a database in
   `src/backend/mod.rs`; `r27_the_delete_question_names_who_depends_on_the_task`
-  drives the `del` prompt in a pty.
+  drives the `del` prompt in a pty. R28's http side runs through a fake
+  `curl` that logs its arguments and header files, and a real one with a
+  `~/.curlrc` of the test's own; `r28_a_server_that_is_its_own_database_says_so`
+  runs under `cargo test --release` only; the URL's credentials are
+  unit-tested in `src/backend/http.rs`, a quoted URL in `src/location.rs`,
+  the answer to a server's own request in `src/web/server.rs`.
   R25's config parser is unit-tested in `src/config.rs` (comments, quotes,
   bytes, `default`, the template), the date parser in `src/parser/date.rs`
   (the shape and range of a year, months first), stored dates outside the

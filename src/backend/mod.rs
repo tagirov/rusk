@@ -244,13 +244,13 @@ impl Backend {
             Self::from_local_path(path)
         } else if let Some(value) = std::env::var_os("RUSK_DB").filter(|v| !v.is_empty()) {
             let location = Location::parse_os(&value).with_context(|| {
-                format!("invalid RUSK_DB '{}'", crate::printable::escape(&value.to_string_lossy()))
+                format!("invalid RUSK_DB '{}'", crate::location::shown(&value.to_string_lossy()))
             })?;
             Self::at(location)
         } else if let Some(value) = &crate::config::config().rusk_db {
             // `rusk_db` from the config file; the RUSK_DB env var wins above.
             let location = Location::parse(value).with_context(|| {
-                format!("invalid rusk_db '{}' in the config file", crate::printable::escape(value))
+                format!("invalid rusk_db '{}' in the config file", crate::location::shown(value))
             })?;
             Self::at(location)
         } else {
@@ -278,8 +278,9 @@ impl Backend {
             }
             #[cfg(not(feature = "backend-http"))]
             Location::Http(url) => bail!(
-                "'{url}' is an http(s) database location; this rusk build \
-                 does not include it — rebuild with `--features backend-http`"
+                "'{}' is an http(s) database location; this rusk build \
+                 does not include it — rebuild with `--features backend-http`",
+                crate::location::shown(&url)
             ),
             #[cfg(feature = "backend-ssh")]
             Location::Ssh(ssh) => {

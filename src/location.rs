@@ -168,6 +168,36 @@ fn host_colon(value: &str) -> Option<usize> {
     if in_brackets { value.find(':') } else { None }
 }
 
+/// `value` as an error message may quote it: control characters escaped,
+/// and the password of anything that looks like a URL — valid or not, any
+/// scheme, one slash or two, spaces in front — is `***` (the user stays:
+/// it tells which account is meant). A value is quoted because it is
+/// wrong, so the password is taken to run to the last `@`: a `/`, `?` or
+/// `#` in it is no end (review of R28). Masking a little too much is fine.
+pub fn shown(value: &str) -> String {
+    let escaped = crate::printable::escape(value).into_owned();
+    let trimmed = escaped.trim_start();
+    let lead = &escaped[..escaped.len() - trimmed.len()];
+    let Some((scheme, rest)) = trimmed.split_once(':') else {
+        return escaped;
+    };
+    let is_scheme = scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+        && scheme.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'));
+    let after = rest.trim_start_matches('/');
+    let slashes = &rest[..rest.len() - after.len()];
+    // No slash: `user@host:path`, the form ssh reads, which has no password.
+    if !is_scheme || slashes.is_empty() {
+        return escaped;
+    }
+    let Some((userinfo, host)) = after.rsplit_once('@') else {
+        return escaped;
+    };
+    match userinfo.split_once(':') {
+        Some((user, _)) if !user.contains('/') => format!("{lead}{scheme}:{slashes}{user}:***@{host}"),
+        _ => escaped,
+    }
+}
+
 fn http(scheme: &str, rest: &str) -> Result<String> {
     if rest.chars().any(|c| c.is_whitespace() || c.is_control()) {
         bail!("a URL cannot contain spaces");
@@ -196,6 +226,21 @@ fn http(scheme: &str, rest: &str) -> Result<String> {
         .map_or(authority, |(_, host)| host);
     if host.is_empty() || host.starts_with(':') {
         bail!("the URL names no host");
+    }
+    // A port is a number: `http://alex:pw/x@host` — a `/` in a password —
+    // reads as the host `alex` on the port `pw` (review of R28).
+    let port = match host.strip_prefix('[') {
+        Some(inner) => inner.split_once(']').and_then(|(_, rest)| rest.strip_prefix(':')),
+        None => host.split_once(':').map(|(_, port)| port),
+    };
+    if let Some(port) = port
+        && !port.is_empty()
+        && !(port.bytes().all(|b| b.is_ascii_digit()) && port.parse::<u16>().is_ok())
+    {
+        bail!(
+            "the port of a URL is a number from 0 to 65535 (a `/` or `@` in a password is \
+             written %2F or %40)"
+        );
     }
     Ok(format!("{scheme}://{rest}"))
 }
@@ -313,6 +358,35 @@ mod tests {
         match parse(value) {
             Location::Local(path) => path,
             other => panic!("{value} was read as {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_quoted_url_hides_its_password() {
+        assert_eq!(shown("https://alex:s3cret@host/x y"), "https://alex:***@host/x y");
+        assert_eq!(shown("HTTP://alex:s3cret@host"), "HTTP://alex:***@host");
+        assert_eq!(shown("http://alex@host"), "http://alex@host");
+        assert_eq!(shown("http://host/a:b@c"), "http://host/a:b@c");
+        assert_eq!(shown("user:pw@host:/srv/tasks.json"), "user:pw@host:/srv/tasks.json");
+        // Review of R28: whatever looks like a URL, valid or not.
+        assert_eq!(shown("sftp://alex:s3cret@host/tasks.json"), "sftp://alex:***@host/tasks.json");
+        assert_eq!(shown("https:/alex:s3cret@host"), "https:/alex:***@host");
+        assert_eq!(shown(" http://alex:s3cret@host"), " http://alex:***@host");
+        assert_eq!(shown("http://alex:s3#cr?et@host"), "http://alex:***@host");
+        assert_eq!(shown("http://alex:s3/cret@127.0.0.1:9"), "http://alex:***@127.0.0.1:9");
+        assert_eq!(shown("C:/Users/x@y"), "C:/Users/x@y");
+    }
+
+    /// Review of R28: `http://alex:pw/x@host` was taken, as the host
+    /// `alex` on the port `pw/x@host`'s `pw`.
+    #[test]
+    fn a_port_is_a_number() {
+        for bad in ["http://alex:se/cret@127.0.0.1:9", "http://host:http", "http://host:70000", "http://[::1]:x"] {
+            let err = format!("{:#}", Location::parse(bad).unwrap_err());
+            assert!(err.contains("the port of a URL is a number"), "{bad}: {err}");
+        }
+        for good in ["http://host:7272", "http://[::1]:7272", "http://u:p@host:1", "http://host:"] {
+            assert!(Location::parse(good).is_ok(), "{good}");
         }
     }
 

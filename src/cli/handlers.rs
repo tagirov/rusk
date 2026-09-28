@@ -841,7 +841,12 @@ impl HandlerCLI {
     }
 
     pub fn handle_restore(tm: &mut TaskManager) -> Result<()> {
-        tm.restore_from_backup()
+        tm.restore_from_backup()?;
+        #[cfg(feature = "sync")]
+        if let Some(note) = tm.local_path().and_then(|db| crate::sync::note_after_restore(db, tm.tasks())) {
+            outln!("{}", theme().notice.paint(&note))?;
+        }
+        Ok(())
     }
 
     #[cfg(feature = "interactive")]

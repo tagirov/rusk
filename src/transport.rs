@@ -312,8 +312,9 @@ struct HeaderFile(std::path::PathBuf);
 const STALE_HEADER_FILE: std::time::Duration = std::time::Duration::from_secs(600);
 
 impl HeaderFile {
-    fn new(header: &str) -> Result<Self> {
-        if header.contains(['\r', '\n']) {
+    /// A file of these header lines.
+    fn new(headers: &[String]) -> Result<Self> {
+        if headers.iter().any(|header| header.contains(['\r', '\n'])) {
             bail!("a token for the http location must not contain a line break");
         }
         let dir = Self::dir();
@@ -330,8 +331,8 @@ impl HeaderFile {
             .open(&path)
             .with_context(|| format!("failed to create '{}' for curl", path.display()))?;
         let created = Self(path);
-        file.write_all(header.as_bytes())
-            .and_then(|()| file.write_all(b"\n"))
+        let text: String = headers.iter().map(|header| format!("{header}\n")).collect();
+        file.write_all(text.as_bytes())
             .with_context(|| format!("failed to write '{}' for curl", created.0.display()))?;
         Ok(created)
     }
@@ -384,22 +385,86 @@ impl Drop for HeaderFile {
     }
 }
 
+/// Who a request comes from.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct Auth {
+    /// `db_token` / `sync_token`: the `web_token` of a `rusk serve`.
+    pub token: Option<String>,
+    /// `user:password` from the URL, percent-decoded: for a reverse proxy
+    /// in front of the server that asks for basic authentication.
+    pub basic: Option<Vec<u8>>,
+}
+
+impl Auth {
+    /// The headers that say it. The credentials go in `Authorization`, and
+    /// the token too when it is alone; with both, the token goes in the
+    /// session cookie `rusk serve` takes as well, since a request has one
+    /// `Authorization` (review of R28: the token replaced the credentials,
+    /// and the proxy refused the request).
+    fn headers(&self) -> Vec<String> {
+        let mut headers = Vec::new();
+        if let Some(credentials) = &self.basic {
+            headers.push(format!("Authorization: Basic {}", crate::base64::encode(credentials)));
+        }
+        match (&self.token, &self.basic) {
+            (Some(token), None) => headers.push(format!("Authorization: Bearer {token}")),
+            (Some(token), Some(_)) => headers.push(format!("Cookie: rusk_token={token}")),
+            (None, _) => {}
+        }
+        headers
+    }
+}
+
+/// Never printed: `{:?}` of a backend must not show a secret.
+impl std::fmt::Debug for Auth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Auth")
+            .field("token", &self.token.as_ref().map(|_| ".."))
+            .field("basic", &self.basic.as_ref().map(|_| ".."))
+            .finish()
+    }
+}
+
+/// How long curl waits for a connection, and for a transfer that moves no
+/// data, before it gives up. A slow transfer that keeps moving is not cut
+/// off: a database of 1 MiB takes long over a poor line (REVIEW section 4).
+const STALL_SECONDS: &str = "30";
+
+/// The longest a transfer may take however it moves: a server that sends a
+/// byte a second, or never stops sending, does not hold rusk — or a
+/// `rusk serve` whose database it is — forever (review of R28).
+const MOST_SECONDS: &str = "600";
+
 /// One curl call. `method` of `None` is a plain GET; a JSON `body` is sent
-/// with the right Content-Type; `token` becomes a Bearer header, handed to
-/// curl in a file; `if_match` makes the request conditional on the server
-/// still holding that `ETag`.
+/// with the right Content-Type; `auth` becomes the `Authorization` header,
+/// handed to curl in a file; `if_match` makes the request conditional on
+/// the server still holding that `ETag`.
+///
+/// curl reads no `~/.curlrc` (`-q`): an `-o`, `-L` or `--fail-with-body`
+/// there would change what rusk reads back. A proxy comes from the
+/// environment as curl reads it there (`https_proxy`, `ALL_PROXY`,
+/// `NO_PROXY`), a CA bundle from `CURL_CA_BUNDLE` / `SSL_CERT_FILE`, and
+/// what else a `~/.curlrc` did — a client certificate, `resolve` — from a
+/// config file named in `RUSK_CURL_CONFIG` (review of R28).
 pub fn http_request(
     url: &str,
     method: Option<&str>,
-    token: Option<&str>,
+    auth: &Auth,
     json_body: Option<&[u8]>,
     if_match: Option<&str>,
 ) -> Result<HttpResponse> {
     let mut cmd = Command::new("curl");
+    // `-q` works only as the first argument. The user's config comes next,
+    // so that the options rusk needs, after it, win over it.
+    cmd.arg("-q");
+    if let Some(config) = std::env::var_os("RUSK_CURL_CONFIG").filter(|v| !v.is_empty()) {
+        cmd.arg("-K").arg(config);
+    }
     // `-i` puts the response headers in front of the body: the status and
     // the ETag are needed, and `-f` would hide both behind an exit code.
     // `-g`: a URL is an address, never a curl glob pattern (`[…]`, `{…}`).
-    cmd.args(["-sS", "-i", "-g", "--max-time", "30"]);
+    cmd.args(["-sS", "-i", "-g", "--connect-timeout", STALL_SECONDS]);
+    cmd.args(["--speed-limit", "1", "--speed-time", STALL_SECONDS, "--max-time", MOST_SECONDS]);
     if let Some(method) = method {
         cmd.args(["-X", method]);
     }
@@ -407,11 +472,17 @@ pub fn http_request(
         cmd.args(["-H", "Content-Type: application/json", "--data-binary", "@-"]);
     }
     // Kept until curl is done with it.
-    let token_file = token
-        .map(|token| HeaderFile::new(&format!("Authorization: Bearer {token}")))
-        .transpose()?;
-    if let Some(file) = &token_file {
+    let headers = auth.headers();
+    let auth_file = (!headers.is_empty()).then(|| HeaderFile::new(&headers)).transpose()?;
+    if let Some(file) = &auth_file {
         cmd.arg("-H").arg(file.arg());
+    }
+    // This server's id, then those of the servers the request it answers
+    // came through (see `crate::SERVE_VIA`).
+    if let Some(id) = crate::SERVE_ID.get() {
+        let via = crate::SERVE_VIA.with(|via| via.borrow().clone());
+        let chain = std::iter::once(id.as_str()).chain(via.iter().map(String::as_str));
+        cmd.args(["-H", &format!("{}: {}", crate::SERVE_ID_HEADER, chain.collect::<Vec<_>>().join(", "))]);
     }
     if let Some(etag) = if_match {
         cmd.args(["-H", &format!("If-Match: \"{etag}\"")]);
@@ -771,7 +842,7 @@ mod tests {
     /// by every local user; it goes in a private file now.
     #[test]
     fn a_header_file_is_private_and_goes_away() {
-        let file = HeaderFile::new("Authorization: Bearer s3cret").unwrap();
+        let file = HeaderFile::new(&["Authorization: Bearer s3cret".to_string()]).unwrap();
         let path = file.0.clone();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "Authorization: Bearer s3cret\n");
         #[cfg(unix)]
@@ -783,7 +854,27 @@ mod tests {
         assert!(file.arg().to_string_lossy().starts_with('@'));
         drop(file);
         assert!(!path.exists());
-        assert!(HeaderFile::new("Authorization: Bearer a\nX-Evil: 1").is_err());
+        assert!(HeaderFile::new(&["Authorization: Bearer a\nX-Evil: 1".to_string()]).is_err());
+    }
+
+    /// Review of R28: a token and the URL's credentials together — a proxy
+    /// that asks for basic authentication in front of a server with a
+    /// token — both reach where they are asked for.
+    #[test]
+    fn a_token_and_credentials_go_together() {
+        let auth = |token: Option<&str>, basic: Option<&[u8]>| Auth {
+            token: token.map(str::to_string),
+            basic: basic.map(<[u8]>::to_vec),
+        };
+        assert_eq!(auth(Some("t"), None).headers(), ["Authorization: Bearer t"]);
+        assert_eq!(auth(None, Some(b"u:p")).headers(), ["Authorization: Basic dTpw"]);
+        assert_eq!(
+            auth(Some("t"), Some(b"u:p")).headers(),
+            ["Authorization: Basic dTpw", "Cookie: rusk_token=t"]
+        );
+        assert!(auth(None, None).headers().is_empty());
+        let shown = format!("{:?}", auth(Some("t0ken"), Some(b"u:pw")));
+        assert!(!shown.contains("t0ken") && !shown.contains("pw"), "{shown}");
     }
 
     /// Review of R21: a Ctrl+C while curl ran left the file with the token.

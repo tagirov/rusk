@@ -1,6 +1,8 @@
 pub mod args;
 pub mod atomic;
 pub mod backend;
+#[cfg(any(feature = "interactive", feature = "backend-http", feature = "backend-ssh"))]
+mod base64;
 pub mod cli;
 pub mod codec;
 #[cfg(feature = "completions")]
@@ -28,6 +30,27 @@ pub mod windows_console;
 pub use backend::{Backend, Loaded, StaleDatabase};
 pub use config::{ColorValue, Config, Theme};
 pub use model::{Task, TaskId};
+
+/// Set by `rusk serve` to a number of its own. Each request it makes to
+/// reach its database names it (see `transport::http_request`), so a server
+/// that is its own database — `rusk_db` names the address it serves on —
+/// is told by the first request instead of waiting on itself.
+#[cfg(any(feature = "web", feature = "backend-http", feature = "backend-ssh"))]
+pub(crate) static SERVE_ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// The header that carries [`SERVE_ID`], and [`SERVE_VIA`] after it.
+#[cfg(any(feature = "web", feature = "backend-http", feature = "backend-ssh"))]
+pub(crate) const SERVE_ID_HEADER: &str = "X-Rusk-Serve";
+
+#[cfg(any(feature = "web", feature = "backend-http", feature = "backend-ssh"))]
+thread_local! {
+    /// The servers the request this thread answers came through: the ids
+    /// of its [`SERVE_ID_HEADER`]. A request this thread makes passes them
+    /// on after its own, so that two servers that are each other's
+    /// database are told too (review of R28).
+    pub(crate) static SERVE_VIA: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
 
 /// Set by the `rusk` command when it starts (see [`is_test_mode`]).
 static COMMAND: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

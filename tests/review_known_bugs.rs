@@ -25,7 +25,8 @@
 // requests, tokens, hosts, headers), R21 (`rusk sync` and the transports),
 // R22 (`git_backend`), R25 (config, dates, environment), R23 (the file
 // formats), R26 (completion scripts, docs, tests, build) — and of the leads
-// of section 4: R27 (CLI, storage, SQLite).
+// of section 4: R27 (CLI, storage, SQLite), R28 (remote databases and
+// `rusk sync`).
 // R6 and R8 need a pty
 // for most of their repros: what Command can drive is here, the draft rules
 // are unit-tested in `src/cli/editor/draft.rs`, and the rest is driven by a
@@ -7118,4 +7119,295 @@ fn r27_a_sqlite_database_says_it_is_rusks() {
     let tasks = backend(&theirs).load().unwrap();
     backend(&theirs).save(&tasks).unwrap();
     assert_eq!(pragmas(&theirs), (0, 42));
+}
+
+// ---------------------------------------------------------------------------
+// R28 — remote databases and `rusk sync`: the leads of REVIEW.md section 4
+// ---------------------------------------------------------------------------
+//
+// The http side runs through a fake `curl` that logs what it was given (as
+// in R21) or a real `rusk serve`; the ssh side through the fake `ssh`. The
+// URL's credentials and a quoted URL are unit-tested in
+// `src/backend/http.rs` and `src/location.rs`, the answer to a server's own
+// request in `src/web/server.rs`.
+
+/// A fake `curl` first in PATH: logs each argument (`arg:`) and the content
+/// of every `-H @file` (`file:`) to the returned log, then answers like
+/// `curl -i` with an empty task list. Returns (PATH, log).
+#[cfg(all(unix, feature = "sync"))]
+fn fake_curl(sb: &Sandbox) -> (std::ffi::OsString, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = sb.path().join("fake-curl");
+    fs::create_dir_all(&bin).unwrap();
+    let log = sb.path().join("curl.log");
+    let script = format!(
+        "#!/bin/sh\nfor a in \"$@\"; do printf 'arg:%s\\n' \"$a\" >> '{log}'; \
+         case \"$a\" in @*) printf 'file:%s\\n' \"$(cat \"${{a#@}}\")\" >> '{log}';; esac; done\n\
+         printf 'HTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\n\\r\\n[]'\n",
+        log = log.display()
+    );
+    let curl = bin.join("curl");
+    fs::write(&curl, script).unwrap();
+    fs::set_permissions(&curl, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = std::env::join_paths(
+        std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+    )
+    .unwrap();
+    (path, log)
+}
+
+/// REVIEW section 4: `http://user:pw@host` went to curl's command line as
+/// it was (readable in `ps`), was printed in `Pushed … to http://user:pw@…`
+/// and was kept in the sync state.
+#[test]
+#[cfg(all(unix, feature = "sync"))]
+fn r28_the_password_of_a_url_stays_out_of_sight() {
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let (path, log) = fake_curl(&sb);
+    let remote = "http://alex:s3cr%40t@127.0.0.1:9";
+    let out = sb
+        .cmd()
+        .env("PATH", &path)
+        .env("RUSK_SYNC_REMOTE", remote)
+        .args(["sync", "push", "--force"])
+        .output()
+        .unwrap();
+    let logged = fs::read_to_string(&log).unwrap_or_else(|_| panic!("curl was not run: {}", stderr_of(&out)));
+    // The URL without them, the credentials in a file as basic auth.
+    assert!(logged.contains("arg:http://127.0.0.1:9/api/tasks"), "{logged}");
+    assert!(!logged.lines().any(|l| l.starts_with("arg:") && l.contains("s3cr")), "{logged}");
+    assert!(logged.contains("file:Authorization: Basic YWxleDpzM2NyQHQ="), "{logged}");
+    // Named with the user alone, in what it says and in the state it keeps.
+    let said = format!("{}{}", stdout_of(&out), stderr_of(&out));
+    assert!(said.contains("http://alex@127.0.0.1:9"), "{said}");
+    assert!(!said.contains("s3cr"), "{said}");
+    let state = fs::read_to_string(sb.db_path().with_file_name("tasks.json.sync")).unwrap();
+    assert!(state.contains("http://alex@127.0.0.1:9") && !state.contains("s3cr"), "{state}");
+
+    // With a token as well, both go: the credentials for the proxy in
+    // front, the token for the server behind it, in its cookie (review of
+    // R28: the token replaced the credentials, and the proxy said 401).
+    fs::remove_file(&log).unwrap();
+    sb.cmd()
+        .env("PATH", &path)
+        .env("RUSK_SYNC_REMOTE", remote)
+        .env("RUSK_SYNC_TOKEN", "tok")
+        .args(["sync", "push", "--force"])
+        .output()
+        .unwrap();
+    let logged = fs::read_to_string(&log).unwrap();
+    assert!(logged.contains("file:Authorization: Basic YWxleDpzM2NyQHQ="), "{logged}");
+    assert!(logged.contains("Cookie: rusk_token=tok"), "{logged}");
+    assert!(!logged.contains("Bearer"), "{logged}");
+
+    // A value that is refused does not quote the password either, however
+    // it is spelled wrong (review of R28); one whose password holds a `/`
+    // is refused rather than taken for a host and a port.
+    for value in [
+        "http://alex:secret@host/?q",
+        "sftp://alex:secret@host/tasks.json",
+        "https:/alex:secret@host",
+        " http://alex:secret@host",
+        "http://alex:se#cret@host",
+        "http://alex:se/cret@127.0.0.1:9",
+    ] {
+        let _ = fs::remove_file(&log);
+        let out = sb.cmd().env("PATH", &path).env("RUSK_SYNC_REMOTE", value).arg("sync").output().unwrap();
+        assert_eq!(out.status.code(), Some(1), "{value}: {}", stdout_of(&out));
+        let err = stderr_of(&out);
+        assert!(!err.contains("cret"), "{value}: {err}");
+        assert!(err.contains("alex:***@"), "{value}: {err}");
+        assert!(!log.exists(), "{value}: curl was run");
+    }
+}
+
+/// REVIEW section 4: curl read the user's `~/.curlrc` — an `-o` there left
+/// rusk nothing to read — and `--max-time 30` cut off any transfer that
+/// took longer, however steadily it moved.
+#[test]
+#[cfg(all(unix, feature = "sync"))]
+fn r28_curl_reads_no_curlrc_and_gives_up_on_a_stall_only() {
+    let sb = Sandbox::new();
+    let (path, log) = fake_curl(&sb);
+    sb.cmd()
+        .env("PATH", &path)
+        .env("RUSK_SYNC_REMOTE", "http://127.0.0.1:9")
+        .args(["sync", "pull", "--force"])
+        .output()
+        .unwrap();
+    let logged = fs::read_to_string(&log).unwrap();
+    let args: Vec<&str> = logged.lines().filter_map(|l| l.strip_prefix("arg:")).collect();
+    assert_eq!(args.first(), Some(&"-q"), "{logged}");
+    assert!(args.windows(2).any(|w| w == ["--speed-time", "30"]), "{logged}");
+    assert!(args.windows(2).any(|w| w == ["--connect-timeout", "30"]), "{logged}");
+    // A backstop for a transfer that never ends (review of R28).
+    assert!(args.windows(2).any(|w| w == ["--max-time", "600"]), "{logged}");
+    assert!(!args.contains(&"-K"), "{logged}");
+
+    // What a `~/.curlrc` did for a client certificate, a file of the
+    // user's choice does, named in RUSK_CURL_CONFIG (review of R28).
+    let config = sb.path().join("curl.conf");
+    fs::remove_file(&log).unwrap();
+    sb.cmd()
+        .env("PATH", &path)
+        .env("RUSK_SYNC_REMOTE", "http://127.0.0.1:9")
+        .env("RUSK_CURL_CONFIG", &config)
+        .args(["sync", "pull", "--force"])
+        .output()
+        .unwrap();
+    let logged = fs::read_to_string(&log).unwrap();
+    let args: Vec<&str> = logged.lines().filter_map(|l| l.strip_prefix("arg:")).collect();
+    assert_eq!(args.first(), Some(&"-q"), "{logged}");
+    let config = config.display().to_string();
+    assert!(args.windows(2).any(|w| w == ["-K", config.as_str()]), "{logged}");
+}
+
+/// The same with the real curl: a `~/.curlrc` that sends the answer to a
+/// file changes nothing.
+#[test]
+#[cfg(all(unix, feature = "sync", feature = "web"))]
+fn r28_a_curlrc_does_not_reach_rusk() {
+    if std::process::Command::new("curl").arg("--version").output().is_err() {
+        eprintln!("skipping r28_a_curlrc_does_not_reach_rusk: curl not found");
+        return;
+    }
+    let served = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&served, "", &[]);
+    let sb = Sandbox::new();
+    let home = sb.path().join("home");
+    let sink = sb.path().join("sink");
+    for rc in [home.join(".curlrc"), home.join(".config").join(".curlrc")] {
+        fs::create_dir_all(rc.parent().unwrap()).unwrap();
+        fs::write(&rc, format!("output = \"{}\"\nfail-with-body\n", sink.display())).unwrap();
+    }
+    let out = sb
+        .cmd()
+        .env("CURL_HOME", &home)
+        .env("RUSK_SYNC_REMOTE", format!("http://127.0.0.1:{}", server.port))
+        .args(["sync", "pull", "--force"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert_eq!(db_tasks(&sb).len(), 3);
+    assert!(!sink.exists(), "curl read the .curlrc");
+}
+
+/// REVIEW section 4: `rusk restore` after a pull put the older tasks back,
+/// and the next plain `rusk sync` took them for a change made here and
+/// pushed them over the remote without a word.
+#[test]
+#[cfg(all(unix, feature = "sync"))]
+fn r28_restore_says_what_the_next_sync_will_do() {
+    let sb = Sandbox::with_db(r#"[{"id":1,"text":"local"}]"#);
+    let (remote_path, remote) = ssh_remote(&sb, "tasks.json");
+    fs::write(&remote_path, r#"[{"id":1,"text":"remote"}]"#).unwrap();
+    let out = sync_with(&sb, &remote, &["pull", "--force"]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    // The remote the next sync goes to is another one, or none: nothing
+    // to say about it (review of R28).
+    for other in [Some("user@elsewhere:/srv/tasks.json"), None] {
+        let mut cmd = sb.cmd_with_fake_ssh();
+        if let Some(other) = other {
+            cmd.env("RUSK_SYNC_REMOTE", other);
+        }
+        // Each restore puts the pulled tasks back first, so that the
+        // one after it restores the older ones again.
+        fs::copy(sb.db_path().with_file_name("tasks.json.backup"), sb.path().join("older")).unwrap();
+        let out = cmd.arg("restore").output().unwrap();
+        assert!(out.status.success(), "{}", stderr_of(&out));
+        assert!(!stdout_of(&out).contains("synced"), "{other:?}: {}", stdout_of(&out));
+        fs::copy(sb.db_path().with_file_name("tasks.json.before_restore"), sb.db_path()).unwrap();
+        fs::copy(sb.path().join("older"), sb.db_path().with_file_name("tasks.json.backup")).unwrap();
+        let _ = fs::remove_file(sb.db_path().with_file_name("tasks.json.before_restore"));
+    }
+    let out = sb.cmd_with_fake_ssh().env("RUSK_SYNC_REMOTE", &remote).arg("restore").output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let said = stdout_of(&out);
+    assert!(said.contains(&format!("this database is synced with {remote}")), "{said}");
+    assert!(said.contains("`rusk sync pull --force`"), "{said}");
+    // Restored to what the last sync left here: the next one sends nothing.
+    let out = sync_with(&sb, &remote, &["pull", "--force"]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    sb.cmd().args(["add", "after the sync"]).output().unwrap();
+    let out = sb.cmd_with_fake_ssh().env("RUSK_SYNC_REMOTE", &remote).arg("restore").output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(!stdout_of(&out).contains("synced"), "{}", stdout_of(&out));
+    assert_eq!(text_of(&db_tasks(&sb), 1), "remote");
+    // Never synced: nothing to say.
+    let lone = Sandbox::with_db(r#"[{"id":1,"text":"a"}]"#);
+    lone.cmd().args(["add", "b"]).output().unwrap();
+    let out = lone.cmd().arg("restore").output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(!stdout_of(&out).contains("synced"), "{}", stdout_of(&out));
+}
+
+/// REVIEW section 4: a `rusk serve` whose own database is its own address
+/// waited 30 s on itself for every request, and each of those waits made
+/// another request to itself. Only a release build takes `RUSK_DB`:
+/// `cargo test --release`.
+#[test]
+#[cfg(all(feature = "web", feature = "backend-http", not(debug_assertions)))]
+fn r28_a_server_that_is_its_own_database_says_so() {
+    use std::io::BufRead;
+    if std::process::Command::new("curl").arg("--version").output().is_err() {
+        eprintln!("skipping r28_a_server_that_is_its_own_database_says_so: curl not found");
+        return;
+    }
+    let sb = Sandbox::new();
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let mut child = sb
+        .cmd()
+        .env("RUSK_DB", format!("http://127.0.0.1:{port}"))
+        .args(["serve", "--port", &port.to_string()])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut out = std::io::BufReader::new(child.stdout.take().unwrap());
+    let mut line = String::new();
+    out.read_line(&mut line).unwrap();
+    let started = std::time::Instant::now();
+    let answer = std::process::Command::new("curl")
+        .args(["-sS", "-m", "20", &format!("http://127.0.0.1:{port}/api/tasks")])
+        .output()
+        .unwrap();
+    let _ = child.kill();
+    let _ = child.wait();
+    let body = String::from_utf8_lossy(&answer.stdout);
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "{:?}", started.elapsed());
+    assert!(body.contains("its own database"), "{body}");
+
+    // Two servers, each the other's database (review of R28): the second
+    // request of the round is told as well.
+    let ports: Vec<u16> = (0..2)
+        .map(|_| std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port())
+        .collect();
+    let mut servers: Vec<std::process::Child> = (0..2)
+        .map(|i| {
+            let mut child = sb
+                .cmd()
+                .env("RUSK_DB", format!("http://127.0.0.1:{}", ports[1 - i]))
+                .args(["serve", "--port", &ports[i].to_string()])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            let mut out = std::io::BufReader::new(child.stdout.take().unwrap());
+            out.read_line(&mut String::new()).unwrap();
+            std::mem::forget(out);
+            child
+        })
+        .collect();
+    let started = std::time::Instant::now();
+    let answer = std::process::Command::new("curl")
+        .args(["-sS", "-m", "20", &format!("http://127.0.0.1:{}/api/tasks", ports[0])])
+        .output()
+        .unwrap();
+    for server in &mut servers {
+        let _ = server.kill();
+        let _ = server.wait();
+    }
+    let body = String::from_utf8_lossy(&answer.stdout);
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "{:?}", started.elapsed());
+    assert!(body.contains("its own database"), "{body}");
 }

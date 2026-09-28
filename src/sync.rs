@@ -51,7 +51,7 @@ impl Remote {
     /// The token is asked for only when the remote is a server.
     fn parse(s: &str, token: impl FnOnce() -> Result<Option<String>>) -> Result<Self> {
         let location = Location::parse(s).with_context(|| {
-            format!("invalid sync remote '{}'", crate::printable::escape(s))
+            format!("invalid sync remote '{}'", crate::location::shown(s))
         })?;
         match location {
             Location::Http(url) => Ok(Remote::Http(HttpBackend::new(&url, token()?))),
@@ -59,7 +59,7 @@ impl Remote {
             Location::Local(_) => bail!(
                 "invalid sync remote '{}': expected `user@host:/path/tasks.json` (ssh) \
                  or `https://host` (rusk serve API)",
-                crate::printable::escape(s)
+                crate::location::shown(s)
             ),
         }
     }
@@ -271,7 +271,7 @@ fn read_history(state_path: &Path, remote: &str) -> History {
         return History::Unusable(format!(
             "the sync state '{}' is for another remote, {}",
             state_path.display(),
-            crate::printable::escape(&state.remote)
+            crate::location::shown(&state.remote)
         ));
     }
     match (state.local_hash, state.remote_hash, state.hash) {
@@ -279,6 +279,32 @@ fn read_history(state_path: &Path, remote: &str) -> History {
         (_, _, Some(hash)) => History::Synced(Base { local: hash.clone(), remote: hash }),
         _ => unreadable(),
     }
+}
+
+/// What `rusk restore` has to add when the database it restored, now
+/// holding `restored`, is synced with the remote the next `rusk sync` goes
+/// to: the restored tasks are not what the last sync left here, so that
+/// sync takes them for a change made here — and sends them on, replacing
+/// what the remote holds. Nothing to add for another remote, or none, or
+/// when the restored tasks are what the last sync left (review of R28).
+pub fn note_after_restore(db_path: &Path, restored: &[Task]) -> Option<String> {
+    let data = std::fs::read_to_string(state_path(db_path)).ok()?;
+    let state = serde_json::from_str::<SyncState>(&data).ok()?;
+    let config = crate::config::config();
+    let configured = crate::config::env_or_config("RUSK_SYNC_REMOTE", &config.sync_remote).ok()??;
+    let remote = remote_key(&configured)?;
+    if state.remote != remote && remote_key(&state.remote).as_deref() != Some(remote.as_str()) {
+        return None;
+    }
+    let left_here = state.local_hash.as_ref().or(state.hash.as_ref())?;
+    if canonical_hash(restored).ok()? == *left_here {
+        return None;
+    }
+    Some(format!(
+        "Note: this database is synced with {remote}. The next `rusk sync` takes the restored \
+         tasks for a change made here and sends them there, unless the remote has changed too; \
+         `rusk sync pull --force` takes the remote's tasks back instead."
+    ))
 }
 
 /// Records `base` as the state after a sync with `remote`. A failure is

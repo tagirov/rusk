@@ -249,7 +249,9 @@ User input → clap (args.rs) → main.rs (config::load → init) dispatch
     → TaskManager (storage.rs) → Backend (backend/)
         file:   codec (by extension) ←→ local file (+ optional git commit)
         sqlite: rusqlite ←→ .db file
-        http:   curl ←→ GET/PUT /api/tasks of a running rusk serve
+        http:   curl ←→ GET/PUT /api/tasks of a running rusk serve (`curl -q`: no ~/.curlrc;
+                a stall of 30 s ends it, a slow transfer does not; the `Authorization`
+                header — a token, or the URL's `user:password` — in a private file)
         ssh:    ssh ←→ remote file (codec by remote extension)
     → formatter/editor/dialogs → output (out!/outln!) → stdout (colors from config::theme;
       task text through printable::escape first, so a control character in it is shown,
@@ -261,7 +263,10 @@ rusk serve: browser ←→ tiny_http (web/server.rs), each request read, checked
     api.rs handlers → fresh TaskManager per request, one request at a time
     (`server::DATABASE`: an ssh database has no lock of its own) ←→ database (and the writer
     lock against CLI commands). An unread body is thrown away by its thread (up to 1 MiB)
-    or one at a time (`server::DRAIN`): tiny_http buffers what is left of it whole
+    or one at a time (`server::DRAIN`): tiny_http buffers what is left of it whole. A
+    request the server makes to reach an http database carries `X-Rusk-Serve: <its id>`
+    (`crate::SERVE_ID`): one that comes back to the server itself — its `rusk_db` names
+    its own address — is answered 508 at once, before anything else
 
 rusk sync: sync.rs → the ssh/http backends as transports
     → conflict check: each side vs what the .sync state file says it held after the last

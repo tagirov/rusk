@@ -124,6 +124,11 @@ fn root_after_long_help() -> String {
     ));
     if cfg!(feature = "backend-http") {
         help.push_str(&env_entry("RUSK_DB_TOKEN", "Optional Bearer token for http(s) database locations."));
+        help.push_str(&env_entry(
+            "RUSK_CURL_CONFIG",
+            "Optional curl config file (`curl -K`) for http(s) locations and sync remotes, e.g. a \
+             client certificate; ~/.curlrc is not read.",
+        ));
     }
     help.push_str(&env_entry(
         "RUSK_CONFIG",

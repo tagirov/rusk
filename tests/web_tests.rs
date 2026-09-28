@@ -6,7 +6,7 @@
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::time::Duration;
 
 mod common;
@@ -355,7 +355,7 @@ fn test_serve_if_match_refuses_changes_to_what_the_client_has_not_seen() {
 #[test]
 #[cfg(feature = "backend-http")]
 fn test_http_backend_does_not_overwrite_concurrent_changes() {
-    if Command::new("curl").arg("--version").output().is_err() {
+    if std::process::Command::new("curl").arg("--version").output().is_err() {
         eprintln!("skipping test_http_backend_does_not_overwrite_concurrent_changes: curl not found");
         return;
     }
@@ -486,7 +486,7 @@ fn test_gen_static_page() {
 #[cfg(feature = "sync")]
 fn test_sync_http_roundtrip() {
     let sb = common::Sandbox::new();
-    if Command::new("curl").arg("--version").output().is_err() {
+    if std::process::Command::new("curl").arg("--version").output().is_err() {
         eprintln!("skipping test_sync_http_roundtrip: curl not found");
         return;
     }

@@ -326,7 +326,11 @@ rusk restore
 #    (with `git_backend` as a commit of its own); SQLite inside a transaction
 ```
 `restore` shows when the backup was saved, and warns when it is much older
-than the database (`backup = false`, or the file was edited by hand).
+than the database (`backup = false`, or the file was edited by hand). For a
+database synced with the configured remote it adds what the next `rusk sync`
+will do, when the restored tasks are not what the last sync left: send them
+there, as a change made here (`rusk sync pull --force` takes the remote's
+back instead).
 
 
 ## Aliases
@@ -570,7 +574,13 @@ git_backend = true                      # commit every save of a local file data
   it fetches the list again and applies its change to that (both sides need
   a rusk with this feature; an older server is written unconditionally).
   Requires the network and the server to be up; for offline-first use
-  `rusk sync` instead.
+  `rusk sync` instead. A `user:password@` in the URL is basic authentication
+  for a reverse proxy that asks for it; the password never shows in what
+  rusk prints (curl gets it in a file, and reads no `~/.curlrc`: proxy
+  settings come from the environment, a client certificate from
+  `RUSK_CURL_CONFIG`, see [WEB.md](WEB.md#rusk-sync)). A `rusk serve` whose
+  `rusk_db` names its own address — or a server whose database it is —
+  says so on the first request instead of waiting on itself.
 - **ssh** reads/writes the remote file over the system `ssh` (keys, agent
   and `~/.ssh/config` apply); the location is `[user@]host:path` as `scp`
   reads it (`~/` is the remote home directory, IPv6 goes in brackets:

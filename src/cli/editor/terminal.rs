@@ -259,9 +259,9 @@ const HELP_ROWS: &[HelpRow] = &[
     HelpRow::Pair("Backspace / Delete", "delete char or selection"),
     HelpRow::Pair("Ctrl+W, Ctrl+Backspace", "delete word to the left"),
     HelpRow::Pair("Ctrl+Delete", "delete word to the right"),
-    HelpRow::Pair("Ctrl+K", "kill to end of line"),
-    HelpRow::Pair("Ctrl+Shift+K", "delete line (if the terminal tells it apart)"),
-    HelpRow::Pair("Ctrl+U", "kill to beginning of line"),
+    HelpRow::Pair("Ctrl+K", "kill to end of line / selection"),
+    HelpRow::Pair("Ctrl+Shift+K", "delete lines (if the terminal tells it apart)"),
+    HelpRow::Pair("Ctrl+U", "kill to beginning of line / selection"),
     HelpRow::Pair("Ctrl+R", "restore original text"),
     HelpRow::Blank,
     HelpRow::Section("Clipboard & History"),
@@ -272,7 +272,7 @@ const HELP_ROWS: &[HelpRow] = &[
     HelpRow::Pair("Click / drag", "move cursor / extend selection"),
     HelpRow::Pair("Double-click", "select word"),
     HelpRow::Pair("Triple-click", "select line"),
-    HelpRow::Pair("Shift + click", "extend selection to click point"),
+    HelpRow::Pair("Shift + click", "extend selection (if the terminal passes it on)"),
     HelpRow::Pair("Middle-click", "paste at cursor"),
     HelpRow::Pair("Wheel", "scroll view"),
     HelpRow::Blank,
@@ -508,6 +508,11 @@ pub(super) enum Discard {
     /// same way out — the buffer is kept as a draft, the terminal is put
     /// back by the guard.
     Abort,
+    /// The window changed size while the question was up: the editor is
+    /// drawn again for the new size, and the question asked again (REVIEW
+    /// section 4: it stayed where the old size had put it, out of sight
+    /// after a shrink).
+    Resized,
 }
 
 /// Overlay "Discard changes? [y/N]". When `dialog_row` is `Some(r)`, the prompt is on row `r`
@@ -536,21 +541,28 @@ pub(super) fn confirm_discard(stdout: &mut io::Stdout, dialog_row: Option<u16>) 
             // takes it over on the next pass and keeps the buffer.
             return Ok(Discard::No);
         };
-        if let Event::Key(KeyEvent {
-            code,
-            kind,
-            modifiers,
-            ..
-        }) = event
-        {
-            if kind != KeyEventKind::Press {
-                continue;
+        match event {
+            Event::Resize(..) => return Ok(Discard::Resized),
+            Event::Key(KeyEvent {
+                code,
+                kind,
+                modifiers,
+                ..
+            }) => {
+                if kind != KeyEventKind::Press {
+                    continue;
+                }
+                // Ctrl+Y is redo, and neither it nor Alt+Y is the `y` that
+                // discards (REVIEW section 4).
+                return Ok(match (code, modifiers) {
+                    (KeyCode::Char('y' | 'Y'), m) if super::super::dialogs::is_bare(m) => {
+                        Discard::Yes
+                    }
+                    (KeyCode::Char('c'), KeyModifiers::CONTROL) => Discard::Abort,
+                    _ => Discard::No,
+                });
             }
-            match (code, modifiers) {
-                (KeyCode::Char('y') | KeyCode::Char('Y'), _) => return Ok(Discard::Yes),
-                (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Ok(Discard::Abort),
-                _ => return Ok(Discard::No),
-            }
+            _ => {}
         }
     }
 }

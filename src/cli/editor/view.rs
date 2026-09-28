@@ -6,7 +6,7 @@ use colored::*;
 use crossterm::{
     QueueableCommand,
     cursor::{Hide, MoveTo, Show},
-    style::Print,
+    style::{Attribute, Print, SetAttribute},
     terminal::{Clear, ClearType, size},
 };
 use std::io::{self, Write};
@@ -301,8 +301,18 @@ pub(super) fn soft_vertical_move(
     (*buf_idx, range.start + in_chunk)
 }
 
-/// Print one visual chunk with selection + optional validation colors and
-/// a bold date highlight (green, or red if the leading date is before today) on the first line.
+/// Selected text, in reverse video. Not through `colored`: with colors
+/// off (`NO_COLOR`) it prints no attribute at all, and the selection was
+/// not to be seen (found in passing in R30). Reverse video is no color.
+fn print_selected(stdout: &mut io::Stdout, text: &str) -> Result<()> {
+    stdout.queue(SetAttribute(Attribute::Reverse))?;
+    stdout.queue(Print(text))?;
+    stdout.queue(SetAttribute(Attribute::NoReverse))?;
+    Ok(())
+}
+
+/// Print one visual chunk with the selection and a bold date highlight
+/// (green, or red if the leading date is before today) on the first line.
 #[allow(clippy::too_many_arguments)]
 fn print_visual_chunk(
     stdout: &mut io::Stdout,
@@ -315,6 +325,17 @@ fn print_visual_chunk(
     date_past: bool,
 ) -> Result<()> {
     let chunk_end = start_byte + content.len();
+
+    // An empty line inside a selection: the line break is selected, and a
+    // selected cell shows it (REVIEW section 4: the selection looked cut).
+    if let Some((s, e)) = sel
+        && lines[buf_idx].is_empty()
+        && s.0 <= buf_idx
+        && buf_idx < e.0
+    {
+        print_selected(stdout, " ")?;
+        return Ok(());
+    }
 
     let sel_line_range: Option<(usize, usize)> = sel.and_then(|(s, e)| {
         if buf_idx < s.0 || buf_idx > e.0 {
@@ -354,7 +375,7 @@ fn print_visual_chunk(
             return Ok(());
         }
         if selected {
-            stdout.queue(Print(text.reversed()))?;
+            print_selected(stdout, text)?;
         } else if is_date {
             if date_past {
                 stdout.queue(Print(theme().date_overdue.paint(text).bold()))?;

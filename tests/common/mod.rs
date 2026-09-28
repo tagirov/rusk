@@ -261,6 +261,15 @@ impl Sandbox {
     }
 }
 
+/// One step of a pty run (see [`Sandbox::in_pty_steps`]): after a pause in
+/// milliseconds, keys typed, or the terminal resized to rows × columns.
+#[cfg(unix)]
+#[allow(dead_code)]
+pub enum PtyStep<'a> {
+    Keys(u64, &'a [u8]),
+    Resize(u64, u16, u16),
+}
+
 /// What `rusk` did in a pseudo-terminal (see [`Sandbox::in_pty`]).
 #[cfg(unix)]
 #[allow(dead_code)]
@@ -326,12 +335,32 @@ impl Sandbox {
         steps: &[(u64, &[u8])],
         kitty: bool,
     ) -> Option<PtyRun> {
+        let steps: Vec<PtyStep> = steps.iter().map(|&(ms, keys)| PtyStep::Keys(ms, keys)).collect();
+        self.in_pty_steps(args, &[], wait_for, &steps, kitty)
+    }
+
+    /// [`in_pty`](Self::in_pty) with variables of its own in the
+    /// environment (`TERM`, say) and steps that may resize the terminal.
+    pub fn in_pty_steps(
+        &self,
+        args: &[&str],
+        env: &[(&str, &str)],
+        wait_for: &[u8],
+        steps: &[PtyStep],
+        kitty: bool,
+    ) -> Option<PtyRun> {
         let bin = require_rusk_bin().expect("rusk binary not found, run cargo build");
         let mut argv = vec![bin.display().to_string()];
         argv.extend(args.iter().map(|a| a.to_string()));
         let spec = serde_json::json!({
             "argv": argv,
-            "steps": steps.iter().map(|(ms, bytes)| serde_json::json!([ms, hex(bytes)])).collect::<Vec<_>>(),
+            "steps": steps
+                .iter()
+                .map(|step| match step {
+                    PtyStep::Keys(ms, bytes) => serde_json::json!([ms, hex(bytes)]),
+                    PtyStep::Resize(ms, rows, cols) => serde_json::json!([ms, "", rows, cols]),
+                })
+                .collect::<Vec<_>>(),
             "wait_for": hex(wait_for),
             "kitty": kitty,
             "timeout_ms": 20000,
@@ -347,6 +376,13 @@ impl Sandbox {
         // The editor's clipboard would reach the desktop's own: a test that
         // copies must not overwrite what the developer copied.
         python.env_remove("DISPLAY").env_remove("WAYLAND_DISPLAY");
+        // The terminal is the driver's, whatever the developer's is (a
+        // `TERM=dumb` of Emacs' `M-x compile` keeps the editor from
+        // starting, review of R30); a test may name another below.
+        python.env("TERM", "xterm-256color");
+        for (key, value) in env {
+            python.env(key, value);
+        }
         let out = match python
             .current_dir(self.path())
             .arg("-c")

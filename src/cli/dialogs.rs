@@ -10,6 +10,13 @@ use crate::config::theme;
 use crate::model::TaskId;
 use crate::{out, outln};
 
+/// A key typed as itself: no modifier but the Shift that picks its case.
+/// A question's `y` is that `y`: Ctrl+Y (the editor's redo) or Alt+Y is no
+/// answer (REVIEW section 4).
+pub(crate) fn is_bare(modifiers: KeyModifiers) -> bool {
+    modifiers.difference(KeyModifiers::SHIFT).is_empty()
+}
+
 impl HandlerCLI {
     /// Shared "[y/N]: " tail for confirmation prompts: dimmed so the
     /// accent-colored question stays the visual focus.
@@ -27,16 +34,39 @@ impl HandlerCLI {
         std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
     }
 
+    /// `TERM=dumb`: a terminal that shows escape sequences instead of
+    /// obeying them (Emacs' `M-x shell`, some CI). A question of one line
+    /// works there; the full-screen editor does not (REVIEW section 4). A
+    /// Windows console does not go by `TERM` (review of R30).
+    pub fn terminal_is_dumb() -> bool {
+        cfg!(unix) && std::env::var_os("TERM").is_some_and(|term| term == "dumb")
+    }
+
     /// Puts `prompt` on the screen and reads one key: `y` is yes, Ctrl+C
-    /// aborts, Ctrl+D cancels, anything else is no. Raw mode is on only
-    /// while the key is read, and off again whatever the read gives.
+    /// aborts, Ctrl+D cancels, anything else is no. For a question whose
+    /// "yes" throws something away (`rusk del`): the `y` itself, not Ctrl+Y
+    /// or Alt+Y (REVIEW section 4).
     pub(crate) fn read_confirmation(prompt: &str) -> Result<bool> {
+        Self::ask(prompt, is_bare)
+    }
+
+    /// [`read_confirmation`](Self::read_confirmation) for a question whose
+    /// "no" is the one that throws something away ("Restore unsaved
+    /// draft?"): any `y` is yes, Ctrl+Y and Alt+Y too (review of R30).
+    pub(crate) fn read_keeping_confirmation(prompt: &str) -> Result<bool> {
+        Self::ask(prompt, |_| true)
+    }
+
+    /// The question and its key; `yes` says which modifiers a `y` may come
+    /// with. Raw mode is on only while the key is read, and off again
+    /// whatever the read gives.
+    fn ask(prompt: &str, yes: fn(KeyModifiers) -> bool) -> Result<bool> {
         out!("{prompt}")?;
         enable_raw_mode().context("Failed to enable raw mode")?;
         let key = Self::read_key();
         disable_raw_mode().ok();
         match key? {
-            (KeyCode::Char('y') | KeyCode::Char('Y'), _) => {
+            (KeyCode::Char('y' | 'Y'), modifiers) if yes(modifiers) => {
                 outln!("y")?;
                 Ok(true)
             }
@@ -152,7 +182,18 @@ fn depended_on(dependents: &[TaskId]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::depended_on;
+    use super::{depended_on, is_bare};
+    use crossterm::event::KeyModifiers;
+
+    /// REVIEW section 4: Ctrl+Y and Alt+Y answered yes.
+    #[test]
+    fn a_bare_key_has_no_modifier_but_shift() {
+        assert!(is_bare(KeyModifiers::NONE));
+        assert!(is_bare(KeyModifiers::SHIFT));
+        for modifiers in [KeyModifiers::CONTROL, KeyModifiers::ALT, KeyModifiers::SUPER, KeyModifiers::SHIFT | KeyModifiers::CONTROL] {
+            assert!(!is_bare(modifiers), "{modifiers:?}");
+        }
+    }
 
     #[test]
     fn the_question_names_a_handful_of_dependents() {

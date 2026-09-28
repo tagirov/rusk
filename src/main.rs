@@ -233,6 +233,12 @@ fn run() -> Result<()> {
                          Pass the task on the command line, e.g. `rusk add buy milk`.",
                     );
                 }
+                if HandlerCLI::terminal_is_dumb() {
+                    exit_with_error(
+                        "the editor needs a terminal that can move the cursor, and TERM is \
+                         `dumb`. Pass the task on the command line, e.g. `rusk add buy milk`.",
+                    );
+                }
                 let mut tm = TaskManager::new()?;
                 return HandlerCLI::handle_add_task_interactive(&mut tm, date, after_ids);
             }
@@ -293,6 +299,13 @@ fn run() -> Result<()> {
                         exit_with_error(
                             "interactive `rusk edit` requires a terminal. \
                              Pass the new text on the command line, e.g. \
+                             `rusk edit 1 buy oat milk`.",
+                        );
+                    }
+                    if HandlerCLI::terminal_is_dumb() {
+                        exit_with_error(
+                            "the editor needs a terminal that can move the cursor, and TERM \
+                             is `dumb`. Pass the new text on the command line, e.g. \
                              `rusk edit 1 buy oat milk`.",
                         );
                     }

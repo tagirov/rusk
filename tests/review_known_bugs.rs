@@ -26,7 +26,7 @@
 // R22 (`git_backend`), R25 (config, dates, environment), R23 (the file
 // formats), R26 (completion scripts, docs, tests, build) — and of the leads
 // of section 4: R27 (CLI, storage, SQLite), R28 (remote databases and
-// `rusk sync`), R29 (`rusk serve`).
+// `rusk sync`), R29 (`rusk serve`), R30 (the editor).
 // R6 and R8 need a pty
 // for most of their repros: what Command can drive is here, the draft rules
 // are unit-tested in `src/cli/editor/draft.rs`, and the rest is driven by a
@@ -7492,4 +7492,238 @@ fn r29_the_sign_in_page_says_when_the_token_was_wrong() {
     // (review of R29).
     let page = sb.cmd().args(["gen", "-o", "-"]).output().unwrap();
     assert!(!stdout_of(&page).contains(r#"rel="icon""#), "{}", stdout_of(&page));
+}
+
+// ---------------------------------------------------------------------------
+// R30 — the editor: the leads of REVIEW.md section 4
+// ---------------------------------------------------------------------------
+//
+// In a pseudo-terminal like R24 (`in_editor`); a resize and a `TERM` of the
+// test's own go through `Sandbox::in_pty_steps`. The pure parts are
+// unit-tested in `src/cli/editor/` (`input`: the Cyrillic keys; `text_ops`:
+// deleting lines; `clipboard`: the OSC 52 limit) and `src/cli/dialogs.rs`.
+
+/// REVIEW section 4: the "Discard changes?" question took Ctrl+Y (redo)
+/// and Alt+Y for `y`, and threw the changes away.
+#[test]
+#[cfg(all(unix, feature = "interactive"))]
+fn r30_the_discard_question_takes_y_alone() {
+    let sb = Sandbox::with_db(r#"[{"id":1,"text":"alpha"}]"#);
+    let keys: &[&[u8]] = &[b"X", b"\x1b", b"\x19", b"\x1b", b"\x1by", CTRL_S];
+    let Some(run) = in_editor(&sb, &["edit", "1"], keys, false) else {
+        return;
+    };
+    assert_eq!(run.code, Some(0), "{}", run.after_editor());
+    assert_eq!(text_of(&db_tasks(&sb), 1), "Xalpha");
+    // `y` and `Y` still discard.
+    for y in [&b"y"[..], b"Y"] {
+        let Some(run) = in_editor(&sb, &["edit", "1"], &[b"Z", b"\x1b", y], false) else {
+            return;
+        };
+        assert_eq!(run.code, Some(0), "{}", run.after_editor());
+        assert_eq!(text_of(&db_tasks(&sb), 1), "Xalpha");
+    }
+}
+
+/// The same for the `del` question.
+#[test]
+#[cfg(all(unix, feature = "interactive"))]
+fn r30_the_delete_question_takes_y_alone() {
+    let sb = Sandbox::with_db(r#"[{"id":1,"text":"alpha"}]"#);
+    for key in [&b"\x19"[..], b"\x1by"] {
+        let Some(run) = sb.in_pty(&["del", "1"], b"y/N", &[(200, key)], false) else {
+            return;
+        };
+        assert_eq!(run.code, Some(0));
+        assert!(String::from_utf8_lossy(&run.screen).contains("Canceled deletion of task"));
+    }
+    assert_eq!(db_tasks(&sb).len(), 1);
+    let Some(_) = sb.in_pty(&["del", "1"], b"y/N", &[(200, b"y")], false) else {
+        return;
+    };
+    assert!(db_tasks(&sb).is_empty());
+}
+
+/// REVIEW section 4: Ctrl+K, Ctrl+U and Ctrl+Shift+K dropped a selection
+/// and killed from the cursor, while Backspace, Delete and Ctrl+W delete
+/// it.
+#[test]
+#[cfg(all(unix, feature = "interactive"))]
+fn r30_the_kill_keys_take_a_selection() {
+    const HOME: &[u8] = b"\x1b[H";
+    const RIGHT: &[u8] = b"\x1b[C";
+    const SHIFT_RIGHT: &[u8] = b"\x1b[1;2C";
+    let sb = Sandbox::new();
+    // Ctrl+U over "beta ".
+    let mut keys: Vec<&[u8]> = vec![b"alpha beta gamma", HOME];
+    keys.extend([RIGHT; 6]);
+    keys.extend([SHIFT_RIGHT; 5]);
+    keys.extend([&b"\x15"[..], CTRL_S]);
+    let Some(_) = in_editor(&sb, &["add"], &keys, false) else {
+        return;
+    };
+    // Ctrl+K over "alpha ".
+    let mut keys: Vec<&[u8]> = vec![b"alpha beta gamma", HOME];
+    keys.extend([SHIFT_RIGHT; 6]);
+    keys.extend([&b"\x0b"[..], CTRL_S]);
+    let Some(_) = in_editor(&sb, &["add"], &keys, false) else {
+        return;
+    };
+    let tasks = db_tasks(&sb);
+    assert_eq!(text_of(&tasks, 1), "alpha gamma");
+    assert_eq!(text_of(&tasks, 2), "beta gamma");
+
+    // Ctrl+Shift+K: every line the selection touches — not the one it ends
+    // at the start of.
+    let sb = Sandbox::with_db(r#"[{"id":1,"text":"one\ntwo\nthree\nfour"},{"id":2,"text":"one\ntwo\nthree"}]"#);
+    let down: &[u8] = b"\x1b[B";
+    let shift_down: &[u8] = b"\x1b[1;2B";
+    let ctrl_shift_k: &[u8] = b"\x1b[107;6u";
+    let keys: &[&[u8]] = &[down, shift_down, SHIFT_RIGHT, ctrl_shift_k, CTRL_S];
+    let Some(_) = in_editor(&sb, &["edit", "1"], keys, true) else {
+        return;
+    };
+    let keys: &[&[u8]] = &[down, shift_down, ctrl_shift_k, CTRL_S];
+    let Some(_) = in_editor(&sb, &["edit", "2"], keys, true) else {
+        return;
+    };
+    let tasks = db_tasks(&sb);
+    assert_eq!(text_of(&tasks, 1), "one\nfour");
+    assert_eq!(text_of(&tasks, 2), "one\nthree");
+}
+
+/// REVIEW section 4: under Ctrl a letter of a Cyrillic layout did nothing:
+/// a terminal that reports Ctrl+ы (kitty's CSI u does) did not save.
+#[test]
+#[cfg(all(unix, feature = "interactive"))]
+fn r30_ctrl_with_a_cyrillic_letter_is_its_key() {
+    let sb = Sandbox::new();
+    // Ctrl+ы is Ctrl+S; should it not be, Esc and `y` end the session.
+    let keys: &[&[u8]] = &[b"abc", b"\x1b[1099;5u", b"\x1b", b"y"];
+    let Some(_) = in_editor(&sb, &["add"], keys, false) else {
+        return;
+    };
+    assert_eq!(text_of(&db_tasks(&sb), 1), "abc");
+}
+
+/// REVIEW section 4: with `TERM=dumb` (Emacs' `M-x shell`) the editor sent
+/// the alternate screen, mouse reports and cursor moves to a terminal that
+/// prints them.
+#[test]
+#[cfg(all(unix, feature = "interactive"))]
+fn r30_a_dumb_terminal_gets_no_editor() {
+    let sb = Sandbox::with_db(r#"[{"id":1,"text":"alpha"}]"#);
+    for args in [&["add"][..], &["edit", "1"]] {
+        let Some(run) = sb.in_pty_steps(args, &[("TERM", "dumb")], b"", &[], false) else {
+            return;
+        };
+        assert_eq!(run.code, Some(1), "{args:?}");
+        assert!(!run.saw(EDITOR_UP), "{args:?}: the editor was started");
+        let screen = String::from_utf8_lossy(&run.screen);
+        assert!(screen.contains("TERM is `dumb`"), "{args:?}: {screen}");
+    }
+    // The delete question is one line: it is asked there as well.
+    let Some(run) = sb.in_pty_steps(&["del", "1"], &[("TERM", "dumb")], b"y/N", &[common::PtyStep::Keys(200, b"n")], false) else {
+        return;
+    };
+    assert_eq!(run.code, Some(0));
+}
+
+/// REVIEW section 4: a resize while "Discard changes?" was up left the
+/// question where the old size had put it — out of sight after a shrink —
+/// and the editor waiting for an answer to it.
+#[test]
+#[cfg(all(unix, feature = "interactive"))]
+fn r30_a_resize_asks_the_question_again() {
+    use common::PtyStep::{Keys, Resize};
+    let sb = Sandbox::with_db(r#"[{"id":1,"text":"alpha"}]"#);
+    let steps = [Keys(150, b"X"), Keys(150, b"\x1b"), Resize(300, 12, 60), Keys(400, b"y")];
+    let Some(run) = sb.in_pty_steps(&["edit", "1"], &[], EDITOR_UP, &steps, false) else {
+        return;
+    };
+    assert_eq!(run.code, Some(0), "{}", run.after_editor());
+    let screen = String::from_utf8_lossy(&run.screen);
+    assert!(screen.matches("Discard changes?").count() >= 2, "{screen}");
+    assert_eq!(text_of(&db_tasks(&sb), 1), "alpha");
+}
+
+/// REVIEW section 4: Ctrl+C in the editor left two blank lines behind.
+#[test]
+#[cfg(all(unix, feature = "interactive"))]
+fn r30_an_abort_leaves_one_blank_line() {
+    let sb = Sandbox::new();
+    let Some(run) = in_editor(&sb, &["add"], &[b"abc", b"\x03"], false) else {
+        return;
+    };
+    assert_eq!(run.code, Some(130));
+    // What follows the editor, escape sequences aside.
+    let after = run.after_editor();
+    let mut text = String::new();
+    let mut chars = after.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // CSI: parameters up to the final byte.
+            if chars.next_if_eq(&'[').is_some() {
+                while chars.next().is_some_and(|c| !('@'..='~').contains(&c)) {}
+            }
+            continue;
+        }
+        text.push(c);
+    }
+    assert!(text.starts_with("\r\n") && !text.starts_with("\r\n\r\n"), "{text:?}");
+}
+
+/// REVIEW section 4: an empty line inside a selection showed nothing, and
+/// the selection looked cut in two. Found in passing: with colors off
+/// (`NO_COLOR`, as in every test here) no selection showed at all — the
+/// reverse video went through the color library, which dropped it.
+#[test]
+#[cfg(all(unix, feature = "interactive"))]
+fn r30_a_selection_shows_without_colors_and_across_an_empty_line() {
+    let sb = Sandbox::with_db(r#"[{"id":1,"text":"ab\n\ncd"}]"#);
+    let Some(run) = in_editor(&sb, &["edit", "1"], &[b"\x01", b"\x1b", b"\x1b"], false) else {
+        return;
+    };
+    assert_eq!(run.code, Some(0), "{}", run.after_editor());
+    assert!(run.saw(b"\x1b[7mab\x1b[27m"), "{:?}", String::from_utf8_lossy(&run.screen));
+    assert!(run.saw(b"\x1b[7m \x1b[27m"), "{:?}", String::from_utf8_lossy(&run.screen));
+    assert!(run.saw(b"\x1b[7mcd\x1b[27m"), "{:?}", String::from_utf8_lossy(&run.screen));
+}
+
+/// Review of R30: a Cyrillic letter under Ctrl was taken for the key it has
+/// in the Russian layout, whatever the layout: in the Serbian one Ctrl+с
+/// (the S key) aborted the session as Ctrl+C, Ctrl+к (the K key) restored
+/// the original text as Ctrl+R. Only `ы` is on one key (S) in every layout
+/// that has it; any other Cyrillic letter under Ctrl does nothing.
+#[test]
+#[cfg(all(unix, feature = "interactive"))]
+fn r30_only_an_unambiguous_cyrillic_letter_is_a_key() {
+    let sb = Sandbox::with_db(r#"[{"id":1,"text":"alpha"}]"#);
+    let ctrl_es: &[u8] = b"\x1b[1089;5u";
+    let ctrl_ka: &[u8] = b"\x1b[1082;5u";
+    let Some(run) = in_editor(&sb, &["edit", "1"], &[b"XYZ ", ctrl_es, ctrl_ka, CTRL_S], false) else {
+        return;
+    };
+    assert_eq!(run.code, Some(0), "{}", run.after_editor());
+    assert_eq!(text_of(&db_tasks(&sb), 1), "XYZ alpha");
+}
+
+/// Review of R30: the bare `y` of the `del` and discard questions reached
+/// "Restore unsaved draft?", where it is the "no" that throws something
+/// away: Ctrl+Y or Alt+Y there deleted the draft. Any `y` keeps it.
+#[test]
+#[cfg(all(unix, feature = "interactive"))]
+fn r30_any_y_keeps_a_draft() {
+    let sb = Sandbox::with_db(r#"[{"id":1,"text":"alpha"}]"#);
+    for (typed, answer) in [(&b"XYZ"[..], &b"\x19"[..]), (b"UVW", b"\x1by")] {
+        let Some(run) = in_editor(&sb, &["edit", "1"], &[typed, b"\x03"], false) else {
+            return;
+        };
+        assert_eq!(run.code, Some(130));
+        let Some(run) = sb.in_pty(&["edit", "1"], b"Restore unsaved draft", &[(200, answer), (400, CTRL_S)], false) else {
+            return;
+        };
+        assert_eq!(run.code, Some(0), "{}", run.after_editor());
+    }
+    assert_eq!(text_of(&db_tasks(&sb), 1), "UVWXYZalpha");
 }

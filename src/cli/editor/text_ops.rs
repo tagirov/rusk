@@ -432,12 +432,43 @@ pub fn ml_delete_line(lines: &mut Vec<String>, row: &mut usize, col: &mut usize)
     *col = clamp_col(&lines[*row], *col);
 }
 
+/// Deletes the lines `first..=last`; the cursor goes to the line after
+/// them (or the last one left), its column kept where that line allows.
+pub fn ml_delete_lines(
+    lines: &mut Vec<String>,
+    first: usize,
+    last: usize,
+    row: &mut usize,
+    col: &mut usize,
+) {
+    let last = last.min(lines.len().saturating_sub(1));
+    lines.drain(first..=last);
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    *row = first.min(lines.len() - 1);
+    *col = clamp_col(&lines[*row], *col);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn lines(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn lines_are_deleted_as_a_block() {
+        let mut buf = lines(&["one", "two", "three", "four"]);
+        let (mut row, mut col) = (2, 4);
+        ml_delete_lines(&mut buf, 1, 2, &mut row, &mut col);
+        assert_eq!(buf, lines(&["one", "four"]));
+        assert_eq!((row, col), (1, 4));
+        // All of them: one empty line is left.
+        ml_delete_lines(&mut buf, 0, 9, &mut row, &mut col);
+        assert_eq!(buf, lines(&[""]));
+        assert_eq!((row, col), (0, 0));
     }
 
     // ── Word jumps ──────────────────────────────────────────────────────────

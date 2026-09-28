@@ -97,7 +97,7 @@ impl HandlerCLI {
             theme().notice.paint(&format!("“{}”)?", saved.preview())),
             Self::yn_hint()
         );
-        if Self::read_confirmation(&prompt)? {
+        if Self::read_keeping_confirmation(&prompt)? {
             return Ok(Some(saved.text));
         }
         super::editor::draft::remove(slot);

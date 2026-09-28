@@ -366,6 +366,32 @@ impl EditorState {
         self.recompute_desired(vw);
     }
 
+    /// Ctrl+Shift+K: every line a selection touches — not the line it ends
+    /// at the start of — or, without one, the current line.
+    pub fn delete_selected_lines(&mut self, vw: usize) {
+        match self.selection_range() {
+            Some(((first, _), (last, end_col))) => {
+                let last = if end_col == 0 && last > first { last - 1 } else { last };
+                text_ops::ml_delete_lines(&mut self.lines, first, last, &mut self.row, &mut self.col);
+                self.anchor = None;
+                self.recompute_desired(vw);
+            }
+            None => self.delete_line(vw),
+        }
+    }
+
+    /// Ctrl+K / Ctrl+U with a selection delete it, as Backspace does;
+    /// without one they kill to the end or the start of the line.
+    pub fn kill_or_delete_selection(&mut self, to_end: bool, vw: usize) {
+        if self.delete_selection() {
+            self.recompute_desired(vw);
+        } else if to_end {
+            self.kill_to_eol(vw);
+        } else {
+            self.kill_to_bol(vw);
+        }
+    }
+
     pub fn reset_to_prefill(&mut self, prefill_lines: &[String], vw: usize) {
         self.lines = if prefill_lines.is_empty() {
             vec![String::new()]
@@ -384,6 +410,32 @@ mod tests {
     use super::*;
 
     const VW: usize = 40;
+
+    /// REVIEW section 4: the kill keys dropped a selection and killed from
+    /// the cursor.
+    #[test]
+    fn the_kill_keys_take_a_selection() {
+        let mut s = state_with(&["alpha beta gamma"], 0, 11);
+        s.anchor = Some((0, 6));
+        s.kill_or_delete_selection(false, VW);
+        assert_eq!(s.joined(), "alpha gamma");
+        let mut s = state_with(&["alpha beta"], 0, 6);
+        s.kill_or_delete_selection(true, VW);
+        assert_eq!(s.joined(), "alpha ");
+        // Ctrl+Shift+K: every line the selection touches, not the one it
+        // ends at the start of; without one, the current line.
+        let mut s = state_with(&["a", "b", "c", "d"], 2, 1);
+        s.anchor = Some((1, 0));
+        s.delete_selected_lines(VW);
+        assert_eq!(s.lines, ["a", "d"]);
+        let mut s = state_with(&["a", "b", "c"], 2, 0);
+        s.anchor = Some((1, 0));
+        s.delete_selected_lines(VW);
+        assert_eq!(s.lines, ["a", "c"]);
+        let mut s = state_with(&["a", "b"], 1, 0);
+        s.delete_selected_lines(VW);
+        assert_eq!(s.lines, ["a"]);
+    }
 
     fn state_with(lines: &[&str], row: usize, col: usize) -> EditorState {
         let owned: Vec<String> = lines.iter().map(|s| s.to_string()).collect();

@@ -72,9 +72,11 @@ third line …
 - Arrow keys and Backspace/Delete step by character, not by grapheme
   cluster: inside a multi-character emoji the cursor column does not move
   until the whole cluster is crossed.
-- Footer (last row): hotkey hint that adapts to the terminal width — shorter
-  wordings on narrow terminals, never overlapped by the status glyph; a
-  one-row terminal shows the text only.
+- Footer: hotkey hint that adapts to the terminal width — shorter wordings on
+  narrow terminals, never overlapped by the status glyph; a one-row terminal
+  shows the text only. On a wide and tall terminal it stays on a fixed row a
+  few rows above the bottom; on a narrow or short one it follows the text,
+  a couple of rows under its last line, and goes no lower than the last row.
 - Arrows `↑` / `↓` at the bottom-left appear when the buffer scrolls.
 - Status glyph at the bottom-right: `●` (dirty) / `○` (saved).
 
@@ -113,6 +115,9 @@ third line …
 | `Shift+Ctrl+Home` / `Shift+Ctrl+End` | Extend to buffer start / end. |
 | `Ctrl+A` | Select the whole buffer. |
 
+The selection is drawn in reverse video, with colors off (`NO_COLOR`) as
+well, and an empty line inside it shows one selected cell.
+
 ### Editing
 
 | Key | Action |
@@ -124,15 +129,24 @@ third line …
 | `Delete` | Delete right character / selection. |
 | `Ctrl+W`, `Ctrl+Backspace` | Delete the word to the left (with the spaces between it and the cursor). |
 | `Ctrl+Delete` | Delete word to the right. |
-| `Ctrl+K` | Kill from cursor to end of line (or join with next line at EOL). |
-| `Ctrl+Shift+K` | Delete the whole current line — where the terminal reports the `Shift` (kitty does, as `CSI 107;6u`; so do terminals in xterm's `CSI u` key format). Elsewhere the key arrives as `Ctrl+K` and kills to the end of the line, or — in xterm's default `modifyOtherKeys` format — does nothing. |
-| `Ctrl+U` | Kill from beginning of line to cursor. |
+| `Ctrl+K` | Kill from cursor to end of line (or join with next line at EOL); with a selection, delete the selection. |
+| `Ctrl+Shift+K` | Delete the whole current line, or with a selection every line it touches (not the line it ends at the start of) — where the terminal reports the `Shift` (kitty does, as `CSI 107;6u`; so do terminals in xterm's `CSI u` key format). Elsewhere the key arrives as `Ctrl+K`, or — in xterm's default `modifyOtherKeys` format — does nothing. |
+| `Ctrl+U` | Kill from beginning of line to cursor; with a selection, delete the selection. |
 
 A `Ctrl` or `Alt` shortcut that is not in these tables types nothing into
 the text (on Windows `Ctrl+Alt` is also how `AltGr` arrives, so there it
 types what the layout puts on that key). Typing always ends a selection,
 even an empty one, so a capital right after `Ctrl+A` on an empty buffer is
 kept.
+
+The shortcuts are named by the keys of the Latin layout. On another layout
+many terminals send the `Ctrl` code of the Latin key anyway, and the
+shortcut works. A terminal that reports the `Ctrl` with the letter of the
+layout instead gets one of them: `Ctrl+ы` is `Ctrl+S`, the save — `ы` is on
+the S key in every layout that has it (Russian, Belarusian, Mongolian).
+Other letters sit on different keys in different layouts (`с` is on C in
+the Russian layout and on S in the Serbian one), so under `Ctrl` they do
+nothing; there the Latin layout is the way to the other shortcuts.
 
 ### Clipboard and undo
 
@@ -147,7 +161,10 @@ kept.
 Copy targets the system clipboard through
 [`arboard`](https://crates.io/crates/arboard) (X11, Wayland, Windows, macOS)
 and additionally emits an OSC 52 escape so the terminal stores the text
-itself — this keeps the copy alive after rusk exits and works over SSH.
+itself — where the terminal supports it (in tmux, with `set-clipboard on`),
+this keeps the copy alive after rusk exits and works over SSH. A copy longer
+than about 75 000 bytes goes to the system clipboard only: terminals drop an
+OSC 52 sequence much longer than that.
 A process-local fallback covers environments where neither is available
 (e.g. headless terminals).
 
@@ -159,7 +176,7 @@ A process-local fallback covers environments where neither is available
 | Left drag | Extend selection. |
 | Double-click | Select word under cursor. |
 | Triple-click | Select the whole line. |
-| `Shift` + click | Extend existing selection to the click point. |
+| `Shift` + click | Extend existing selection to the click point — where the terminal passes it on: most (xterm, VTE, kitty, alacritty, foot, iTerm2) keep `Shift` + click for their own selection while an application reads the mouse, and rusk never sees it. `Shift+←`/`→` and the other selection keys work everywhere. |
 | Middle click | Paste from the system clipboard at the click point. |
 | Scroll wheel | Scroll the view by 3 visual rows. The cursor and the selection stay where they are (the cursor is hidden while out of sight); the next key brings the view back to it. |
 
@@ -167,9 +184,11 @@ A process-local fallback covers environments where neither is available
 
 Pressing `Esc` while the buffer differs from the original text (dirty state,
 signalled by `●`) shows an overlay `Discard changes? [y/N]`. Answering `y`
-discards changes, clears the autosave draft, and cancels the edit. `Ctrl+C`
-in the overlay aborts the session and keeps the buffer as a draft. Any other
-key returns to the editor.
+discards changes, clears the autosave draft, and cancels the edit — `y` or
+`Y` itself: `Ctrl+Y` (redo) or `Alt+Y` is no answer, and returns to the
+editor like any other key. `Ctrl+C` in the overlay aborts the session and
+keeps the buffer as a draft. A resize while the question is up draws the
+editor again for the new size and asks again.
 
 ## Leaving the editor
 
@@ -187,7 +206,13 @@ key that is never coming.
 
 `rusk edit <id>` with no new text needs a terminal, exactly as `rusk add`
 with no text does; into a pipe or a redirect it says so instead of painting
-an editor nobody can see.
+an editor nobody can see. So does a terminal that prints escape sequences
+instead of obeying them, `TERM=dumb` (Emacs' `M-x shell`, some CI): pass
+the text on the command line there. The one-line `rusk del` question is
+asked there as usual.
+
+After `Ctrl+C` the typed text is kept as a draft, and one blank line
+separates what rusk says about it from the editor's screen.
 
 ## Draft autosave and recovery
 

@@ -4,9 +4,11 @@ import json, os, pty, select, struct, sys, time, fcntl, termios
 
 # argv[1]: {"argv": [...], "steps": [[pause_ms, hex bytes], ...],
 #          "wait_for": hex marker, "kitty": bool, "timeout_ms": int}
+# A step [pause_ms, hex bytes, rows, cols] also resizes the terminal after
+# typing its bytes (the program gets SIGWINCH).
 spec = json.loads(sys.argv[1])
 argv = spec["argv"]
-steps = [(d / 1000.0, bytes.fromhex(b)) for d, b in spec.get("steps", [])]
+steps = [(s[0] / 1000.0, bytes.fromhex(s[1]), s[2:]) for s in spec.get("steps", [])]
 marker = bytes.fromhex(spec.get("wait_for", ""))
 kitty = spec.get("kitty", False)
 deadline = time.time() + spec.get("timeout_ms", 10000) / 1000.0
@@ -51,7 +53,10 @@ while time.time() < deadline:
     if started and steps and next_at is None:
         next_at = time.time() + steps[0][0]
     if started and steps and next_at is not None and time.time() >= next_at:
-        reply(steps.pop(0)[1])
+        _, data, size = steps.pop(0)
+        reply(data)
+        if size:
+            fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", size[0], size[1], 0, 0))
         next_at = time.time() + steps[0][0] if steps else None
     r, _, _ = select.select([fd], [], [], 0.02)
     if r:

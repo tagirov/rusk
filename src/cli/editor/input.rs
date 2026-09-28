@@ -14,6 +14,16 @@ use super::state::EditorState;
 use super::text_ops;
 use super::view;
 
+/// The key of the Latin layout that a Cyrillic letter sits on, where that
+/// is the same key in every layout that has the letter: `ы` is on the S key
+/// in the Russian, Belarusian and Mongolian ones. Any other letter sits on
+/// different keys in different layouts (`с` is on C in the Russian layout,
+/// on S in the Serbian one), and a guess would run the wrong shortcut —
+/// Ctrl+C, the abort, for a Serbian Ctrl+S (review of R30).
+fn latin_key(c: char) -> Option<char> {
+    matches!(c, 'ы' | 'Ы').then_some('s')
+}
+
 pub(super) enum Action {
     Continue,
     Save,
@@ -106,11 +116,16 @@ pub(super) fn handle_key(
     // Under Ctrl a letter is its key, whatever its case: Windows puts Caps
     // Lock in the case (Ctrl+S arrives as `S`), and a terminal that reports
     // Ctrl+Shift+K may send the capital along with the Shift.
+    let alt = modifiers.contains(KeyModifiers::ALT);
+    // Under Ctrl a Cyrillic letter that sits on one key in every layout is
+    // that key: Ctrl+ы is Ctrl+S, the save — where the terminal reports the
+    // Ctrl with the letter at all (REVIEW section 4; see EDITOR.md). Not
+    // with Alt as well: that is how Windows reports AltGr, which types.
     let code = match code {
         KeyCode::Char(c) if ctrl && c.is_ascii_uppercase() => KeyCode::Char(c.to_ascii_lowercase()),
+        KeyCode::Char(c) if ctrl && !alt => KeyCode::Char(latin_key(c).unwrap_or(c)),
         code => code,
     };
-    let alt = modifiers.contains(KeyModifiers::ALT);
     let vw = view::editor_text_layout(ctx.cols as usize, ctx.prompt_width).0;
 
     // Set by arms that create a selection without shift (Ctrl+A) so the
@@ -243,18 +258,20 @@ pub(super) fn handle_key(
         // others in their CSI u mode — with a capital `K` too, which is no
         // letter to type any more, REVIEW №47); elsewhere the key sends the
         // byte of Ctrl+K and kills to the end of the line. Caps Lock alone
-        // is no Shift.
+        // is no Shift. With a selection, Ctrl+K and Ctrl+U delete it, as
+        // Backspace and Ctrl+W do, and Ctrl+Shift+K every line it touches
+        // (REVIEW section 4: the selection was dropped and the line killed).
         (KeyCode::Char('k'), true, _) => {
             edit(state, history, OpKind::Other, |s| {
                 if shift {
-                    s.delete_line(vw);
+                    s.delete_selected_lines(vw);
                 } else {
-                    s.kill_to_eol(vw);
+                    s.kill_or_delete_selection(true, vw);
                 }
             });
         }
         (KeyCode::Char('u'), true, _) => {
-            edit(state, history, OpKind::Other, |s| s.kill_to_bol(vw));
+            edit(state, history, OpKind::Other, |s| s.kill_or_delete_selection(false, vw));
         }
 
         // ── Character-level editing ─────────────────────────────────────────
@@ -456,6 +473,18 @@ pub(super) fn handle_paste(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// REVIEW section 4: Ctrl+ы is Ctrl+S. Review of R30: no other Cyrillic
+    /// letter is one key in every layout (`с` is C in the Russian layout, S
+    /// in the Serbian one; `і` is S in the Ukrainian, B in the Belarusian).
+    #[test]
+    fn only_an_unambiguous_cyrillic_letter_is_a_key() {
+        assert_eq!(latin_key('ы'), Some('s'));
+        assert_eq!(latin_key('Ы'), Some('s'));
+        for other in ['с', 'к', 'я', 'і', 'ў', 's', 'é', '1'] {
+            assert_eq!(latin_key(other), None, "{other}");
+        }
+    }
 
     /// The editor after `keys` on a buffer of `text` with the cursor at
     /// `col` of its only line.

@@ -27,7 +27,7 @@ tests/
 ├── persistence_tests.rs            # Data persistence and save/load tests
 ├── restore_tests.rs                # Backup restore functionality tests
 ├── review_urgent_tests.rs          # Regression tests for the urgent REVIEW.md fixes (№1, №6, №7, №154, №161)
-├── review_known_bugs.rs            # REVIEW.md repros by refactor cluster: #[ignore]d while open, regressions once closed (R1–R29)
+├── review_known_bugs.rs            # REVIEW.md repros by refactor cluster: #[ignore]d while open, regressions once closed (R1–R30)
 ├── unchanged_detection_tests.rs    # Unchanged task detection tests
 ├── web_tests.rs                    # `rusk serve` over HTTP: pages, the API, auth, sync against it
 └── completions.rs                  # Completion test entry point (tests/completions/rust/)
@@ -359,7 +359,12 @@ These tests are designed to run in CI/CD pipelines:
   unit-tested in `src/backend/http.rs`, a quoted URL in `src/location.rs`,
   the answer to a server's own request in `src/web/server.rs`. R29 runs
   a real `rusk serve` and curl; the routing (ids in paths, `Sec-Fetch-Site`,
-  the sign-in page) is unit-tested in `src/web/server.rs`.
+  the sign-in page) is unit-tested in `src/web/server.rs`. R30 drives the
+  editor in a pty like R24; `Sandbox::in_pty_steps` gives a run variables of
+  its own (`TERM=dumb`) and steps that resize the terminal (the driver sets
+  the window size, the kernel sends SIGWINCH); the Cyrillic keys, block
+  deletion, the kill keys and the OSC 52 limit are unit-tested in
+  `src/cli/editor/`, the bare `y` in `src/cli/dialogs.rs`.
   R25's config parser is unit-tested in `src/config.rs` (comments, quotes,
   bytes, `default`, the template), the date parser in `src/parser/date.rs`
   (the shape and range of a year, months first), stored dates outside the

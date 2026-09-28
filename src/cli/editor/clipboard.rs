@@ -60,10 +60,37 @@ impl EditorClipboard {
     }
 }
 
+/// Beyond this much encoded text terminals drop an OSC 52 sequence (xterm
+/// takes about 100 000 bytes; tmux, where `set-clipboard` lets it through
+/// at all, a similar amount), and a multi-megabyte one is a flood of the
+/// terminal for nothing (REVIEW section 4). A longer copy goes to the
+/// system clipboard only.
+const OSC52_LIMIT: usize = 100_000;
+
 /// Ask the terminal to place `text` on the system clipboard (OSC 52).
 /// Terminals without OSC 52 support silently ignore the sequence.
 fn osc52_copy(text: &str) {
-    let mut out = std::io::stdout();
-    let _ = write!(out, "\x1b]52;c;{}\x07", crate::base64::encode(text.as_bytes()));
-    let _ = out.flush();
+    if let Some(sequence) = osc52_sequence(text) {
+        let mut out = std::io::stdout();
+        let _ = out.write_all(sequence.as_bytes());
+        let _ = out.flush();
+    }
+}
+
+/// The OSC 52 sequence for `text`, when it is short enough to send.
+fn osc52_sequence(text: &str) -> Option<String> {
+    let encoded = crate::base64::encode(text.as_bytes());
+    (encoded.len() <= OSC52_LIMIT).then(|| format!("\x1b]52;c;{encoded}\x07"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_copy_too_long_for_a_terminal_is_not_sent_to_it() {
+        assert_eq!(osc52_sequence("hi").as_deref(), Some("\x1b]52;c;aGk=\x07"));
+        assert!(osc52_sequence(&"x".repeat(75_000)).is_some());
+        assert!(osc52_sequence(&"x".repeat(75_001)).is_none());
+    }
 }

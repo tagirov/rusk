@@ -126,7 +126,7 @@ pub(crate) fn run_editor(
 
     render(&mut stdout, &mut state, init_size)?;
 
-    loop {
+    'events: loop {
         draft::tick(&extras, &state.lines, &baseline, &mut autosave);
 
         // A SIGTERM from a window that was closed, a SIGHUP from a
@@ -191,24 +191,29 @@ pub(crate) fn run_editor(
                 return Ok(joined);
             }
             Action::Cancel => {
-                let fr = view::footer_row_for_state(
-                    &state.lines,
-                    state.view_top,
-                    prompt_width,
-                    term_size,
-                );
-                let dr = view::discard_dialog_row(fr, rows);
-                if state.dirty_vs(&baseline) {
+                while state.dirty_vs(&baseline) {
+                    let fr = view::footer_row_for_state(
+                        &state.lines,
+                        state.view_top,
+                        prompt_width,
+                        term_size,
+                    );
+                    let dr = view::discard_dialog_row(fr, term_size.1);
                     match terminal::confirm_discard(&mut stdout, dr)? {
                         terminal::Discard::No => {
                             term_size = view::term_size();
                             render(&mut stdout, &mut state, term_size)?;
-                            continue;
+                            continue 'events;
                         }
                         terminal::Discard::Abort => {
                             return abort(&mut guard, &mut stdout, &extras, &state, &baseline, &mut autosave);
                         }
-                        terminal::Discard::Yes => {}
+                        terminal::Discard::Resized => {
+                            term_size = view::term_size();
+                            stdout.queue(Clear(ClearType::All))?;
+                            render(&mut stdout, &mut state, term_size)?;
+                        }
+                        terminal::Discard::Yes => break,
                     }
                 }
                 // Discarded on purpose: there is nothing unsaved left.
@@ -247,7 +252,8 @@ fn abort(
     draft::flush(extras, &state.lines, baseline, autosave);
     guard.finish(stdout);
     // Aborting already: nothing more to do about an output that fails.
-    crate::out!("\n\n").ok();
+    // One blank line, as under an error (REVIEW section 4: there were two).
+    crate::out!("\n").ok();
     if let Some(note) = draft_note(extras, autosave) {
         crate::errln!("{note}");
     }

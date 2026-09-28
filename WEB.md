@@ -83,7 +83,15 @@ Alternatives:
   moved into the cookie and stripped from the URL by a redirect. A `+` in
   the address is a `+`; a `%`, `&` or `#` in the token has to be written
   `%25`, `%26`, `%23` (base64 tokens have none). A wrong or old token gets
-  the sign-in form — or, when the browser is signed in anyway, the page.
+  the sign-in form, which says the token was not the one — or, when the
+  browser is signed in anyway, the page.
+
+Signed out, `/` is the sign-in form (`200`); any other page path answers it
+with `401`, and `/api/` paths with a JSON `401`. The pages of the server ask
+the browser for no icon, so no `/favicon.ico` request goes out (a static
+page from `rusk gen` keeps the icon of the site it is put on). A sign-in
+posted from a page of another origin is refused like any change (`403`,
+see below).
 
 The token travels as it is in a cookie and an HTTP header, so it may hold
 printable ASCII only (spaces inside it are fine), without a `;` and without
@@ -195,7 +203,21 @@ a list fails until the client is updated.
 
 Mutating requests must send `Content-Type: application/json` (CSRF guard;
 the media type is compared without regard to case, parameters such as
-`; charset=utf-8` aside).
+`; charset=utf-8` aside). A change a browser says comes from a page of
+another origin (`Sec-Fetch-Site` other than `same-origin` or `none`) is
+refused with `403`, on any path (`/auth` and `/logout` too): that covers a
+page of the same host on another port, or of a sibling domain, which the
+browser counts as the same site and sends the session cookie from.
+Browsers send `Sec-Fetch-Site` to https and loopback addresses only; over
+plain HTTP on a LAN or a tailnet, and in a browser that never sends it, the
+Content-Type check alone holds such a page back. Clients that are no
+browser send no such header. An id in a path is digits, leading zeros
+allowed as on the command line (`/api/tasks/+1` is `404`, `/api/tasks/01`
+is task 1). An error the server meets with its database goes to the client
+whole — the path of the file, up to three lines of it around the fault,
+what to do about it, or what ssh or curl said — since the client either
+holds the token or runs on the machine itself (the password of an http URL
+and the token are never in it).
 A request that changes nothing (`PATCH` with the values the task already
 has) is answered as usual but writes nothing: no `.backup` rotation, no git
 commit. Errors come as `{"error": "..."}` with a 4xx/5xx status; the message

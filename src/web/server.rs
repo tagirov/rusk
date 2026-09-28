@@ -71,6 +71,7 @@ const LOGIN_PAGE: &str = r#"<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>rusk — sign in</title>
+<link rel="icon" href="data:,">
 <style>
 body{margin:0;display:grid;place-items:center;min-height:100vh;background:#111114;color:#e8e8ea;
 font:16px/1.4 system-ui,sans-serif}
@@ -78,14 +79,25 @@ form{display:flex;flex-direction:column;gap:12px;width:min(90vw,320px)}
 h1{font-size:18px;margin:0;text-align:center}
 input{background:#1c1c21;color:inherit;border:1px solid #2a2a31;border-radius:10px;padding:12px;font:inherit}
 button{background:#ffa500;border:0;border-radius:10px;padding:12px;font:inherit;font-weight:600;cursor:pointer}
+.wrong{margin:0;text-align:center;color:#ff5f5f}
 @media (prefers-color-scheme:light){body{background:#f5f5f7;color:#1b1b1f}input{background:#fff;border-color:#e2e2e8}}
 </style></head><body>
 <form method="post" action="/auth">
 <h1>rusk</h1>
-<input type="password" name="token" placeholder="Access token" autofocus required>
+<!--wrong--><input type="password" name="token" placeholder="Access token" autofocus required>
 <button type="submit">Sign in</button>
 </form></body></html>
 "#;
+
+/// The sign-in page; after a token that was not the one, it says so.
+fn login_page(wrong_token: bool) -> String {
+    let note = if wrong_token {
+        r#"<p class="wrong" role="alert">That is not the access token.</p>"#
+    } else {
+        ""
+    };
+    LOGIN_PAGE.replace("<!--wrong-->", note)
+}
 
 struct Reply {
     status: u16,
@@ -355,8 +367,14 @@ fn open_tm() -> Result<TaskManager> {
     TaskManager::open()
 }
 
+/// The id in `/api/tasks/{id}`: digits, as the command line takes an id
+/// (`str::parse` would take `+1` too).
 fn task_id_from_path(path: &str) -> Option<TaskId> {
-    path.strip_prefix("/api/tasks/")?.parse().ok()
+    let id = path.strip_prefix("/api/tasks/")?;
+    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    id.parse().ok()
 }
 
 /// Whether any token the request presents is `token`: a stale cookie does
@@ -429,6 +447,25 @@ fn route(request: &mut Request, opts: &ServeOptions) -> Reply {
         return Reply::json_error(400, "more than one Host header");
     }
 
+    // A change asked for by a page of another origin is refused where the
+    // browser says so. That covers a page of this host on another port or
+    // of a sibling domain, which the browser counts as the same site: it
+    // sends such a page's requests with the session cookie (REVIEW section
+    // 4). Browsers say it to https and loopback addresses only; elsewhere
+    // (plain HTTP on a LAN) and in a browser that never does, the
+    // Content-Type check below holds such a page back. An `Origin` check
+    // for those would refuse the page itself behind a proxy that rewrites
+    // `Host` (nginx does by default). Clients that are no browser send no
+    // such header.
+    let changes = matches!(method, Method::Post | Method::Put | Method::Patch | Method::Delete);
+    if changes
+        && header_value(request, "Sec-Fetch-Site").is_some_and(|site| {
+            !site.eq_ignore_ascii_case("same-origin") && !site.eq_ignore_ascii_case("none")
+        })
+    {
+        return Reply::json_error(403, "a page of another origin cannot change the tasks");
+    }
+
     match &opts.token {
         Some(token) => {
             // Bookmarkable `/?token=...`: on match, move the token into a
@@ -445,7 +482,7 @@ fn route(request: &mut Request, opts: &ServeOptions) -> Reply {
                 } else if authorized(request, token) {
                     Reply::redirect_home()
                 } else {
-                    Reply::html(401, LOGIN_PAGE)
+                    Reply::html(401, login_page(true))
                 };
             }
             // Signing out needs no signing in: a stale cookie goes too.
@@ -461,14 +498,16 @@ fn route(request: &mut Request, opts: &ServeOptions) -> Reply {
                     Some(t) if token_eq(&t, token) => {
                         Reply::redirect_home().with_session_cookie(token, over_tls(request))
                     }
-                    _ => Reply::html(401, LOGIN_PAGE),
+                    _ => Reply::html(401, login_page(true)),
                 };
             }
             if !authorized(request, token) {
-                return if path.starts_with("/api/") {
-                    Reply::json_error(401, "unauthorized")
-                } else {
-                    Reply::html(200, LOGIN_PAGE)
+                // The page is where one signs in; any other path is not
+                // there for whoever has not.
+                return match path {
+                    "/" => Reply::html(200, login_page(false)),
+                    p if p.starts_with("/api/") => Reply::json_error(401, "unauthorized"),
+                    _ => Reply::html(401, login_page(false)),
                 };
             }
         }
@@ -739,6 +778,55 @@ mod tests {
         assert_eq!(bind_host("LOCALHOST"), "127.0.0.1");
         assert_eq!(bind_host("localhost."), "127.0.0.1");
         assert_eq!(bind_host("0.0.0.0"), "0.0.0.0");
+    }
+
+    /// REVIEW section 4: `DELETE /api/tasks/+1` deleted task 1; an id in a
+    /// path is what the command line takes as one.
+    #[test]
+    fn an_id_in_a_path_is_digits() {
+        assert_eq!(task_id_from_path("/api/tasks/7"), Some(7));
+        assert_eq!(task_id_from_path("/api/tasks/007"), Some(7));
+        for bad in ["/api/tasks/+1", "/api/tasks/-1", "/api/tasks/", "/api/tasks/1 ", "/api/tasks/4294967296"] {
+            assert_eq!(task_id_from_path(bad), None, "{bad}");
+        }
+    }
+
+    /// REVIEW section 4: a page of this host on another port is the same
+    /// site to the browser, which sends its requests with the session
+    /// cookie; where the browser says where a request comes from, a change
+    /// from another origin is refused, before the token is looked at.
+    #[test]
+    fn a_change_from_another_origin_is_refused() {
+        for method in [Method::Post, Method::Put, Method::Patch, Method::Delete] {
+            for site in ["same-site", "cross-site", "Cross-Site"] {
+                let request = TestRequest::new()
+                    .with_method(method.clone())
+                    .with_path("/api/tasks/1")
+                    .with_header(header("Content-Type", "application/json"))
+                    .with_header(header("Sec-Fetch-Site", site));
+                assert_eq!(reply_to(request, &with_token(Some("tok"))).status, 403, "{method} {site}");
+            }
+        }
+        // Reading is not changing; the page's own requests and a client
+        // that is no browser are not refused for it.
+        let read = TestRequest::new().with_path("/api/tasks").with_header(header("Sec-Fetch-Site", "cross-site"));
+        assert_eq!(reply_to(read, &with_token(Some("tok"))).status, 401);
+        for site in [Some("same-origin"), Some("none"), None] {
+            let mut request = TestRequest::new().with_method(Method::Delete).with_path("/api/tasks/1");
+            if let Some(site) = site {
+                request = request.with_header(header("Sec-Fetch-Site", site));
+            }
+            assert_eq!(reply_to(request, &with_token(Some("tok"))).status, 401, "{site:?}");
+        }
+    }
+
+    /// REVIEW section 4: a wrong token got the sign-in page back without a
+    /// word.
+    #[test]
+    fn the_sign_in_page_says_when_the_token_was_wrong() {
+        assert!(login_page(true).contains("That is not the access token."));
+        assert!(!login_page(false).contains("not the access token"));
+        assert!(!login_page(false).contains("<!--wrong-->"));
     }
 
     /// REVIEW section 4: a server whose database is its own address waited

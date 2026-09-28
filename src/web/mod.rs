@@ -50,7 +50,15 @@ pub fn render_template(
         Mode::Static => "static",
         Mode::Live => "live",
     };
+    // The live page asks for no icon: `rusk serve` has none, and a browser
+    // would ask for `/favicon.ico` on every load. A static page is put on
+    // a site of its own, whose icon it keeps (review of R29).
+    let icon = match mode {
+        Mode::Static => "",
+        Mode::Live => r#"<link rel="icon" href="data:,">"#,
+    };
     let html = TEMPLATE
+        .replacen("<!--__ICON__-->", icon, 1)
         .replacen("__MODE__", mode_str, 1)
         .replacen("/*__THEME__*/", theme_css, 1)
         .replacen("__GENERATED__", generated, 1)
@@ -58,7 +66,10 @@ pub fn render_template(
     // Validate before injecting task data, which may legitimately contain
     // marker-looking text.
     ensure!(
-        !html.contains("__MODE__") && !html.contains("__GENERATED__") && !html.contains("__SIGNED_IN__"),
+        !html.contains("__MODE__")
+            && !html.contains("__GENERATED__")
+            && !html.contains("__SIGNED_IN__")
+            && !html.contains("__ICON__"),
         "template markers were not replaced"
     );
     ensure!(

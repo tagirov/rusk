@@ -26,7 +26,7 @@
 // R22 (`git_backend`), R25 (config, dates, environment), R23 (the file
 // formats), R26 (completion scripts, docs, tests, build) — and of the leads
 // of section 4: R27 (CLI, storage, SQLite), R28 (remote databases and
-// `rusk sync`).
+// `rusk sync`), R29 (`rusk serve`).
 // R6 and R8 need a pty
 // for most of their repros: what Command can drive is here, the draft rules
 // are unit-tested in `src/cli/editor/draft.rs`, and the rest is driven by a
@@ -7410,4 +7410,86 @@ fn r28_a_server_that_is_its_own_database_says_so() {
     let body = String::from_utf8_lossy(&answer.stdout);
     assert!(started.elapsed() < std::time::Duration::from_secs(10), "{:?}", started.elapsed());
     assert!(body.contains("its own database"), "{body}");
+}
+
+// ---------------------------------------------------------------------------
+// R29 — `rusk serve`: the leads of REVIEW.md section 4
+// ---------------------------------------------------------------------------
+//
+// Against a real `rusk serve`, through the keep-alive `Http` client of R20
+// (no curl); the routing itself is unit-tested in `src/web/server.rs`.
+
+/// REVIEW section 4: `DELETE /api/tasks/+1` deleted task 1: an id the
+/// command line does not take. Leading zeros are an id there
+/// (`rusk mark 01`), and so they are here.
+#[test]
+#[cfg(feature = "web")]
+fn r29_an_id_in_a_path_is_digits() {
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, "", &[]);
+    let mut http = Http::to(server.port);
+    for path in ["/api/tasks/+1", "/api/tasks/-1", "/api/tasks/%2B1", "/api/tasks/1%20", "/api/tasks/"] {
+        assert_eq!(status(&http.get(path, "")), 404, "{path}");
+        let delete = http.send(&format!("DELETE {path} HTTP/1.1\r\nHost: localhost"), "");
+        assert_eq!(status(&delete), 404, "{path}");
+    }
+    assert_eq!(db_tasks(&sb).len(), 3);
+    assert_eq!(status(&http.get("/api/tasks/1", "")), 200);
+    assert_eq!(status(&http.get("/api/tasks/01", "")), 200);
+}
+
+/// REVIEW section 4: a page of this host on another port (or of a sibling
+/// domain) is the same site to the browser: its requests carry the session
+/// cookie, and only the Content-Type check held them back. Where the
+/// browser says where a request comes from (https, loopback), a change
+/// from another origin is refused, on any path.
+#[test]
+#[cfg(feature = "web")]
+fn r29_a_page_of_another_origin_changes_nothing() {
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, "", &[]);
+    let mut http = Http::to(server.port);
+    let from = |method: &str, path: &str, site: &str| {
+        format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nSec-Fetch-Site: {site}")
+    };
+    for site in ["same-site", "cross-site"] {
+        assert_eq!(status(&http.send(&from("POST", "/api/tasks", site), r#"{"text":"csrf"}"#)), 403, "{site}");
+        assert_eq!(status(&http.send(&from("DELETE", "/api/tasks/1", site), "")), 403, "{site}");
+        assert_eq!(status(&http.send(&from("POST", "/logout", site), "{}")), 403, "{site}");
+    }
+    assert_eq!(db_tasks(&sb).len(), 3);
+    // The page itself, and a client that is no browser, go on as before;
+    // reading is not changing.
+    assert_eq!(status(&http.send(&from("POST", "/api/tasks", "same-origin"), r#"{"text":"mine"}"#)), 201);
+    assert_eq!(status(&http.json("POST", "/api/tasks", r#"{"text":"no browser"}"#)), 201);
+    assert_eq!(status(&http.get("/api/tasks", "\r\nSec-Fetch-Site: cross-site")), 200);
+}
+
+/// REVIEW section 4: a wrong token got the sign-in page back without a
+/// word, and `/favicon.ico` of a signed-out browser got the page with 200.
+#[test]
+#[cfg(feature = "web")]
+fn r29_the_sign_in_page_says_when_the_token_was_wrong() {
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let config = sb.path().join("token.cfg");
+    fs::write(&config, "web_token = right-token\n").unwrap();
+    let server = serve(&sb, &config.display().to_string(), &[]);
+    let mut http = Http::to(server.port);
+    let form = "POST /auth HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/x-www-form-urlencoded";
+    for wrong in [http.send(form, "token=nope"), http.get("/?token=nope", "")] {
+        assert_eq!(status(&wrong), 401, "{wrong}");
+        assert!(wrong.contains("That is not the access token."), "{wrong}");
+    }
+    let first = http.get("/", "");
+    assert_eq!(status(&first), 200);
+    assert!(first.contains("Access token") && !first.contains("not the access token"), "{first}");
+    assert_eq!(status(&http.get("/favicon.ico", "")), 401);
+    // The pages of the server ask the browser for no icon.
+    let icon = r#"<link rel="icon" href="data:,">"#;
+    assert!(first.contains(icon), "{first}");
+    assert!(http.get("/", "\r\nAuthorization: Bearer right-token").contains(icon));
+    // A static page is put on a site of its own, whose icon it keeps
+    // (review of R29).
+    let page = sb.cmd().args(["gen", "-o", "-"]).output().unwrap();
+    assert!(!stdout_of(&page).contains(r#"rel="icon""#), "{}", stdout_of(&page));
 }

@@ -259,7 +259,8 @@ User input → clap (args.rs) → main.rs (config::load → init) dispatch
 
 rusk serve: browser ←→ tiny_http (web/server.rs), each request read, checked and answered
     on a thread of its own (a body up to 32 MiB, the sign-in form up to 4 KiB) → auth: any
-    presented token (cookie, Bearer) matches; without a token only a loopback `Host` →
+    presented token (cookie, Bearer) matches; without a token only a loopback `Host`; a
+    change from another origin by the browser's `Sec-Fetch-Site` is 403 →
     api.rs handlers → fresh TaskManager per request, one request at a time
     (`server::DATABASE`: an ssh database has no lock of its own) ←→ database (and the writer
     lock against CLI commands). An unread body is thrown away by its thread (up to 1 MiB)

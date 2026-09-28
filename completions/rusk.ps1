@@ -58,9 +58,10 @@ function _rusk_quote_text {
     return "'" + ($text -replace '[''\u2018-\u201B]', '$0$0') + "'"
 }
 
-# Shell names for `rusk completions install` / `show` (exclude already-typed full names)
+# Shell names for `rusk completions install` / `show` (exclude already-typed full names;
+# the word under the cursor is still being typed and is not one of them)
 function _rusk_get_remaining_shells_after_install_show {
-    param($tokens)
+    param($tokens, [int]$cursorPosition)
     $all = @('bash', 'zsh', 'fish', 'nu', 'powershell')
     $idx = -1
     for ($i = 2; $i -lt $tokens.Count; $i++) {
@@ -75,6 +76,7 @@ function _rusk_get_remaining_shells_after_install_show {
     }
     $picked = @()
     for ($j = $idx + 1; $j -lt $tokens.Count; $j++) {
+        if ([int]$tokens[$j].Extent.EndOffset -ge $cursorPosition) { break }
         $w = $tokens[$j].Value
         if ($all -contains $w -and $picked -notcontains $w) {
             $picked += $w
@@ -601,7 +603,7 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
             if ($wordToComplete -like '-*') {
                 return _rusk_emit_flag_completions @('--help', '-h') $wordToComplete $tokens $command $cur
             }
-            $available = _rusk_get_remaining_shells_after_install_show $tokens
+            $available = _rusk_get_remaining_shells_after_install_show $tokens $cursorPosition
             if ($available.Count -eq 0) {
                 if ([string]::IsNullOrEmpty($wordToComplete)) {
                     return _rusk_emit_flag_completions @('--help', '-h') $wordToComplete $tokens $command $cur

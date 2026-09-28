@@ -429,14 +429,15 @@ _rusk_main() {
                 local -a all_shells=("bash" "zsh" "fish" "nu" "powershell")
                 local -a selected_shells=()
                 local install_idx=-1
-                for ((i=1; i<=${#words[@]}; i++)); do
+                for ((i=1; i<CURRENT; i++)); do
                     if [[ "${words[i]}" == "install" || "${words[i]}" == "show" ]]; then
                         install_idx=$i
                         break
                     fi
                 done
+                # The word under the cursor is still being typed: not a given shell
                 if (( install_idx > 0 )); then
-                    for ((i=install_idx+1; i<=${#words[@]}; i++)); do
+                    for ((i=install_idx+1; i<CURRENT; i++)); do
                         local w="${words[i]}"
                         for sh in "${all_shells[@]}"; do
                             if [[ "$w" == "$sh" ]]; then

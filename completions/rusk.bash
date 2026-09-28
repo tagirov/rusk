@@ -309,18 +309,19 @@ _rusk_get_available_shells() {
     local all_shells=("bash" "zsh" "fish" "nu" "powershell")
     local selected=()
 
-    # Find index of install/show in COMP_WORDS
+    # Find index of install/show among the words before the cursor
     local i install_idx=-1
-    for ((i=1; i<${#COMP_WORDS[@]}; i++)); do
+    for ((i=1; i<COMP_CWORD; i++)); do
         if [[ "${COMP_WORDS[i]}" == "install" || "${COMP_WORDS[i]}" == "show" ]]; then
             install_idx=$i
             break
         fi
     done
 
-    # Collect already specified shells after install/show
+    # Collect the shells given after install/show; the word under the cursor
+    # is still being typed and is not one of them
     if (( install_idx >= 0 )); then
-        for ((i=install_idx+1; i<${#COMP_WORDS[@]}; i++)); do
+        for ((i=install_idx+1; i<COMP_CWORD; i++)); do
             local w="${COMP_WORDS[i]}"
             case " ${all_shells[*]} " in
                 *" $w "*)

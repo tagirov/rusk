@@ -85,8 +85,20 @@ rusk edit 1 -a2 -d_ |-h --help
 rusk add x -- |
 rusk edit 1 -- |
 rusk add -- -|
-# After a shell, the others are offered, for `install` and `show` alike.
+# After a shell, the ones not on the line yet are offered, for `install` and
+# `show` alike, until none is left. The word under the cursor is still being
+# typed: a shell typed in full there is completed, not left out.
 rusk completions show zsh |-h --help bash fish nu powershell
+rusk completions show fish zsh |-h --help bash nu powershell
+rusk completions install fish |-h --help bash zsh nu powershell
+rusk completions install fish zsh |-h --help bash nu powershell
+rusk completions install fish zsh nu |-h --help bash powershell
+rusk completions install fish zsh nu bash |-h --help powershell
 rusk completions install bash zsh fish nu powershell |-h --help
+rusk completions install fish zsh p|powershell
+rusk completions install fish zsh z|
+rusk completions install fish|fish
+rusk completions install fish zsh|zsh
+rusk completions install fish f|
 # fish offers the text of the task next to its id after `--` as well.
 rusk edit 1 -- |"buy milk"|fish

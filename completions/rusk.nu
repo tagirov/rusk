@@ -619,30 +619,18 @@ def complete-sync [spans: list<string>, cur: string] {
 # Get available shells, excluding already selected ones
 def get-available-shells [spans: list<string>] {
   let all_shells = (get-shells | get value)
-  mut selected_shells: list<string> = []
-  
-  # Find install or show in spans
-  mut install_show_index = -1
-  for $i in 0..<($spans | length) {
-    if ($spans | get $i) == "install" or ($spans | get $i) == "show" {
-      $install_show_index = $i
-      break
-    }
+  # The last span is the word under the cursor, still being typed: not a
+  # given shell
+  let before = ($spans | drop 1)
+  let install_show_index = ($before | enumerate | where {|e| $e.item == "install" or $e.item == "show"} | get index | append [-1] | first)
+  let selected_shells = if $install_show_index >= 0 {
+    $before | skip ($install_show_index + 1) | where {|w| $w in $all_shells}
+  } else {
+    []
   }
-  
-  # If we found install/show, collect all shell arguments after it
-  if $install_show_index >= 0 {
-    for $i in (($install_show_index + 1)..<($spans | length)) {
-      let arg = ($spans | get $i)
-      # Check if it's a valid shell name
-      if ($all_shells | any {|shell| $shell == $arg}) {
-        $selected_shells = ($selected_shells | append [$arg])
-      }
-    }
-  }
-  
+
   # Return shells that are not selected
-  $all_shells | where {|shell| not ($selected_shells | any {|selected| $selected == $shell})}
+  $all_shells | where {|shell| not ($shell in $selected_shells)}
 }
 
 # Check if we have already selected at least one shell after install/show
@@ -690,7 +678,7 @@ def complete-completions [spans: list<string>, cur: string, prev: string, word_c
       if ($cur == "") {
         return ($shell_completions | append (get-common-flags))
       } else {
-        let matching = (filter-by-prefix $shell_completions $cur)
+        let matching = ($shell_completions | where {|s| $s.value | str starts-with $cur })
         return $matching
       }
     }
@@ -721,7 +709,7 @@ def complete-completions [spans: list<string>, cur: string, prev: string, word_c
           {value: $shell, description: $shell}
         }
       })
-      let matching = (filter-by-prefix $shell_completions $cur)
+      let matching = ($shell_completions | where {|s| $s.value | str starts-with $cur })
       if ($matching | length) > 0 {
         return $matching
       } else {

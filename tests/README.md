@@ -139,7 +139,7 @@ Tests for directory structure:
 - Custom directory paths
 - Directory creation on save
 - Backup file location
-- Debug/test build path (`rusk_debug`) and interaction with `RUSK_DB`
+- Debug/test build path (`rusk-<uid>/debug`, the user's own) and interaction with `RUSK_DB`
 
 ### Edit Command Tests
 
@@ -204,8 +204,9 @@ Shared helper functions for tests:
 
 Every test that runs the binary must go through a `Sandbox`. Debug and
 test-mode binaries ignore `RUSK_DB` and pin the database to
-`$TMPDIR/rusk_debug/tasks.json`; the sandbox points `TMPDIR` (and `RUSK_DB`,
-for release binaries) at its own directory and forces test mode on the child,
+`$TMPDIR/rusk-<uid>/debug/tasks.json` (`Sandbox::db_path`); the sandbox points
+`TMPDIR` (and `RUSK_DB`, for release binaries) at its own directory, with the
+`rusk-<uid>` made closed to others as rusk makes it, and forces test mode on the child,
 so a debug binary never seeds its demo tasks into the test database. Test
 mode in the binary exists in debug builds only: the `rusk` command built for
 release never is in it (REVIEW №12), whatever its name or environment, so a
@@ -326,7 +327,7 @@ These tests are designed to run in CI/CD pipelines:
   the tests are skipped without python3 or without a pty to be had. The
   driver runs without `DISPLAY` and `WAYLAND_DISPLAY`, so the editor never
   reaches the desktop's clipboard. A draft is put in place as the file the
-  editor writes (`rusk_debug/editor-new-task.draft`). Its pure parts are unit-tested in `src/cli/editor/` (`text_ops`,
+  editor writes (`editor-new-task.draft` beside the sandbox database). Its pure parts are unit-tested in `src/cli/editor/` (`text_ops`,
   `state`, `input`) and `src/cli/handlers.rs`.
   R19 closes stdout under a command with `std::io::pipe` (reader dropped
   before the spawn, so every write gets EPIPE), writes it to `/dev/full`, and

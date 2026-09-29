@@ -16,6 +16,7 @@ pub mod output;
 pub mod parser;
 pub mod printable;
 pub mod revision;
+mod scratch;
 pub mod search;
 pub mod storage;
 pub mod width;

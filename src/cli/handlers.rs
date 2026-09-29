@@ -70,14 +70,14 @@ impl HandlerCLI {
     /// The draft slot of one task, in the directory the drafts of this
     /// database belong in.
     #[cfg(feature = "interactive")]
-    fn draft_slot(key: &str, base: &str) -> super::editor::draft::Slot {
+    fn draft_slot(key: &str, base: &str) -> Result<super::editor::draft::Slot> {
         use super::editor::draft;
-        let dir = draft::dir_for(&TaskManager::get_db_dir(), TaskManager::db_is_local());
-        draft::Slot {
+        let dir = draft::dir_for(TaskManager::local_db_dir().as_deref())?;
+        Ok(draft::Slot {
             path: draft::path_for(&dir, key),
             key: key.to_string(),
             base: draft::base_of(base),
-        }
+        })
     }
 
     /// Offers back the draft left by an editor session that ended without
@@ -129,9 +129,14 @@ impl HandlerCLI {
         }
     }
 
-    /// Runs the multi-line editor with draft persistence wired up.
+    /// Runs the multi-line editor with draft persistence wired up: the text
+    /// it ended with, and the draft slot it used — whoever stores the text
+    /// removes the draft from there, and nothing is looked up again after
+    /// the user has typed (review of R31).
     #[cfg(feature = "interactive")]
-    fn run_editor_with_draft(session: EditorSession<'_>) -> Result<String> {
+    fn run_editor_with_draft(
+        session: EditorSession<'_>,
+    ) -> Result<(String, super::editor::draft::Slot)> {
         let EditorSession {
             draft_key,
             what,
@@ -142,24 +147,25 @@ impl HandlerCLI {
             cursor_at_start,
             allow_skip,
         } = session;
-        let slot = Self::draft_slot(draft_key, base);
+        let slot = Self::draft_slot(draft_key, base)?;
         let restored = Self::offer_draft(&slot, what)?
             .map(|text| Self::with_seed_date(text, seed_date));
 
         let extras = EditorExtras {
-            draft: Some(slot),
+            draft: Some(slot.clone()),
             relative_date_base,
             ..Default::default()
         };
 
-        Self::run_multi_line_editor(
+        let text = Self::run_multi_line_editor(
             "    ",
             &prefill,
             restored.as_deref(),
             cursor_at_start,
             allow_skip,
             extras,
-        )
+        )?;
+        Ok((text, slot))
     }
 
     /// The editor keeps its draft until the text is stored, so a save that
@@ -216,7 +222,7 @@ impl HandlerCLI {
         // There is no task yet, so every new-task draft is pinned to the
         // same empty base: a `-d` seed must not make the draft typed
         // without one unofferable.
-        let edited = Self::run_editor_with_draft(EditorSession {
+        let (edited, slot) = Self::run_editor_with_draft(EditorSession {
             draft_key: "new-task",
             what: "new task",
             base: "",
@@ -236,7 +242,6 @@ impl HandlerCLI {
             anyhow::bail!("Task text cannot be empty");
         }
 
-        let slot = Self::draft_slot("new-task", "");
         let id = tm
             .add_task_full(stripped, parsed_date, after)
             .map_err(|e| Self::draft_survives_failed_save(e, &slot, &edited, "rusk add"))?;
@@ -292,17 +297,19 @@ impl HandlerCLI {
         }
     }
 
-    /// What the editor made of a task: the date and text to store, and the
-    /// buffer they were read from (what its draft holds).
+    /// What the editor made of a task: the date and text to store, the
+    /// buffer they were read from (what its draft holds), and the draft's
+    /// slot.
     #[cfg(feature = "interactive")]
+    #[allow(clippy::type_complexity)]
     fn interactive_edit_text(
         current: &str,
         task_id: TaskId,
         task_date: Option<chrono::NaiveDate>,
         allow_skip: bool,
-    ) -> Result<Option<(Option<chrono::NaiveDate>, String, String)>> {
+    ) -> Result<Option<(Option<chrono::NaiveDate>, String, String, super::editor::draft::Slot)>> {
         let base_prefill = Self::edit_prefill(current, task_date);
-        let edited = Self::run_editor_with_draft(EditorSession {
+        let (edited, slot) = Self::run_editor_with_draft(EditorSession {
             draft_key: &format!("task-{task_id}"),
             what: &format!("task {task_id}"),
             base: &base_prefill,
@@ -336,7 +343,7 @@ impl HandlerCLI {
         } else {
             new_text
         };
-        Ok(Some((parsed_date, new_text, edited)))
+        Ok(Some((parsed_date, new_text, edited, slot)))
     }
 
     /// The first word of the first line of `text` when the editor reads it
@@ -419,7 +426,7 @@ impl HandlerCLI {
             let current_date = tm.tasks()[idx].date;
 
             match Self::interactive_edit_text(&current_text, *id, current_date, allow_skip) {
-                Ok(Some((new_date, new_text, buffer)))
+                Ok(Some((new_date, new_text, buffer, slot)))
                     if new_text != current_text || new_date != current_date =>
                 {
                     // Saved right away, against the database as it is now:
@@ -427,10 +434,6 @@ impl HandlerCLI {
                     // later Esc or Ctrl+C in this batch must not take a
                     // confirmed edit with it. Success is reported only
                     // once the edit is stored.
-                    let slot = Self::draft_slot(
-                        &format!("task-{id}"),
-                        &Self::edit_prefill(&current_text, current_date),
-                    );
                     tm.edit_task_as_seen(
                         *id,
                         (&current_text, current_date),
@@ -530,10 +533,14 @@ impl HandlerCLI {
     fn forget_drafts(tasks: &[Task], outcome: &crate::storage::ConfirmedDeletion) {
         #[cfg(feature = "interactive")]
         for task in tasks.iter().filter(|t| outcome.deleted.contains(&t.id)) {
-            super::editor::draft::remove(&Self::draft_slot(
+            let slot = Self::draft_slot(
                 &format!("task-{}", task.id),
                 &Self::edit_prefill(&task.text, task.date),
-            ));
+            );
+            // Nowhere for drafts means none to forget.
+            if let Ok(slot) = slot {
+                super::editor::draft::remove(&slot);
+            }
         }
         #[cfg(not(feature = "interactive"))]
         let _ = (tasks, outcome);

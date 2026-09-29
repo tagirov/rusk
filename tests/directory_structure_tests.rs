@@ -13,16 +13,22 @@ fn test_default_directory_structure() -> Result<()> {
     let backend = rusk::Backend::resolve()?;
     let db_path = backend.local_path().expect("a local database").to_path_buf();
 
-    // In test mode, should use /tmp/rusk_debug/tasks.json (same as debug mode)
+    // In test mode, should use <tmp>/rusk-<uid>/debug/tasks.json (same as
+    // debug mode): a directory of this user's own, closed to others
+    // (REVIEW П3).
     assert!(db_path.file_name().unwrap() == "tasks.json");
 
-    // Parent directory should be "rusk_debug" (from /tmp/rusk_debug/tasks.json)
     let parent = db_path.parent().unwrap();
-    let parent_name = parent.file_name().unwrap().to_string_lossy();
-    assert_eq!(
-        parent_name, "rusk_debug",
-        "Expected parent directory to be 'rusk_debug', got '{parent_name}'"
-    );
+    assert_eq!(parent.file_name().unwrap(), "debug", "{}", db_path.display());
+    let own = parent.parent().unwrap();
+    assert_eq!(own.file_name().unwrap(), common::private_dir_name().as_str(), "{}", db_path.display());
+    assert_eq!(own.parent().unwrap(), std::env::temp_dir());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(own)?.permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "{}: {mode:o}", own.display());
+    }
 
     Ok(())
 }
@@ -146,10 +152,10 @@ fn test_restore_files_in_custom_directory() -> Result<()> {
 }
 
 #[test]
-fn test_get_db_dir_function() -> Result<()> {
-    // In test mode the database always lives under <tmp>/rusk_debug.
-    let db_dir = TaskManager::get_db_dir();
-    let expected_dir = std::env::temp_dir().join("rusk_debug");
+fn test_local_db_dir_function() -> Result<()> {
+    // In test mode the database always lives under <tmp>/rusk-<uid>/debug.
+    let db_dir = TaskManager::local_db_dir().expect("a local database");
+    let expected_dir = std::env::temp_dir().join(common::private_dir_name()).join("debug");
     assert_eq!(db_dir, expected_dir);
     Ok(())
 }

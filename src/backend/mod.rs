@@ -240,7 +240,12 @@ impl Backend {
     /// `rusk_db` is.
     pub fn resolve() -> Result<Self> {
         if crate::is_test_mode() || cfg!(debug_assertions) {
-            let path = std::env::temp_dir().join("rusk_debug").join("tasks.json");
+            // Below a directory of this user's own: the temp directory is
+            // everybody's (REVIEW П3).
+            let path = crate::scratch::private_dir()
+                .context("no place for the debug database")?
+                .join("debug")
+                .join("tasks.json");
             Self::from_local_path(path)
         } else if let Some(value) = std::env::var_os("RUSK_DB").filter(|v| !v.is_empty()) {
             let location = Location::parse_os(&value).with_context(|| {

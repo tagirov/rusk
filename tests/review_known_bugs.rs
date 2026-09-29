@@ -26,7 +26,9 @@
 // R22 (`git_backend`), R25 (config, dates, environment), R23 (the file
 // formats), R26 (completion scripts, docs, tests, build) — and of the leads
 // of section 4: R27 (CLI, storage, SQLite), R28 (remote databases and
-// `rusk sync`), R29 (`rusk serve`), R30 (the editor).
+// `rusk sync`), R29 (`rusk serve`), R30 (the editor) — and R31 (what was
+// left after them: a `Content-Length` nobody could send took the server
+// down; the debug database was in a directory every user shared).
 // R6 and R8 need a pty
 // for most of their repros: what Command can drive is here, the draft rules
 // are unit-tested in `src/cli/editor/draft.rs`, and the rest is driven by a
@@ -5176,7 +5178,7 @@ fn r24_a_restored_draft_takes_the_date_of_the_command_line() {
         "text": "_ tomorrow call",
         "timestamp": "2026-09-27T10:00:00+00:00",
     });
-    std::fs::write(sb.path().join("rusk_debug").join("editor-new-task.draft"), draft.to_string()).unwrap();
+    std::fs::write(sb.db_dir().join("editor-new-task.draft"), draft.to_string()).unwrap();
     let steps: &[(u64, &[u8])] = &[(150, b"y"), (800, CTRL_S)];
     let Some(run) = sb.in_pty(&["add", "-d", "01-01-2027"], b"Restore unsaved draft", steps, false) else {
         return;
@@ -5313,9 +5315,16 @@ impl Http {
     /// `body`, and returns the response: headers, then the body unless the
     /// request was a HEAD.
     fn send(&mut self, head: &str, body: &str) -> String {
-        use std::io::{Read, Write};
+        use std::io::Write;
         let length = if body.is_empty() { String::new() } else { format!("Content-Length: {}\r\n", body.len()) };
         write!(self.0, "{head}\r\n{length}\r\n{body}").unwrap();
+        self.response(head)
+    }
+
+    /// The next response on the connection: headers, then the body unless
+    /// the request (`head`) was a HEAD.
+    fn response(&mut self, head: &str) -> String {
+        use std::io::Read;
         let mut buf = Vec::new();
         let mut chunk = [0u8; 8192];
         let end = loop {
@@ -6068,7 +6077,7 @@ fn git_out(dir: &Path, args: &[&str]) -> String {
 }
 
 /// A sandbox whose root is a git repository of Alice's, with `git_backend`
-/// on; the database lives in `rusk_debug/` below the root.
+/// on; the database lives in `rusk-<uid>/debug/` below the root.
 #[cfg(feature = "backend-git")]
 fn in_alices_repository() -> (Sandbox, std::path::PathBuf) {
     let sb = Sandbox::new();
@@ -6131,7 +6140,7 @@ fn r22_the_auxiliary_files_stay_out_of_git_status() {
     }
     assert!(sb.db_path().with_extension("json.backup").exists());
     let status = git_out(sb.path(), &["status", "--short"]);
-    assert!(!status.contains("rusk_debug/"), "{status}");
+    assert!(!status.contains("rusk-"), "{status}");
     // Only the database's own: a `.backup` of the user's elsewhere is theirs.
     fs::write(sb.path().join("notes.backup"), "mine").unwrap();
     assert!(git_out(sb.path(), &["status", "--short"]).contains("notes.backup"));
@@ -6215,7 +6224,7 @@ fn r22_what_keeps_the_history_from_going_on_is_said() {
     assert!(git_out(sb.path(), &["log", "--oneline"]).contains("rusk: update"), "no commit");
 
     fs::set_permissions(&exclude, fs::Permissions::from_mode(0o644)).unwrap();
-    fs::write(sb.path().join(".gitignore"), "rusk_debug/\n").unwrap();
+    fs::write(sb.path().join(".gitignore"), format!("{}/\n", common::private_dir_name())).unwrap();
     let out = sb.cmd().env("RUSK_CONFIG", &config).args(["add", "two"]).output().unwrap();
     assert!(out.status.success(), "{}", stderr_of(&out));
     let err = stderr_of(&out);
@@ -6945,8 +6954,8 @@ fn r27_gen_never_writes_over_the_database() {
         backup.display().to_string(),
         link.display().to_string(),
         // Relative to the working directory, and with a detour.
-        "rusk_debug/tasks.json".to_string(),
-        format!("{}/../rusk_debug/tasks.json.sync", db.parent().unwrap().display()),
+        format!("{}/debug/tasks.json", common::private_dir_name()),
+        format!("{}/../debug/tasks.json.sync", db.parent().unwrap().display()),
     ];
     for target in &targets {
         let out = sb.cmd().args(["gen", "-o", target]).output().unwrap();
@@ -7726,4 +7735,162 @@ fn r30_any_y_keeps_a_draft() {
         assert_eq!(run.code, Some(0), "{}", run.after_editor());
     }
     assert_eq!(text_of(&db_tasks(&sb), 1), "UVWXYZalpha");
+}
+
+// ---------------------------------------------------------------------------
+// R31 — what was left after R1-R30: an announced body is what the client
+// says, not what it sends; the debug database is the user's own
+// ---------------------------------------------------------------------------
+
+/// Review of R20: a request answered without its body being read (413
+/// here) took the whole server down when its `Content-Length` was one
+/// nobody could send — tiny_http threw the rest away through a buffer as
+/// large as the rest (`memory allocation of 1000000000000000 bytes
+/// failed`), and `usize::MAX` panicked the request's thread. The vendored
+/// tiny_http reads through a small buffer, up to where the connection
+/// ends.
+#[test]
+#[cfg(feature = "web")]
+fn r31_an_announced_body_nobody_could_send_takes_nothing_down() {
+    use std::io::Write;
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let mut server = serve(&sb, "", &[]);
+    let refused = "PUT /api/tasks HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: ";
+    for length in ["1000000000000000", "9223372036854775807", "18446744073709551615"] {
+        let mut http = Http::to(server.port);
+        let res = http.send(&format!("{refused}{length}"), "");
+        assert_eq!(status(&res), 413, "{length}: {res}");
+        // The client goes; the server reads no further. (Half a second:
+        // the crate as published took the process down on the drop of the
+        // request, right after the answer — but not always by 200 ms
+        // under load, review of R31.)
+        drop(http);
+        for _ in 0..10 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            if let Some(status) = server.child.try_wait().unwrap() {
+                panic!("the server died on Content-Length {length}: {status}");
+            }
+        }
+    }
+    let res = Http::to(server.port).get("/api/tasks", "");
+    assert_eq!(status(&res), 200, "{res}");
+
+    // Sixty at once on connections that stay open, and one client that
+    // sends what it announced for a while: answered throughout, the rest
+    // taken as it comes.
+    let mut open = Vec::new();
+    for _ in 0..60 {
+        let mut http = Http::to(server.port);
+        let res = http.send(&format!("{refused}1000000000000000"), "");
+        assert_eq!(status(&res), 413, "{res}");
+        open.push(http);
+    }
+    let mut streaming = Http::to(server.port);
+    let res = streaming.send(&format!("{refused}1000000000000000"), "");
+    assert_eq!(status(&res), 413, "{res}");
+    streaming.0.set_write_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+    let chunk = vec![b'x'; 64 * 1024];
+    for _ in 0..64 {
+        streaming.0.write_all(&chunk).expect("the server stopped taking the body");
+    }
+    let res = Http::to(server.port).get("/api/tasks", "");
+    assert_eq!(status(&res), 200, "{res}");
+    drop(streaming);
+    drop(open);
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    assert!(server.child.try_wait().unwrap().is_none(), "the server died");
+}
+
+/// R31: a body under 1 MiB left unread is thrown away before the answer
+/// and the connection goes on in step — for a client that waits to be
+/// told to send its body (`Expect: 100-continue`) too: it is told, and
+/// then answered.
+#[test]
+#[cfg(feature = "web")]
+fn r31_a_small_unread_body_keeps_the_connection() {
+    use std::io::Write;
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, &token_config(&sb, "sekret"), &[]);
+    let mut http = Http::to(server.port);
+    let body = format!(r#"{{"text":"{}"}}"#, "x".repeat(5000));
+    let res = http.json("POST", "/api/tasks", &body);
+    assert_eq!(status(&res), 401, "{res}");
+    // Same connection, in step.
+    let res = http.get("/api/tasks", "\r\nAuthorization: Bearer sekret");
+    assert_eq!(status(&res), 200, "{res}");
+
+    let head = "POST /api/tasks HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nExpect: 100-continue";
+    write!(http.0, "{head}\r\nContent-Length: {}\r\n\r\n", body.len()).unwrap();
+    let res = http.response(head);
+    assert_eq!(status(&res), 100, "{res}");
+    write!(http.0, "{body}").unwrap();
+    let res = http.response(head);
+    assert_eq!(status(&res), 401, "{res}");
+    let res = http.get("/api/tasks", "\r\nAuthorization: Bearer sekret");
+    assert_eq!(status(&res), 200, "{res}");
+}
+
+/// REVIEW П3: the database of a debug or test build lived in
+/// `$TMPDIR/rusk_debug`, one directory for every user of the machine,
+/// made 0755 by whoever came first. It is `$TMPDIR/rusk-<uid>/debug` now,
+/// closed to others; one left open is closed again, and something else
+/// under that name — a link somebody planted — is refused, not used.
+#[test]
+#[cfg(all(unix, debug_assertions))]
+fn r31_the_debug_database_is_in_a_directory_of_the_users_own() {
+    use std::os::unix::fs::PermissionsExt;
+    let sb = Sandbox::new();
+    let temp = sb.path().join("fresh");
+    fs::create_dir(&temp).unwrap();
+    let out = sb.cmd().env("TMPDIR", &temp).args(["add", "private"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let own = temp.join(common::private_dir_name());
+    let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(&own), 0o700, "{:o}", mode(&own));
+    assert!(fs::read_to_string(own.join("debug").join("tasks.json")).unwrap().contains("private"));
+    assert!(!temp.join("rusk_debug").exists());
+
+    fs::set_permissions(&own, fs::Permissions::from_mode(0o755)).unwrap();
+    let out = sb.cmd().env("TMPDIR", &temp).arg("list").output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert_eq!(mode(&own), 0o700, "{:o}", mode(&own));
+
+    let planted = sb.path().join("planted");
+    fs::create_dir(&planted).unwrap();
+    std::os::unix::fs::symlink(sb.path().join("elsewhere"), planted.join(common::private_dir_name())).unwrap();
+    let out = sb.cmd().env("TMPDIR", &planted).arg("list").output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "{}", stdout_of(&out));
+    let err = stderr_of(&out);
+    assert!(err.contains("no place for the debug database"), "{err}");
+    assert!(err.contains("is a symbolic link, not a directory of your own"), "{err}");
+    assert!(!sb.path().join("elsewhere").exists());
+}
+
+/// R31, found by its load test and as old as `rusk serve`: of a burst of
+/// keep-alive connections — a browser opens up to six at once — those
+/// after the first few were not read until another connection closed:
+/// tiny_http's task pool queued them for idle workers it had already
+/// woken for the ones before, and woke nobody for them. Every connection
+/// of a burst is answered, in bursts that outgrow the idle workers left
+/// by the one before.
+#[test]
+#[cfg(feature = "web")]
+fn r31_every_connection_of_a_burst_is_answered() {
+    use std::io::Write;
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, "", &[]);
+    for round in 1..=5 {
+        let mut open = Vec::new();
+        for _ in 0..8 * round {
+            let mut http = Http::to(server.port);
+            http.0.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+            write!(http.0, "GET /api/tasks HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
+            open.push(http);
+        }
+        for (i, http) in open.iter_mut().enumerate() {
+            let res = http.response(&format!("GET (round {round}, connection {i})"));
+            assert_eq!(status(&res), 200, "round {round}, connection {i}: {res}");
+        }
+        drop(open);
+    }
 }

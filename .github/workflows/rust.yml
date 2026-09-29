@@ -24,4 +24,8 @@ jobs:
       run: cargo build --verbose
     - name: Run tests
       run: cargo test --verbose
+    # The vendored tiny_http is no workspace member: its own tests (the
+    # changes rusk made to it, see vendor/README.md) run on request.
+    - name: Run the vendored tiny_http tests
+      run: cargo test -p tiny_http --lib --verbose
 

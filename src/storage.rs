@@ -317,8 +317,8 @@ impl TaskManager {
         // and must not share a database file.
         static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let db_path = std::env::temp_dir()
-            .join("rusk_test")
+        let db_path = crate::scratch::private_dir()?
+            .join("test")
             .join(format!("{}-{seq}", std::process::id()))
             .join("tasks.json");
         Self::maybe_log_db_location(&db_path.display().to_string());
@@ -675,21 +675,13 @@ impl TaskManager {
         Ok(())
     }
 
-    /// Directory for auxiliary local state (editor drafts). Remote databases
-    /// have no local directory, so those fall back to a temp subdirectory.
-    pub fn get_db_dir() -> PathBuf {
-        let backend = Backend::resolve().ok();
-        match backend.as_ref().and_then(|b| b.local_path()) {
-            Some(path) => path.parent().unwrap_or(path).to_path_buf(),
-            None => std::env::temp_dir().join("rusk"),
-        }
-    }
-
-    /// Whether the database is a file on this machine, so that whatever
-    /// rusk keeps beside it (the editor's drafts) has a directory of the
-    /// user's own to go in rather than a shared temp one.
-    pub fn db_is_local() -> bool {
-        Backend::resolve().is_ok_and(|b| b.local_path().is_some())
+    /// The directory of a local database: where what rusk keeps beside it
+    /// (the editor's drafts) goes. `None` for a remote database, which has
+    /// no directory on this machine (see `cli::editor::draft::dir_for`).
+    pub fn local_db_dir() -> Option<PathBuf> {
+        let backend = Backend::resolve().ok()?;
+        let path = backend.local_path()?;
+        Some(path.parent().unwrap_or(path).to_path_buf())
     }
 
     pub fn load_tasks_from_path(path: &Path) -> Result<Vec<Task>> {

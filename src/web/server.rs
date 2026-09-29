@@ -49,18 +49,22 @@ static DATABASE: Mutex<()> = Mutex::new(());
 /// from the connection as the request reads it.
 const PREFETCHED_BODY_BYTES: usize = 1024;
 
-/// An unread body up to this size is read and thrown away by its request,
-/// through a small buffer, before the answer; a client that stalls on it
-/// holds up only its own thread.
+/// A body up to this size that its request was answered without reading
+/// (401, 413, 404…) is read and thrown away by the request, through a
+/// small buffer, before the answer: the client has sent it by then (one
+/// waiting to be told to send it, `Expect: 100-continue`, is told), and
+/// the connection stays in step for its next request. A bigger one is
+/// answered at once — a client that stops sending when the answer comes
+/// (curl does, and closes the connection) is spared the rest — and what a
+/// client sends anyway is thrown away by tiny_http as it comes, when the
+/// request goes, up to where the connection ends: through a small buffer
+/// too, since R31 — the buffer used to be as large as the rest of the
+/// *announced* body, so that a `Content-Length` of a petabyte took the
+/// whole server down (see vendor/README.md). tiny_http cannot be asked to
+/// close the connection instead (a `Connection` header of the answer is
+/// dropped), so a client that stalls holds up its own thread, as one does
+/// on a small body.
 const DISCARDED_BODY_BYTES: usize = 1024 * 1024;
-
-/// Held by the request whose bigger unread body is being thrown away. A
-/// request answered without reading its body (401, 413, 404…) takes the
-/// rest of it from the connection when it goes, into a buffer as large as
-/// that rest (tiny_http's `EqualReader`). One at a time, as when all
-/// requests were answered one by one: clients that announce big bodies and
-/// send them slowly cannot pile those buffers up (review of R20).
-static DRAIN: Mutex<()> = Mutex::new(());
 
 thread_local! {
     /// Whether the request of this thread had its body read whole.
@@ -330,6 +334,20 @@ fn read_body(request: &mut Request, limit: u64) -> std::result::Result<String, R
     }
     BODY_READ.set(true);
     String::from_utf8(body).map_err(|_| Reply::json_error(400, "request body is not UTF-8"))
+}
+
+/// How much of the request's body nobody has read: `None` when it was read
+/// whole (`body_read`), or came along with the headers — which a small
+/// body does unless the client waits to be told to send it (`Expect`;
+/// review of R31).
+fn body_left_unread(request: &Request, body_read: bool) -> Option<usize> {
+    if body_read {
+        return None;
+    }
+    let waits_to_send = header_value(request, "Expect").is_some();
+    request
+        .body_length()
+        .filter(|&len| len > 0 && (len > PREFETCHED_BODY_BYTES || waits_to_send))
 }
 
 /// Whether the request's `Content-Type` is JSON: the media type compared
@@ -614,6 +632,17 @@ fn logout(request: &Request, method: &Method) -> Reply {
     }
 }
 
+/// Answers the request, seeing to the body it may have left unread (see
+/// [`DISCARDED_BODY_BYTES`]).
+fn answer(mut request: Request, reply: Reply) {
+    if let Some(len) = body_left_unread(&request, BODY_READ.get())
+        && len <= DISCARDED_BODY_BYTES
+    {
+        let _ = std::io::copy(&mut request.as_reader().take(len as u64), &mut std::io::sink());
+    }
+    respond(request, reply);
+}
+
 fn respond(request: Request, reply: Reply) {
     let mut response = Response::from_string(reply.body)
         .with_status_code(reply.status)
@@ -711,23 +740,7 @@ pub fn run(opts: ServeOptions) -> Result<()> {
             .spawn(move || {
                 let mut request = request;
                 let reply = route(&mut request, &opts);
-                let unread = request
-                    .body_length()
-                    .filter(|&len| len > PREFETCHED_BODY_BYTES && !BODY_READ.get());
-                match unread {
-                    None => respond(request, reply),
-                    Some(len) if len <= DISCARDED_BODY_BYTES => {
-                        let _ = std::io::copy(
-                            &mut request.as_reader().take(len as u64),
-                            &mut std::io::sink(),
-                        );
-                        respond(request, reply);
-                    }
-                    Some(_) => {
-                        let _one = DRAIN.lock().unwrap_or_else(|e| e.into_inner());
-                        respond(request, reply);
-                    }
-                }
+                answer(request, reply);
             });
         if let Err(e) = spawned {
             crate::errln!("rusk serve: no thread to answer a request: {e}");
@@ -1092,6 +1105,39 @@ mod tests {
         let request = TestRequest::new().with_method(Method::Put).with_body("[]");
         let mut request: Request = request.into();
         assert_eq!(read_body(&mut request, MAX_BODY_BYTES).ok().as_deref(), Some("[]"));
+    }
+
+    /// R31: a body the request was answered without reading is thrown
+    /// away before the answer when it is small, and left to tiny_http
+    /// when it is big.
+    #[test]
+    fn an_unread_body_is_known_by_its_size() {
+        let with_length = |length: &str| -> Request {
+            TestRequest::new()
+                .with_method(Method::Put)
+                .with_header(header("Content-Length", length))
+                .into()
+        };
+        assert_eq!(body_left_unread(&with_length("5000"), false), Some(5000));
+        assert_eq!(body_left_unread(&with_length("5000"), true), None);
+        // One that came along with the headers is nothing to throw away.
+        let prefetched: Request = TestRequest::new().with_method(Method::Put).with_body("x".repeat(1000).leak()).into();
+        assert_eq!(prefetched.body_length(), Some(1000));
+        assert_eq!(body_left_unread(&prefetched, false), None);
+        let none: Request = TestRequest::new().into();
+        assert_eq!(body_left_unread(&none, false), None);
+        // A client that waits to be told to send its body has sent nothing,
+        // however small the body (review of R31); one of no length has
+        // nothing to send.
+        let waiting = |length: &str| -> Request {
+            TestRequest::new()
+                .with_method(Method::Put)
+                .with_header(header("Content-Length", length))
+                .with_header(header("Expect", "100-continue"))
+                .into()
+        };
+        assert_eq!(body_left_unread(&waiting("500"), false), Some(500));
+        assert_eq!(body_left_unread(&waiting("0"), false), None);
     }
 
     /// Review of R20: the sign-in form is read before anybody signed in,

@@ -141,16 +141,27 @@ pub fn create_test_task_with_priority(id: u32, text: &str, done: bool, priority:
     }
 }
 
+/// The name of the directory of this user's own that rusk makes below a
+/// temp directory: `rusk-<uid>` (see `src/scratch.rs`).
+pub fn private_dir_name() -> String {
+    #[cfg(unix)]
+    // SAFETY: `geteuid` reads one process property and cannot fail.
+    let user = unsafe { libc::geteuid() }.to_string();
+    #[cfg(not(unix))]
+    let user = env::var("USERNAME").unwrap_or_else(|_| "user".to_string());
+    format!("rusk-{user}")
+}
+
 /// Private world for one test that spawns the `rusk` binary: its own temp
 /// dir, database, HOME and config, so tests never share state with each
 /// other, with a developer's debug runs or with a parallel `cargo test`.
 ///
 /// Debug and test-mode binaries pin the database to
-/// `$TMPDIR/rusk_debug/tasks.json` and ignore `RUSK_DB`; release binaries
-/// honor `RUSK_DB`. The sandbox points both at the same private file. The
-/// child is forced into test mode (`RUST_TEST_THREADS`), so a debug binary
-/// neither seeds its demo tasks into an empty database nor prints the
-/// database location.
+/// `$TMPDIR/rusk-<uid>/debug/tasks.json` and ignore `RUSK_DB`; release
+/// binaries honor `RUSK_DB`. The sandbox points both at the same private
+/// file. The child is forced into test mode (`RUST_TEST_THREADS`), so a
+/// debug binary neither seeds its demo tasks into an empty database nor
+/// prints the database location.
 #[allow(dead_code)]
 pub struct Sandbox {
     root: tempfile::TempDir,
@@ -160,7 +171,18 @@ pub struct Sandbox {
 impl Sandbox {
     pub fn new() -> Self {
         let root = tempfile::tempdir().expect("failed to create a sandbox dir");
-        std::fs::create_dir_all(root.path().join("rusk_debug")).unwrap();
+        // The user's own directory below the temp one, made as rusk makes
+        // it: closed to others (rusk closes one of the user's that is not,
+        // and refuses a link, a file or another user's under that name).
+        let private = root.path().join(private_dir_name());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            std::fs::DirBuilder::new().mode(0o700).create(&private).unwrap();
+        }
+        #[cfg(not(unix))]
+        std::fs::create_dir(&private).unwrap();
+        std::fs::create_dir(private.join("debug")).unwrap();
         std::fs::create_dir_all(root.path().join("home")).unwrap();
         Self { root }
     }
@@ -176,8 +198,14 @@ impl Sandbox {
         self.root.path()
     }
 
+    /// The directory of the sandbox database: the one a debug binary is
+    /// held to (`rusk-<uid>/debug` below the temp directory).
+    pub fn db_dir(&self) -> PathBuf {
+        self.root.path().join(private_dir_name()).join("debug")
+    }
+
     pub fn db_path(&self) -> PathBuf {
-        self.root.path().join("rusk_debug").join("tasks.json")
+        self.db_dir().join("tasks.json")
     }
 
     pub fn write_db(&self, tasks_json: &str) {

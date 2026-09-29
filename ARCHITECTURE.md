@@ -179,7 +179,10 @@ is chained once per process and acts only while the terminal is the editor's, so
 message is printed onto the restored screen rather than the one being torn down.
 
 A draft is one file per task (`editor-task-3.draft`) beside the database, or in
-`$XDG_RUNTIME_DIR/rusk` / `<temp>/rusk-<uid>` (0700) when the database is remote. It is
+`$XDG_RUNTIME_DIR/rusk` / `<temp>/rusk-<uid>` (0700) when the database is remote. That
+`<temp>/rusk-<uid>` (`scratch.rs`: made closed to others, refused when it is not the user's
+own directory) also holds the database of debug and test builds, `debug/tasks.json`, and
+those of the unit tests, since the temp directory itself is every user's. A draft is
 pinned to the identity of the text it was typed against, so it is never offered for a task
 that reused the id; it outlives the editor and is removed by whoever stored the text, so a
 save that fails leaves it where the next edit looks; and one that cannot be parsed is kept

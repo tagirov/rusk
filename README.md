@@ -435,9 +435,11 @@ export RUSK_DB="/path/to/your/project/"
 
 **Debug Mode**
 
-When running in debug mode (`cargo run` or debug builds), Rusk uses a temporary database location to avoid affecting your production data:
-- Linux/MacOS: `$TMPDIR/rusk_debug/tasks.json` (usually `/tmp/rusk_debug/tasks.json`)
-- Windows: `%TEMP%\rusk_debug\tasks.json` (usually `C:\Users\<user>\AppData\Local\Temp\rusk_debug\tasks.json`)
+When running in debug mode (`cargo run` or debug builds), Rusk uses a temporary database location to avoid affecting your production data — a directory of your own below the temp directory, since that directory is shared with every user of the machine:
+- Linux/MacOS: `$TMPDIR/rusk-<uid>/debug/tasks.json` (usually `/tmp/rusk-1000/debug/tasks.json`)
+- Windows: `%TEMP%\rusk-<user>\debug\tasks.json` (usually `C:\Users\<user>\AppData\Local\Temp\rusk-<user>\debug\tasks.json`)
+
+On Unix `rusk-<uid>` is created so that only you can look inside (mode 700), and if something else is there under that name — a link, a file, a directory of another user's — rusk refuses to use it and says so: remove it, or point `TMPDIR` at a directory of your own. On Windows `%TEMP%` is yours already.
 
 In debug mode, the `RUSK_DB` environment variable is ignored, and the database path is printed to the console when the program starts.
 

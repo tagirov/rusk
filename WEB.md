@@ -54,15 +54,20 @@ body, for uptime checks and proxies. If the server cannot take connections
 any more (no file descriptors left), it ends with an error, so that a
 supervisor (`Restart=on-failure`) starts it again.
 
-`rusk serve` runs on [tiny_http](https://github.com/tiny-http/tiny-http),
-which is not made to face hostile clients: every open connection costs a
-thread, a request answered without reading its body (a wrong token, a body
-too big) takes the rest of that body from the connection before it goes —
-the big ones one at a time, so they cannot pile up in memory — and a request
-that announces a body larger than the machine could allocate
-(`Content-Length: 1000000000000000`) aborts the server. Keep it on loopback
-or a trusted network, or put a reverse proxy in front that buffers requests
-and limits their size (nginx does both, see below).
+`rusk serve` runs on [tiny_http](https://github.com/tiny-http/tiny-http)
+0.12, vendored under `vendor/` with two changes of rusk's (see
+`vendor/README.md`): a request answered without reading its body (a wrong
+token, a body too big) takes the rest of that body from the connection
+before it goes — through a small buffer, up to where the connection ends,
+where the crate as published took a buffer as large as the announced rest and
+a `Content-Length: 1000000000000000` aborted the server — and every
+connection of a burst is read (as published, some of six opened at once by a
+browser could hang until another closed). The library is still not made to
+face hostile clients: every open connection costs a thread, and a client that
+sends its body slowly, or never, holds that thread for as long as it likes.
+Keep the server on loopback or a trusted network, or put a reverse proxy in
+front that buffers requests and limits their size and time (nginx does all
+three, see below).
 
 ### Authentication
 
@@ -130,6 +135,7 @@ server {
     server_name tasks.example.com;
     # ssl_certificate ...; ssl_certificate_key ...;
     client_max_body_size 32m;   # nginx's own default, 1m, would cap `sync push`
+    client_body_timeout 60s;    # nginx's default: a client that stalls is cut off here
     location / {
         proxy_pass http://127.0.0.1:7272;
         proxy_set_header X-Forwarded-Proto $scheme;   # the cookie gets `Secure`

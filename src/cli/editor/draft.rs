@@ -123,49 +123,30 @@ pub fn remove(slot: &Slot) {
     let _ = std::fs::remove_file(&slot.path);
 }
 
-/// Where the drafts of the database in `db_dir` live.
+/// Where the drafts of a database live.
 ///
-/// A local database keeps them beside itself. A remote one has no local
-/// directory of its own, and the process-wide temp directory is shared with
-/// every other user on the machine, so those go to a private directory of
-/// this user's instead: `$XDG_RUNTIME_DIR/rusk` where there is one,
-/// otherwise `<temp>/rusk-<uid>`, created so that only its owner may look
-/// inside.
-pub fn dir_for(db_dir: &Path, is_local: bool) -> PathBuf {
-    if is_local {
-        return db_dir.to_path_buf();
+/// A local database keeps them beside itself (`local` is its directory).
+/// A remote one has no directory on this machine, and the temp directory
+/// is shared with every other user of it, so those go to a private
+/// directory of this user's instead: `$XDG_RUNTIME_DIR/rusk` where there
+/// is one (as `transport` takes it: an absolute path to a directory that
+/// exists, and `rusk` can be made in it — review of R31), otherwise
+/// `<temp>/rusk-<uid>` (see `crate::scratch`) — never a `/tmp/rusk`
+/// everyone shares.
+pub fn dir_for(local: Option<&Path>) -> Result<PathBuf> {
+    if let Some(dir) = local {
+        return Ok(dir.to_path_buf());
     }
-    let dir = match std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()) {
-        Some(runtime) => PathBuf::from(runtime).join("rusk"),
-        None => std::env::temp_dir().join(format!("rusk-{}", user_id())),
-    };
-    create_private_dir(&dir);
-    dir
-}
-
-#[cfg(unix)]
-fn user_id() -> String {
-    // SAFETY: `geteuid` reads one process property and cannot fail.
-    unsafe { libc::geteuid() }.to_string()
-}
-
-#[cfg(not(unix))]
-fn user_id() -> String {
-    std::env::var("USERNAME").unwrap_or_else(|_| "user".to_string())
-}
-
-#[cfg(unix)]
-fn create_private_dir(dir: &Path) {
-    use std::os::unix::fs::DirBuilderExt;
-    let _ = std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(dir);
-}
-
-#[cfg(not(unix))]
-fn create_private_dir(dir: &Path) {
-    let _ = std::fs::create_dir_all(dir);
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute() && dir.is_dir());
+    if let Some(runtime) = runtime {
+        let dir = runtime.join("rusk");
+        if crate::scratch::create_private_dir(&dir).is_ok() {
+            return Ok(dir);
+        }
+    }
+    crate::scratch::private_dir().context("no place for the drafts")
 }
 
 /// One file per task: `editor-task-3.draft`. The key is rusk's own
@@ -181,7 +162,8 @@ pub fn path_for(dir: &Path, key: &str) -> PathBuf {
 
 pub fn write(slot: &Slot, text: &str) -> Result<()> {
     if let Some(parent) = slot.path.parent() {
-        create_private_dir(parent);
+        // What fails here fails the write below, which says so.
+        let _ = crate::scratch::create_private_dir(parent);
     }
     let payload = serde_json::json!({
         "key": slot.key,
@@ -442,22 +424,31 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let temp = tempfile::tempdir().unwrap();
         let runtime = temp.path().join("run");
+        std::fs::create_dir(&runtime).unwrap();
         // SAFETY: single-threaded test, and the variable is read back at once.
         unsafe { std::env::set_var("XDG_RUNTIME_DIR", &runtime) };
-        let dir = dir_for(Path::new("/nowhere"), false);
+        let dir = dir_for(None).unwrap();
+        // A runtime directory that is not there (a stale variable) is none
+        // (review of R31): the fallback below serves instead.
+        unsafe { std::env::set_var("XDG_RUNTIME_DIR", temp.path().join("gone")) };
+        let without = dir_for(None).unwrap();
         unsafe { std::env::remove_var("XDG_RUNTIME_DIR") };
 
         assert_eq!(dir, runtime.join("rusk"));
         let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o700, "draft directory mode is {mode:o}");
+        assert!(!without.starts_with(temp.path()), "{}", without.display());
 
         // Without a runtime directory the fallback is this user's own.
-        let fallback = dir_for(Path::new("/nowhere"), false);
+        let fallback = dir_for(None).unwrap();
+        assert_eq!(fallback, without);
         assert!(
             fallback.file_name().unwrap().to_string_lossy().starts_with("rusk-"),
             "{}",
             fallback.display()
         );
+        // A local database keeps its drafts beside itself.
+        assert_eq!(dir_for(Some(Path::new("/db"))).unwrap(), Path::new("/db"));
     }
 
     #[test]

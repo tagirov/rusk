@@ -481,9 +481,15 @@ Notes on the text formats:
 
 - **CSV**: multiline task text, commas and quotes are handled; dates are ISO
   `YYYY-MM-DD`; the `after` cell takes ids separated by spaces or commas.
-  LibreOffice/Excel edit the file in place; Google Sheets can import it, but
-  edits made in Sheets have to be exported back manually. A row typed in
-  with an empty id cell is a new task; rows of empty cells are skipped.
+  LibreOffice edits the file in place (it keeps ISO dates as they are);
+  Google Sheets can import it, but edits made in Sheets have to be exported
+  back manually. Excel opens it, but its "Save as CSV" may write the dates
+  in the locale's format and separate the cells with `;` in locales that
+  use it, and the file is then not a rusk database any more — and the file
+  carries no byte order mark, so Excel may show non-ASCII text garbled
+  unless the file is imported rather than opened (not verified in Excel
+  itself). A row typed in with an empty id cell is a new task; rows of
+  empty cells are skipped.
 - **Markdown**: `- [x] text @2026-07-15 <!-- id:3 -->`, a leading `!` marks
   priority, continuation lines are indented by two spaces (or a tab). Items
   added by hand without the id comment get the lowest free id on the next
@@ -582,7 +588,9 @@ git_backend = true                      # commit every save of a local file data
   settings come from the environment, a client certificate from
   `RUSK_CURL_CONFIG`, see [WEB.md](WEB.md#rusk-sync)). A `rusk serve` whose
   `rusk_db` names its own address — or a server whose database it is —
-  says so on the first request instead of waiting on itself.
+  says so on the first request instead of waiting on itself. An answer
+  larger than 64 MiB — no task list is that big — is refused rather than
+  read whole, over ssh as well.
 - **ssh** reads/writes the remote file over the system `ssh` (keys, agent
   and `~/.ssh/config` apply); the location is `[user@]host:path` as `scp`
   reads it (`~/` is the remote home directory, IPv6 goes in brackets:

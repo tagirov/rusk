@@ -4,41 +4,177 @@
 //! rusk needs no TLS or ssh dependencies.
 
 use anyhow::{Context, Result, bail};
-use std::io::Write;
-use std::process::{Command, Stdio};
+use std::io::{Read, Write};
+use std::process::{Command, Output, Stdio};
 
 pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-fn run_tool(cmd: Command, stdin_data: Option<&[u8]>, tool: &str) -> Result<Vec<u8>> {
-    let output = spawn_tool(cmd, stdin_data, tool)?;
-    if !output.status.success() {
-        bail!("{tool} failed ({}): {}", output.status, stderr_of(&output));
+/// The most a tool may bring back on its stdout — a remote database, or
+/// whatever a hostile or broken remote sends in its place. A task list of
+/// thousands of tasks is a few MB, and `rusk serve` takes half of this in
+/// a request; reading more than this whole would take that much memory
+/// before a parser even looks at it (SECURITY.md L1). What comes over the
+/// limit is not read: the tool is stopped.
+pub const MAX_REPLY_BYTES: u64 = 64 * 1024 * 1024;
+
+/// What is kept of a tool's stderr as it is. `ssh -v` says a lot, and a
+/// remote login shell may say anything at all; past this, only the lines
+/// rusk asked the remote to say are kept (see [`remote_says_lines`]) and
+/// the rest is read and dropped, so that the tool never waits on a full
+/// pipe.
+const KEPT_STDERR_BYTES: u64 = 1024 * 1024;
+
+/// The most of a tool's stderr a message shows: the head and the tail of
+/// it, where a tool's own words and the remote script's are, with the
+/// middle cut out (review of R32: a remote shell that floods stderr made
+/// the error a megabyte long, and the reason was at its end).
+const SHOWN_STDERR_BYTES: usize = 8 * 1024;
+
+/// curl's exit status for a response body over `--max-filesize`.
+const CURL_TOO_LARGE: i32 = 63;
+
+/// The tool's stderr for a message, trimmed, and cut down to its head and
+/// tail when it goes on for longer than anyone reads.
+fn stderr_of(output: &Output) -> String {
+    let text = String::from_utf8_lossy(&output.stderr);
+    let text = text.trim();
+    if text.len() <= SHOWN_STDERR_BYTES {
+        return text.to_string();
     }
-    Ok(output.stdout)
+    // On character boundaries (`floor_char_boundary` is past the MSRV).
+    let half = SHOWN_STDERR_BYTES / 2;
+    let boundary = |mut at: usize| {
+        while !text.is_char_boundary(at) {
+            at -= 1;
+        }
+        at
+    };
+    let head = boundary(half);
+    let tail = boundary(text.len() - half);
+    format!(
+        "{}\n[... {} bytes left out ...]\n{}",
+        text[..head].trim_end(),
+        tail - head,
+        text[tail..].trim_start()
+    )
 }
 
-fn stderr_of(output: &std::process::Output) -> String {
-    String::from_utf8_lossy(&output.stderr).trim().to_string()
+/// What a tool's stdout should hold, for the error when it holds too much.
+#[derive(Clone, Copy)]
+enum Answer {
+    /// A task list, whichever way it is encoded.
+    TaskList,
+    /// Nothing: the remote script of a save prints only to stderr.
+    Nothing,
 }
 
-/// Runs the tool to completion and hands back everything it said.
-///
-/// The data goes into its stdin from a thread of its own while this one
-/// drains stdout and stderr. Writing from here instead would deadlock
-/// against a tool that fills the pipe back before it has read its input
-/// (`ssh -v` on a database of a few megabytes), and it would also hide the
-/// ordinary failure: a tool that dies early — ssh that cannot connect, a
-/// remote shell that cannot create the file — leaves the write with a
-/// broken pipe, and reporting *that* buries the tool's own words about why
-/// it died. So the write error is only worth raising when the tool itself
-/// was happy, or when it is something other than the pipe closing.
+/// The error for a tool that brought back more than `limit` bytes.
+fn brought_back_too_much(tool: &str, limit: u64, answer: Answer) -> anyhow::Error {
+    let shown = if limit >= 1 << 20 && limit.is_multiple_of(1 << 20) {
+        format!("{} MiB", limit >> 20)
+    } else {
+        format!("{limit} bytes")
+    };
+    match answer {
+        Answer::TaskList => {
+            anyhow::anyhow!("{tool} brought back more than {shown}: that is no task list")
+        }
+        Answer::Nothing => {
+            anyhow::anyhow!("{tool} brought back more than {shown} where nothing was expected")
+        }
+    }
+}
+
+/// Up to `limit` bytes of `reader`, and whether there was more. That is
+/// all that is read: the caller decides what becomes of the rest.
+fn read_at_most(reader: &mut impl Read, limit: u64) -> std::io::Result<(Vec<u8>, bool)> {
+    let mut out = Vec::new();
+    reader.by_ref().take(limit + 1).read_to_end(&mut out)?;
+    let more = out.len() as u64 > limit;
+    if more {
+        out.truncate(limit as usize);
+    }
+    Ok((out, more))
+}
+
+/// The `rusk:` lines of what is left of a stream — the reason a remote
+/// script gives for a failed save, or its warning, which come after
+/// whatever else the remote shell had to say — up to a few of them; the
+/// rest is read and dropped.
+fn remote_says_lines(reader: &mut impl Read) -> Vec<u8> {
+    // A line longer than this is not one of the script's.
+    const LINE_BYTES: usize = 4096;
+    const KEPT_BYTES: usize = 16 * 1024;
+    let mut kept = Vec::new();
+    let mut line = Vec::new();
+    let mut overlong = false;
+    let mut chunk = [0u8; 8192];
+    loop {
+        let n = match reader.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => n,
+        };
+        for &byte in &chunk[..n] {
+            if byte == b'\n' {
+                if !overlong
+                    && line.starts_with(REMOTE_SAYS.as_bytes())
+                    && kept.len() + line.len() < KEPT_BYTES
+                {
+                    kept.extend_from_slice(&line);
+                    kept.push(b'\n');
+                }
+                line.clear();
+                overlong = false;
+            } else if line.len() < LINE_BYTES {
+                line.push(byte);
+            } else {
+                overlong = true;
+            }
+        }
+    }
+    kept
+}
+
+/// Runs the tool to completion and hands back what it said, up to
+/// [`MAX_REPLY_BYTES`] of it.
 fn spawn_tool(
+    cmd: Command,
+    stdin_data: Option<&[u8]>,
+    tool: &str,
+    answer: Answer,
+) -> Result<Output> {
+    spawn_tool_within(cmd, stdin_data, tool, answer, MAX_REPLY_BYTES)
+}
+
+/// [`spawn_tool`] with the limit of its own: a tool that brings back more
+/// than `limit` bytes on its stdout is stopped where it is, and that is an
+/// error — no answer that long is a task list, and holding it whole would
+/// cost the memory (SECURITY.md L1).
+///
+/// The data goes into its stdin from a thread of its own, and its stderr is
+/// read from another, while this one reads stdout. Writing from here
+/// instead would deadlock against a tool that fills the pipe back before it
+/// has read its input (`ssh -v` on a database of a few megabytes), and it
+/// would also hide the ordinary failure: a tool that dies early — ssh that
+/// cannot connect, a remote shell that cannot create the file — leaves the
+/// write with a broken pipe, and reporting *that* buries the tool's own
+/// words about why it died. So the write error is only worth raising when
+/// the tool itself was happy, or when it is something other than the pipe
+/// closing.
+///
+/// A tool that is stopped is not waited for beyond its own end: what it
+/// started and left behind — the real ssh under a wrapper script, a
+/// `ProxyCommand` — may hold its pipes for a while, and its stderr is of
+/// no use to the error that stops it.
+fn spawn_tool_within(
     mut cmd: Command,
     stdin_data: Option<&[u8]>,
     tool: &str,
-) -> Result<std::process::Output> {
+    answer: Answer,
+    limit: u64,
+) -> Result<Output> {
     cmd.stdin(if stdin_data.is_some() {
         Stdio::piped()
     } else {
@@ -54,6 +190,8 @@ fn spawn_tool(
         }
     })?;
     let mut pipe = child.stdin.take();
+    let mut stdout = child.stdout.take().expect("stdout piped");
+    let mut stderr = child.stderr.take().expect("stderr piped");
 
     std::thread::scope(|scope| {
         let writer = stdin_data.map(|data| {
@@ -62,20 +200,54 @@ fn spawn_tool(
             // remote `cat` waits for.
             scope.spawn(move || pipe.write_all(data).and_then(|()| pipe.flush()))
         });
-        let output = child
-            .wait_with_output()
+        // What it complains about, as it comes: the first part is kept,
+        // of the rest only what rusk asked the remote to say. A thread of
+        // its own, not of the scope, so that a stopped tool's leftovers
+        // holding the pipe do not hold this function.
+        let complaints = std::thread::spawn(move || {
+            let (mut kept, more) = read_at_most(&mut stderr, KEPT_STDERR_BYTES).unwrap_or_default();
+            if more {
+                kept.extend(remote_says_lines(&mut stderr));
+            }
+            kept
+        });
+        let read = read_at_most(&mut stdout, limit);
+        let too_much = matches!(read, Ok((_, true)));
+        if too_much || read.is_err() {
+            // The rest is not wanted, and neither is the tool: it goes,
+            // and with it whatever it was still sending or reading (a
+            // tool left to fill a pipe nobody reads would never end).
+            let _ = child.kill();
+        }
+        // Nothing more is read from it: whatever still writes to it — the
+        // real ssh under a wrapper script, which the kill of the wrapper
+        // did not reach — meets a broken pipe and ends, instead of waiting
+        // for a reader with the pipes of the tool held open (black-box of
+        // R32: `rusk list` over the fake ssh of the tests never came back).
+        drop(stdout);
+        let status = child
+            .wait()
             .with_context(|| format!("failed to wait for {tool}"))?;
+        if too_much {
+            return Err(brought_back_too_much(tool, limit, answer));
+        }
+        let (stdout, _) = read.with_context(|| format!("failed to read what {tool} said"))?;
+        let stderr = complaints.join().unwrap_or_default();
         let wrote = writer.map(|handle| handle.join());
         match wrote {
             // Only when the tool itself was happy: one that died has
             // already said why on its stderr, and the write that then hit
             // a closed pipe would bury it.
-            Some(Ok(Err(e))) if output.status.success() => Err(anyhow::Error::new(e)
+            Some(Ok(Err(e))) if status.success() => Err(anyhow::Error::new(e)
                 .context(format!("failed to stream data to {tool}"))),
-            Some(Err(_)) if output.status.success() => {
+            Some(Err(_)) if status.success() => {
                 bail!("failed to stream data to {tool}")
             }
-            _ => Ok(output),
+            _ => Ok(Output {
+                status,
+                stdout,
+                stderr,
+            }),
         }
     })
 }
@@ -139,7 +311,7 @@ pub fn ssh_read_file(target: &str, path: &str) -> Result<Option<Vec<u8>>> {
     let fence = fence();
     let mut cmd = Command::new("ssh");
     cmd.arg(target).arg(ssh_read_command(path, &fence));
-    let output = spawn_tool(cmd, None, "ssh")?;
+    let output = spawn_tool(cmd, None, "ssh", Answer::TaskList)?;
     if output.status.code() == Some(NO_SUCH_PATH) {
         return Ok(None);
     }
@@ -205,7 +377,7 @@ pub fn ssh_write_file(target: &str, path: &str, data: &[u8], backup: bool) -> Re
     let mut cmd = Command::new("ssh");
     cmd.arg(target)
         .arg(ssh_write_command(path, data.len(), backup));
-    let output = spawn_tool(cmd, Some(data), "ssh")?;
+    let output = spawn_tool(cmd, Some(data), "ssh", Answer::Nothing)?;
     if !output.status.success() {
         bail!("ssh failed ({}): {}", output.status, stderr_of(&output));
     }
@@ -446,6 +618,11 @@ const MOST_SECONDS: &str = "600";
 /// `NO_PROXY`), a CA bundle from `CURL_CA_BUNDLE` / `SSL_CERT_FILE`, and
 /// what else a `~/.curlrc` did — a client certificate, `resolve` — from a
 /// config file named in `RUSK_CURL_CONFIG` (review of R28).
+///
+/// A response over [`MAX_REPLY_BYTES`] is refused: by curl before the
+/// transfer when the server announces the length (`--max-filesize`; since
+/// curl 8.4 during it as well), and by rusk as it reads what curl brings
+/// back, whatever the server announced.
 pub fn http_request(
     url: &str,
     method: Option<&str>,
@@ -465,6 +642,7 @@ pub fn http_request(
     // `-g`: a URL is an address, never a curl glob pattern (`[…]`, `{…}`).
     cmd.args(["-sS", "-i", "-g", "--connect-timeout", STALL_SECONDS]);
     cmd.args(["--speed-limit", "1", "--speed-time", STALL_SECONDS, "--max-time", MOST_SECONDS]);
+    cmd.args(["--max-filesize", &MAX_REPLY_BYTES.to_string()]);
     if let Some(method) = method {
         cmd.args(["-X", method]);
     }
@@ -488,7 +666,14 @@ pub fn http_request(
         cmd.args(["-H", &format!("If-Match: \"{etag}\"")]);
     }
     cmd.arg(url);
-    parse_http_output(&run_tool(cmd, json_body, "curl")?)
+    let output = spawn_tool(cmd, json_body, "curl", Answer::TaskList)?;
+    if output.status.code() == Some(CURL_TOO_LARGE) {
+        return Err(brought_back_too_much("curl", MAX_REPLY_BYTES, Answer::TaskList));
+    }
+    if !output.status.success() {
+        bail!("curl failed ({}): {}", output.status, stderr_of(&output));
+    }
+    parse_http_output(&output.stdout)
 }
 
 /// Splits `curl -i` output. Interim responses come first, each with a
@@ -947,5 +1132,118 @@ mod tests {
     fn shell_quoting() {
         assert_eq!(shell_quote("/plain/path"), "'/plain/path'");
         assert_eq!(shell_quote("with'quote"), r"'with'\''quote'");
+    }
+
+    /// SECURITY.md L1: a tool that brings back more than the limit is
+    /// stopped where it is — one that never stops on its own, too — and
+    /// what it did bring back is not taken for a task list; up to the
+    /// limit, it is taken whole.
+    #[test]
+    #[cfg(unix)]
+    fn a_tool_that_brings_back_too_much_is_stopped() {
+        let command = |script: &str| {
+            let mut cmd = Command::new("sh");
+            cmd.arg("-c").arg(script);
+            cmd
+        };
+        let started = std::time::Instant::now();
+        let err =
+            spawn_tool_within(command("cat /dev/zero"), None, "cat", Answer::TaskList, 4096).unwrap_err();
+        assert!(started.elapsed() < std::time::Duration::from_secs(10), "{:?}", started.elapsed());
+        assert_eq!(format!("{err:#}"), "cat brought back more than 4096 bytes: that is no task list");
+        assert_eq!(
+            format!("{:#}", brought_back_too_much("ssh", MAX_REPLY_BYTES, Answer::TaskList)),
+            "ssh brought back more than 64 MiB: that is no task list"
+        );
+        // A save expects no answer at all (review of R32).
+        assert_eq!(
+            format!("{:#}", brought_back_too_much("ssh", MAX_REPLY_BYTES, Answer::Nothing)),
+            "ssh brought back more than 64 MiB where nothing was expected"
+        );
+
+        let out =
+            spawn_tool_within(command("head -c 4096 /dev/zero"), None, "head", Answer::TaskList, 4096)
+                .unwrap();
+        assert!(out.status.success());
+        assert_eq!(out.stdout.len(), 4096);
+        let err =
+            spawn_tool_within(command("head -c 4097 /dev/zero"), None, "head", Answer::TaskList, 4096)
+                .unwrap_err();
+        assert!(format!("{err:#}").contains("more than 4096 bytes"), "{err:#}");
+
+        // A wrapper script around the tool (`; true` keeps the shell from
+        // exec-ing the command in its place): the kill reaches the
+        // wrapper alone, and the tool under it, left with the pipes,
+        // ends on the broken pipe rather than holding the wait for the
+        // wrapper's stderr (black-box of R32: `rusk list` never came back
+        // over the fake ssh of the tests).
+        let started = std::time::Instant::now();
+        let err = spawn_tool_within(command("cat /dev/zero; true"), None, "wrapped", Answer::Nothing, 4096)
+            .unwrap_err();
+        assert!(started.elapsed() < std::time::Duration::from_secs(10), "{:?}", started.elapsed());
+        assert!(format!("{err:#}").contains("wrapped brought back more than"), "{err:#}");
+
+        // A leftover that holds stderr without writing anything (a
+        // `ProxyCommand` that ignores its closed stdin) does not hold the
+        // error either (review of R32).
+        let started = std::time::Instant::now();
+        let err = spawn_tool_within(
+            command("sleep 30 & cat /dev/zero; true"),
+            None,
+            "wrapped",
+            Answer::TaskList,
+            4096,
+        )
+        .unwrap_err();
+        assert!(started.elapsed() < std::time::Duration::from_secs(10), "{:?}", started.elapsed());
+        assert!(format!("{err:#}").contains("wrapped brought back more than"), "{err:#}");
+
+        // Sent data goes in, and the tool's answer comes back as it did.
+        let out = spawn_tool_within(command("cat"), Some(b"[1]"), "cat", Answer::TaskList, 4096).unwrap();
+        assert_eq!(out.stdout, b"[1]");
+    }
+
+    /// What a tool says on stderr is kept as it is up to a point, and read
+    /// to the end past it — a remote shell that talks without end does not
+    /// hold the tool on a full pipe, and the answer arrives — keeping only
+    /// what rusk asked the remote to say, which comes last: the reason of
+    /// a failed save survives the noise (review of R32), and the message
+    /// shows the head and the tail of it, not the megabyte between.
+    #[test]
+    #[cfg(unix)]
+    fn a_tools_complaints_are_kept_up_to_a_point() {
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c").arg(
+            "yes complaint | head -c 3000000 >&2; echo 'rusk: the reason' >&2; \
+             echo 'not ours' >&2; echo 'rusk: and a warning' >&2; echo answer",
+        );
+        let out = spawn_tool_within(cmd, None, "sh", Answer::TaskList, 4096).unwrap();
+        assert!(out.status.success());
+        assert_eq!(out.stdout, b"answer\n");
+        let kept = b"rusk: the reason\nrusk: and a warning\n";
+        assert_eq!(out.stderr.len() as u64, KEPT_STDERR_BYTES + kept.len() as u64);
+        assert!(out.stderr.starts_with(b"complaint\n"));
+        assert!(out.stderr.ends_with(kept));
+        let shown = stderr_of(&out);
+        assert!(shown.len() < SHOWN_STDERR_BYTES + 100, "{}", shown.len());
+        assert!(shown.starts_with("complaint\n"), "{shown}");
+        assert!(shown.contains("bytes left out"), "{shown}");
+        assert!(shown.ends_with("rusk: the reason\nrusk: and a warning"), "{shown}");
+
+        // Short complaints are shown whole; a line too long to be the
+        // script's is not kept, and neither is more than a few of them.
+        let short = Output {
+            status: out.status,
+            stdout: Vec::new(),
+            stderr: b"  Connection refused\n".to_vec(),
+        };
+        assert_eq!(stderr_of(&short), "Connection refused");
+        let mut noise = format!("rusk: {}\n", "x".repeat(5000)).into_bytes();
+        for i in 0..2000 {
+            noise.extend_from_slice(format!("rusk: line {i}\n").as_bytes());
+        }
+        let lines = remote_says_lines(&mut noise.as_slice());
+        assert!(lines.starts_with(b"rusk: line 0\n"));
+        assert!(lines.len() <= 16 * 1024, "{}", lines.len());
     }
 }

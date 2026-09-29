@@ -532,6 +532,21 @@ mod tests {
         );
     }
 
+    /// REVIEW П2: `RUSK_DB=C:\tasks\` names a directory that need not
+    /// exist yet — on Windows, where `\` separates (and `C:` is a drive,
+    /// see `a_one_letter_head_is_a_drive_only_on_windows`); on unix a
+    /// backslash is a character of the name. (Run on unix only so far:
+    /// there is no Windows host to try it on.)
+    #[test]
+    fn a_trailing_backslash_names_a_directory_on_windows_only() {
+        assert_eq!(ends_with_separator(br"C:\tasks\"), cfg!(windows));
+        assert!(ends_with_separator(b"C:/tasks/"));
+        assert!(!ends_with_separator(br"C:\tasks"));
+        if cfg!(windows) {
+            assert_eq!(local_path(r"C:\tasks\"), PathBuf::from(r"C:\tasks\tasks.json"));
+        }
+    }
+
     #[test]
     fn local_tilde_is_the_home_directory() {
         let Some(home) = dirs::home_dir() else { return };

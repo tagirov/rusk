@@ -28,7 +28,9 @@
 // of section 4: R27 (CLI, storage, SQLite), R28 (remote databases and
 // `rusk sync`), R29 (`rusk serve`), R30 (the editor) — and R31 (what was
 // left after them: a `Content-Length` nobody could send took the server
-// down; the debug database was in a directory every user shared).
+// down; the debug database was in a directory every user shared) and R32
+// (SECURITY.md L1 and L2: a remote answer larger than any task list is
+// not read whole; line separators in the inlined JSON).
 // R6 and R8 need a pty
 // for most of their repros: what Command can drive is here, the draft rules
 // are unit-tested in `src/cli/editor/draft.rs`, and the rest is driven by a
@@ -7893,4 +7895,139 @@ fn r31_every_connection_of_a_burst_is_answered() {
         }
         drop(open);
     }
+}
+
+/// SECURITY.md L1 (R32): a remote that answers with more than any task
+/// list could be — a hostile server, a broken one — no longer fills the
+/// memory: what comes over 64 MiB is not read, the tool is stopped where
+/// it is, and the error says so. Over http, a server that announces the
+/// length is refused before the transfer (curl's `--max-filesize`), one
+/// that streams without announcing it is stopped as rusk reads.
+#[test]
+#[cfg(all(unix, feature = "sync"))]
+fn r32_an_answer_larger_than_any_task_list_is_refused_over_http() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    // Each request gets 65 MiB of an answer — its length announced when
+    // the path says so, streamed without a word otherwise.
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            std::thread::spawn(move || {
+                let mut head = Vec::new();
+                let mut byte = [0u8; 1];
+                while stream.read(&mut byte).unwrap_or(0) == 1 {
+                    head.push(byte[0]);
+                    if head.ends_with(b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let size = 65 * 1024 * 1024;
+                let length = if String::from_utf8_lossy(&head).contains("/announced/") {
+                    format!("Content-Length: {size}\r\n")
+                } else {
+                    String::new()
+                };
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{length}Connection: close\r\n\r\n"
+                );
+                let chunk = vec![b'['; 64 * 1024];
+                let mut sent = 0;
+                while sent < size && stream.write_all(&chunk).is_ok() {
+                    sent += chunk.len();
+                }
+            });
+        }
+    });
+
+    let sb = Sandbox::new();
+    for path in ["announced", "streamed"] {
+        let started = std::time::Instant::now();
+        // A debug build pins `RUSK_DB`; `rusk sync` reaches a remote in
+        // any build.
+        let out = sb
+            .cmd()
+            .env("RUSK_SYNC_REMOTE", format!("http://127.0.0.1:{port}/{path}"))
+            .args(["sync", "pull", "--force"])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{path}: {}", stdout_of(&out));
+        let err = stderr_of(&out);
+        assert!(err.contains("curl brought back more than 64 MiB: that is no task list"), "{path}: {err}");
+        assert!(err.contains(&format!("http://127.0.0.1:{port}/{path}")), "{path}: {err}");
+        assert!(!err.contains("curl failed"), "{path}: {err}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(20), "{path}: {:?}", started.elapsed());
+    }
+
+    // The limit goes to curl, so that an announced length is refused
+    // before a byte of it is transferred.
+    let (path, log) = fake_curl(&sb);
+    sb.cmd()
+        .env("PATH", &path)
+        .env("RUSK_SYNC_REMOTE", "http://127.0.0.1:9")
+        .args(["sync", "pull", "--force"])
+        .output()
+        .unwrap();
+    let logged = fs::read_to_string(&log).unwrap();
+    let args: Vec<&str> = logged.lines().filter_map(|l| l.strip_prefix("arg:")).collect();
+    assert!(args.windows(2).any(|w| w == ["--max-filesize", "67108864"]), "{logged}");
+}
+
+/// The same over ssh: the remote `cat` of a file larger than any task list
+/// is stopped at 64 MiB; one under the limit is read whole and judged as
+/// what it is.
+#[test]
+#[cfg(all(unix, feature = "sync"))]
+fn r32_an_answer_larger_than_any_task_list_is_refused_over_ssh() {
+    let sb = Sandbox::new();
+    // Sparse files: no disk to speak of, and `cat` reads zeros. Well over
+    // the limit, so that the remote `cat` still has plenty to send when
+    // it is stopped: with a byte over the limit the rest fit in the pipe,
+    // and a `cat` left holding the pipes of a killed wrapper (the fake
+    // ssh here is one) went unnoticed (black-box of R32).
+    let huge = sb.path().join("huge.json");
+    fs::File::create(&huge).unwrap().set_len(256 * 1024 * 1024).unwrap();
+    let started = std::time::Instant::now();
+    let out = sb
+        .cmd_with_fake_ssh()
+        .env("RUSK_SYNC_REMOTE", format!("alex@vps:{}", huge.display()))
+        .args(["sync", "pull", "--force"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "{}", stdout_of(&out));
+    let err = stderr_of(&out);
+    assert!(err.contains("ssh brought back more than 64 MiB: that is no task list"), "{err}");
+    assert!(err.contains("alex@vps:"), "{err}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(20), "{:?}", started.elapsed());
+
+    let large = sb.path().join("large.json");
+    fs::File::create(&large).unwrap().set_len(60 * 1024 * 1024).unwrap();
+    let out = sb
+        .cmd_with_fake_ssh()
+        .env("RUSK_SYNC_REMOTE", format!("alex@vps:{}", large.display()))
+        .args(["sync", "pull", "--force"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "{}", stdout_of(&out));
+    let err = stderr_of(&out);
+    assert!(!err.contains("brought back more than"), "{err}");
+    assert!(err.contains("is not a valid JSON task list"), "{err}");
+}
+
+/// SECURITY.md L2 (R32): the line separators U+2028 and U+2029 in a task's
+/// text are escaped in the JSON inlined into the page — to JavaScript
+/// before ES2019 they were line breaks that ended the string literal.
+#[test]
+#[cfg(feature = "web")]
+fn r32_a_line_separator_in_a_task_is_escaped_in_the_page() {
+    let sb = Sandbox::new();
+    let out = sb.cmd().args(["add", "one\u{2028}two\u{2029}three"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let out = sb.cmd().args(["gen", "-o", "-"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let page = stdout_of(&out);
+    assert!(!page.contains('\u{2028}') && !page.contains('\u{2029}'), "raw line separators in the page");
+    assert!(page.contains("one\\u2028two\\u2029three"), "{page}");
 }

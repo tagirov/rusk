@@ -32,10 +32,17 @@ pub fn theme_css(theme: &Theme) -> String {
 
 /// Task list as JSON safe for inlining into a `<script>` block: `<` can only
 /// occur inside JSON string literals, and escaping it neutralizes
-/// `</script>` and HTML-comment injection from task text.
+/// `</script>` and HTML-comment injection from task text. The line
+/// separators U+2028 and U+2029 are JSON's to leave as they are but were
+/// line breaks to JavaScript before ES2019, where they end the string
+/// literal (SECURITY.md L2): escaped as well, they are a task's text in
+/// every engine.
 fn tasks_json(tasks: &[Task]) -> Result<String> {
     let json = serde_json::to_string(tasks).context("Failed to serialize tasks")?;
-    Ok(json.replace('<', "\\u003c"))
+    Ok(json
+        .replace('<', "\\u003c")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029"))
 }
 
 /// `signed_in`: the page is served behind a token, and offers to sign out.
@@ -145,6 +152,12 @@ mod tests {
         let html = render_template(Mode::Static, "", &[task(evil)], "", false).unwrap();
         assert!(!html.contains(evil), "raw </script> from task text must not appear");
         assert!(html.contains("\\u003c/script>\\u003cscript>"));
+
+        // SECURITY.md L2: a line separator is a character of the text,
+        // not the end of the string literal — in old engines too.
+        let html = render_template(Mode::Static, "", &[task("a\u{2028}b\u{2029}c")], "", false).unwrap();
+        assert!(!html.contains('\u{2028}') && !html.contains('\u{2029}'));
+        assert!(html.contains("a\\u2028b\\u2029c"), "{html}");
     }
 
     #[test]

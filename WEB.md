@@ -316,7 +316,10 @@ sync_token = <the web_token of that server>
   `RUSK_CURL_CONFIG` (`curl -K`; rusk's own options come after it and win).
   curl gives up on a connection that takes more than 30 s, on a transfer
   that moves nothing for 30 s, and on any transfer after 10 minutes; a slow
-  one that keeps moving runs to its end within that.
+  one that keeps moving runs to its end within that. An answer larger than
+  64 MiB — no task list is that big — is refused rather than read whole:
+  before the transfer when the server announces the length, and as it
+  comes otherwise; a file over ssh the same, whatever the remote sends.
 - **A server that is its own database** — its `rusk_db` names the address
   it serves on, or that of another server whose database it is — answers
   `508` with a message saying so, at once: each request a server makes to

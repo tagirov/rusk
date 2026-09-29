@@ -180,6 +180,10 @@ pub struct Config {
     pub web_host: String,
     pub web_port: u16,
     pub web_token: Option<String>,
+    /// Seconds a connection of `rusk serve` may wait — idle, for the rest
+    /// of a request's head, for the socket to move; 0 turns the server's
+    /// limits off (see `web::server::ServeOptions::timeout`).
+    pub web_timeout: u64,
     pub sync_remote: Option<String>,
     pub sync_token: Option<String>,
     /// Task-text keyword tokens highlighted in the list (`keyword` theme color).
@@ -199,6 +203,7 @@ impl Default for Config {
             web_host: "127.0.0.1".to_string(),
             web_port: 7272,
             web_token: None,
+            web_timeout: 60,
             sync_remote: None,
             sync_token: None,
             keywords: ["TEMP", "INFO", "FIXME", "WIP"]
@@ -220,6 +225,7 @@ const SETTINGS: &[&str] = &[
     "web_host",
     "web_port",
     "web_token",
+    "web_timeout",
     "sync_remote",
     "sync_token",
     "keywords",
@@ -325,6 +331,7 @@ fn reset_setting(config: &mut Config, key: &str) {
         "web_host" => config.web_host = defaults.web_host,
         "web_port" => config.web_port = defaults.web_port,
         "web_token" => config.web_token = defaults.web_token,
+        "web_timeout" => config.web_timeout = defaults.web_timeout,
         "sync_remote" => config.sync_remote = defaults.sync_remote,
         "sync_token" => config.sync_token = defaults.sync_token,
         "keywords" => config.keywords = defaults.keywords,
@@ -367,6 +374,12 @@ fn apply_setting(
             Err(_) => warn(format!("invalid port '{value}' for 'web_port'")),
         },
         "web_token" => config.web_token = Some(value.to_string()),
+        "web_timeout" => match value.parse::<u64>() {
+            Ok(seconds) => config.web_timeout = seconds,
+            Err(_) => warn(format!(
+                "invalid value '{value}' for 'web_timeout': seconds, 0 for no limits"
+            )),
+        },
         "sync_remote" => config.sync_remote = Some(value.to_string()),
         "sync_token" => config.sync_token = Some(value.to_string()),
         // Space- or comma-separated tokens; an empty value (`keywords =`)
@@ -569,6 +582,9 @@ const DEFAULT_CONFIG: &str = "\
 # web_port = 7272
 # Access token, required when web_host is not a loopback address:
 # web_token =
+# web_timeout = 60           # seconds a connection may wait: idle, for the rest of a
+#                            # request's head, for a stalled transfer; 0 turns off
+#                            # this and the limit of 256 connections
 
 # --- sync: rusk sync ---
 # user@host:/path/tasks.json (ssh) or https://host (rusk serve API):
@@ -975,14 +991,31 @@ mod tests {
     #[test]
     fn web_and_sync_settings() {
         let c = cfg(
-            "web_host = 0.0.0.0\nweb_port = 8080\nweb_token = s3cret\n\
+            "web_host = 0.0.0.0\nweb_port = 8080\nweb_token = s3cret\nweb_timeout = 15\n\
              sync_remote = user@host:/tasks/tasks.json\nsync_token = tok\n",
         );
         assert_eq!(c.web_host, "0.0.0.0");
         assert_eq!(c.web_port, 8080);
         assert_eq!(c.web_token.as_deref(), Some("s3cret"));
+        assert_eq!(c.web_timeout, 15);
         assert_eq!(c.sync_remote.as_deref(), Some("user@host:/tasks/tasks.json"));
         assert_eq!(c.sync_token.as_deref(), Some("tok"));
+    }
+
+    /// R33: `web_timeout` is seconds, 0 for no limits; anything else keeps
+    /// the default (a minute) with a warning that says what it takes.
+    #[test]
+    fn web_timeout_is_seconds_or_zero() {
+        assert_eq!(Config::default().web_timeout, 60);
+        assert_eq!(cfg("web_timeout = 0\n").web_timeout, 0);
+        assert_eq!(cfg("web_timeout = 600\n").web_timeout, 600);
+        assert_eq!(cfg("web_timeout = 5\nweb_timeout = default\n").web_timeout, 60);
+        for bad in ["web_timeout = 30s\n", "web_timeout = -1\n", "web_timeout = 1.5\n"] {
+            let outcome = parse(bad);
+            assert_eq!(outcome.config.web_timeout, 60, "{bad}");
+            assert_eq!(outcome.warnings.len(), 1, "{bad}");
+            assert!(outcome.warnings[0].contains("'web_timeout': seconds, 0 for no limits"), "{}", outcome.warnings[0]);
+        }
     }
 
     #[test]

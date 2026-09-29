@@ -165,6 +165,7 @@ fn run() -> Result<()> {
             host: host.clone().unwrap_or_else(|| cfg.web_host.clone()),
             port: port.unwrap_or(cfg.web_port),
             token: cfg.web_token.clone(),
+            timeout: (cfg.web_timeout > 0).then(|| std::time::Duration::from_secs(cfg.web_timeout)),
         });
     }
 

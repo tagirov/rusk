@@ -36,16 +36,16 @@ rusk serve --port 8080
 rusk serve --host 0.0.0.0     # requires web_token in the config
 ```
 
-Defaults come from the config (`web_host`, `web_port`, `web_token`); flags
-override them. `localhost` (in any case) binds 127.0.0.1, where clients look
+Defaults come from the config (`web_host`, `web_port`, `web_token`,
+`web_timeout`); flags override the first two. `localhost` (in any case) binds 127.0.0.1, where clients look
 for it; an IPv6 address may be given with or without brackets (`[::1]`).
 The server re-reads the database on **every request**, so CLI
 edits are instantly visible in the browser and vice versa — you can even
 `rusk sync push` a new file under a running server.
 
 Each request is read, checked and answered on a thread of its own, so a
-client that sends its request body slowly, or never, holds up nobody else;
-the work on the tasks is done by one request at a time, so two changes made
+client that sends its request body slowly holds up no other request; the
+work on the tasks is done by one request at a time, so two changes made
 at the same moment are both kept, whatever the database. A request body may
 be up to 32 MiB (a `PUT` of thousands of tasks is a few MB), the sign-in form
 up to 4 KiB; a bigger one is refused with 413, and one that ends before the
@@ -54,20 +54,49 @@ body, for uptime checks and proxies. If the server cannot take connections
 any more (no file descriptors left), it ends with an error, so that a
 supervisor (`Restart=on-failure`) starts it again.
 
+A connection may wait a minute (`web_timeout` in the config, seconds): idle,
+for its next request — browsers keep a few open; for the rest of a request's
+head after its first byte, however slowly the bytes come; and, in a request
+body or an answer, for the socket to move at all. Past that, a body or an
+answer has to keep up a kilobyte a second: the time it spends waiting may
+come to the minute and a second more per kilobyte moved, so a client that
+keeps moving is never cut off, however long a big `PUT` takes, while one
+that sends a byte of a body — or takes a byte of an answer — now and then is.
+A connection that waits longer is closed: with `408 Request Timeout` when
+part of a request had come (a body that stops, or trickles, gets it too, and
+the request has to be sent again), without a word when it was idle, as
+browsers expect of a keep-alive connection. Up to 256 connections are open
+at once (fewer if the process may not open the file descriptors they take;
+the limit is raised as far as allowed, and the startup banner says what it
+is); the next waits in the listening socket's queue until one closes. The
+requests of one connection are taken one at a time, the next after the
+answer to the one before, so the requests in flight — a thread each — are
+bounded by the same limit. `web_timeout = 0` turns all of this off, as it
+was before: no timeout, no pace, no limit on connections (with no timeout
+to close them, connections a client dropped without a word would otherwise
+fill the limit for good).
+
+The limits keep the server up and its threads, memory and file
+descriptors bounded whatever clients do; they do not make it fair. A
+client that keeps 256 connections busy — opening new ones as the old are
+cut off, heads a byte at a time, bodies or answers at a kilobyte a second —
+keeps everybody else waiting while it does. On loopback, a trusted network
+or a VPN that does not matter; exposed wider, put a reverse proxy in front
+that buffers requests and answers and limits them per client (nginx does,
+see below) — it is the place for TLS anyway.
+
 `rusk serve` runs on [tiny_http](https://github.com/tiny-http/tiny-http)
-0.12, vendored under `vendor/` with two changes of rusk's (see
+0.12, vendored under `vendor/` with three changes of rusk's (see
 `vendor/README.md`): a request answered without reading its body (a wrong
 token, a body too big) takes the rest of that body from the connection
 before it goes — through a small buffer, up to where the connection ends,
 where the crate as published took a buffer as large as the announced rest and
-a `Content-Length: 1000000000000000` aborted the server — and every
-connection of a burst is read (as published, some of six opened at once by a
-browser could hang until another closed). The library is still not made to
-face hostile clients: every open connection costs a thread, and a client that
-sends its body slowly, or never, holds that thread for as long as it likes.
-Keep the server on loopback or a trusted network, or put a reverse proxy in
-front that buffers requests and limits their size and time (nginx does all
-three, see below).
+a `Content-Length: 1000000000000000` aborted the server; every connection of
+a burst is read (as published, some of six opened at once by a browser could
+hang until another closed); and the limits above, which the crate as
+published has nothing of — every open connection cost a thread for as long
+as the client liked, and a client could send requests down one connection
+faster than they were answered, a thread each.
 
 ### Authentication
 
@@ -130,12 +159,16 @@ tasks.example.com {
 nginx equivalent:
 
 ```nginx
+# In the http block: connections counted per client address.
+limit_conn_zone $binary_remote_addr zone=rusk_peers:1m;
+
 server {
     listen 443 ssl;
     server_name tasks.example.com;
     # ssl_certificate ...; ssl_certificate_key ...;
     client_max_body_size 32m;   # nginx's own default, 1m, would cap `sync push`
     client_body_timeout 60s;    # nginx's default: a client that stalls is cut off here
+    limit_conn rusk_peers 16;   # no one address takes all of rusk's 256 connections
     location / {
         proxy_pass http://127.0.0.1:7272;
         proxy_set_header X-Forwarded-Proto $scheme;   # the cookie gets `Secure`

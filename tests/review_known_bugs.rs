@@ -28,9 +28,11 @@
 // of section 4: R27 (CLI, storage, SQLite), R28 (remote databases and
 // `rusk sync`), R29 (`rusk serve`), R30 (the editor) — and R31 (what was
 // left after them: a `Content-Length` nobody could send took the server
-// down; the debug database was in a directory every user shared) and R32
+// down; the debug database was in a directory every user shared), R32
 // (SECURITY.md L1 and L2: a remote answer larger than any task list is
-// not read whole; line separators in the inlined JSON).
+// not read whole; line separators in the inlined JSON) and R33 (what a
+// connection may take of `rusk serve`: a timeout, a pace for bodies and
+// answers, a limit on connections, one request at a time).
 // R6 and R8 need a pty
 // for most of their repros: what Command can drive is here, the draft rules
 // are unit-tested in `src/cli/editor/draft.rs`, and the rest is driven by a
@@ -5653,7 +5655,10 @@ fn r20_stalled_bodies_hold_up_nobody() {
 
 /// Review of R20: when tiny_http could not accept a connection any more
 /// (no file descriptors left) it stopped for good, and the server ended
-/// with success — a supervisor had no reason to start it again.
+/// with success — a supervisor had no reason to start it again. (Since
+/// R33 the server keeps within its file descriptors on its own, see
+/// `r33_a_low_file_descriptor_limit_means_fewer_connections`; without its
+/// limits, `web_timeout = 0`, it still runs out.)
 #[test]
 #[cfg(all(unix, feature = "web"))]
 fn r20_a_server_that_cannot_accept_fails() {
@@ -5668,6 +5673,7 @@ fn r20_a_server_that_cannot_accept_fails() {
         };
     }
     let mut child = sh
+        .env("RUSK_CONFIG", timeout_config(&sb, 0))
         .current_dir(sb.path())
         .arg("-c")
         .arg("ulimit -n 32 && exec \"$0\" serve --port 0")
@@ -8030,4 +8036,349 @@ fn r32_a_line_separator_in_a_task_is_escaped_in_the_page() {
     let page = stdout_of(&out);
     assert!(!page.contains('\u{2028}') && !page.contains('\u{2029}'), "raw line separators in the page");
     assert!(page.contains("one\\u2028two\\u2029three"), "{page}");
+}
+
+// ---------------------------------------------------------------------------
+// R33 — what a connection may take of `rusk serve`: time and threads
+// ---------------------------------------------------------------------------
+
+/// A config with `web_timeout` set.
+#[cfg(feature = "web")]
+fn timeout_config(sb: &Sandbox, seconds: u64) -> String {
+    let path = sb.path().join("timeout.cfg");
+    fs::write(&path, format!("web_timeout = {seconds}\n")).unwrap();
+    path.display().to_string()
+}
+
+/// What the server sends until it closes the connection (or resets it:
+/// then what came before).
+#[cfg(feature = "web")]
+fn rest_of(stream: &mut std::net::TcpStream) -> String {
+    use std::io::Read;
+    let mut rest = Vec::new();
+    let _ = stream.read_to_end(&mut rest);
+    String::from_utf8_lossy(&rest).into_owned()
+}
+
+/// R33 (the limitation WEB.md documented after R31): a connection cost a
+/// thread for as long as the client kept it — idle, sending its request a
+/// byte a minute, or its body never. A connection may wait `web_timeout`
+/// (a minute by default, one second here): idle, it is closed without a
+/// word; a head that stops, or trickles in, is 408 at one timeout from its
+/// first byte; a body that stops coming is 408 and the connection ends.
+#[test]
+#[cfg(feature = "web")]
+fn r33_a_connection_that_stalls_is_cut_off() {
+    use std::io::Write;
+    use std::time::{Duration, Instant};
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, &timeout_config(&sb, 1), &[]);
+    let second = Duration::from_secs(1);
+    let connect = || {
+        let stream = std::net::TcpStream::connect(("127.0.0.1", server.port)).unwrap();
+        stream.set_read_timeout(Some(second * 5)).unwrap();
+        stream
+    };
+    // Loose bounds: a machine under load, or Windows with its clock ticks,
+    // runs a little early or late (review of R33).
+    let early = Duration::from_millis(50);
+    let in_time = |took: Duration| assert!(took >= second - early && took < second * 5, "took {took:?}");
+
+    // Idle: closed at the timeout, without a word — a fresh connection and
+    // one that has been answered (keep-alive) alike.
+    let mut idle = connect();
+    let started = Instant::now();
+    assert_eq!(rest_of(&mut idle), "");
+    in_time(started.elapsed());
+    let mut http = Http::to(server.port);
+    let res = http.get("/api/tasks", "");
+    assert_eq!(status(&res), 200, "{res}");
+    let started = Instant::now();
+    assert_eq!(rest_of(&mut http.0), "");
+    in_time(started.elapsed());
+
+    // A head that stops half-way: 408, and the connection ends.
+    let mut slow = connect();
+    slow.write_all(b"GET /api/tasks HTTP/1.1\r\nHost: localhost\r\n").unwrap();
+    let started = Instant::now();
+    let rest = rest_of(&mut slow);
+    assert!(rest.starts_with("HTTP/1.1 408"), "{rest}");
+    in_time(started.elapsed());
+
+    // A head that comes a byte at a time, each well within the timeout,
+    // is cut off at the deadline all the same. (The 408 may be lost to the
+    // reset of a connection closed with bytes unread; when it ends is what
+    // matters.)
+    let mut trickle = connect();
+    let started = Instant::now();
+    let writer = {
+        let mut trickle = trickle.try_clone().unwrap();
+        std::thread::spawn(move || {
+            for byte in b"GET /api/tasks HTTP/1.1\r\nHost: localhost\r\nX-Slow: yes\r\n".iter().cycle() {
+                if trickle.write_all(&[*byte]).is_err() || started.elapsed() > second * 6 {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        })
+    };
+    let rest = rest_of(&mut trickle);
+    let took = started.elapsed();
+    assert!(took >= second - early && took < second * 4, "took {took:?}: {rest}");
+    writer.join().unwrap();
+
+    // A body that stops coming: 408 at the timeout, then the connection
+    // ends (the client has to send the request again).
+    let mut body = Http::to(server.port);
+    write!(
+        body.0,
+        "POST /api/tasks HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n\
+         Content-Length: 5000\r\n\r\n{{\"text\":\""
+    )
+    .unwrap();
+    let started = Instant::now();
+    let res = body.response("POST (a body that stops)");
+    assert_eq!(status(&res), 408, "{res}");
+    assert!(res.contains("request body stopped coming, or came too slowly"), "{res}");
+    in_time(started.elapsed());
+    assert_eq!(rest_of(&mut body.0), "");
+
+    // A body that trickles in — ten bytes every quarter of a second, each
+    // well within the timeout, 40 bytes a second where a kilobyte is the
+    // least — is 408 once it has waited its allowance (review of R33: it
+    // held its connection for ever).
+    let mut trickle = Http::to(server.port);
+    write!(
+        trickle.0,
+        "POST /api/tasks HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n\
+         Content-Length: 5000\r\n\r\n{{\"text\":\""
+    )
+    .unwrap();
+    let started = Instant::now();
+    let writer = {
+        let mut trickle = trickle.0.try_clone().unwrap();
+        std::thread::spawn(move || {
+            while started.elapsed() < second * 8 {
+                if trickle.write_all(b"0123456789").is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(250));
+            }
+        })
+    };
+    let res = trickle.response("POST (a body that trickles)");
+    assert_eq!(status(&res), 408, "{res}");
+    let took = started.elapsed();
+    assert!(took >= second - early && took < second * 5, "took {took:?}");
+    drop(trickle);
+    writer.join().unwrap();
+
+    // One that keeps the pace goes through, however long it takes: 40 kB
+    // over two and a half timeouts.
+    let mut steady = Http::to(server.port);
+    let text = "x".repeat(40_000);
+    let body = format!(r#"{{"text":"{text}"}}"#);
+    write!(
+        steady.0,
+        "POST /api/tasks HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n\
+         Content-Length: {}\r\n\r\n",
+        body.len()
+    )
+    .unwrap();
+    for piece in body.as_bytes().chunks(4000) {
+        steady.0.write_all(piece).unwrap();
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    let res = steady.response("POST (a steady body)");
+    assert_eq!(status(&res), 201, "{}", &res[..res.len().min(300)]);
+
+    // The server answered others all along, and lives.
+    let res = Http::to(server.port).get("/api/tasks", "");
+    assert_eq!(status(&res), 200, "{res}");
+    let mut server = server;
+    assert!(server.child.try_wait().unwrap().is_none(), "the server died");
+}
+
+/// R33: a client could send requests down one connection faster than they
+/// were answered, and each became a thread of its own, waiting for its
+/// turn to answer — three hundred requests for a list too big to go out
+/// at once were three hundred threads. The requests of a connection are
+/// taken one at a time now: a thread or two, and all of them answered.
+#[test]
+#[cfg(feature = "web")]
+fn r33_requests_down_one_connection_are_taken_one_at_a_time() {
+    use std::io::{Read, Write};
+    use std::time::Duration;
+    let tasks: Vec<String> = (1..=1000)
+        .map(|id| {
+            format!(r#"{{"id":{id},"text":"task {id} {}","date":null,"done":false,"priority":false}}"#, "x".repeat(100))
+        })
+        .collect();
+    let sb = Sandbox::with_db(&format!("[{}]", tasks.join(",")));
+    let server = serve(&sb, &timeout_config(&sb, 5), &[]);
+
+    // Some 45 MB of answers, more than the sockets hold: the ones that
+    // cannot go out wait, and nothing is read here meanwhile.
+    let mut flood = Http::to(server.port);
+    let request = "GET /api/tasks HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    flood.0.write_all(request.repeat(300).as_bytes()).unwrap();
+    std::thread::sleep(Duration::from_millis(700));
+    #[cfg(target_os = "linux")]
+    {
+        let status = fs::read_to_string(format!("/proc/{}/status", server.child.id())).unwrap();
+        let threads: usize = status
+            .lines()
+            .find_map(|line| line.strip_prefix("Threads:"))
+            .and_then(|n| n.trim().parse().ok())
+            .expect(&status);
+        assert!(threads < 64, "{threads} threads for 300 requests down one connection");
+    }
+    // All answered (the bodies go in chunks: the status lines are
+    // counted as they come, across the reads).
+    let status_line = b"HTTP/1.1 200 ";
+    let (mut answered, mut others) = (0, 0);
+    let mut tail: Vec<u8> = Vec::new();
+    let mut chunk = vec![0u8; 1 << 16];
+    while answered < 300 {
+        let n = flood.0.read(&mut chunk).expect("the flooded connection");
+        assert!(n > 0, "the flooded connection closed after {answered} answers");
+        // Every position is looked at once, with a whole status line's
+        // worth after it: the last few bytes wait for the next read.
+        tail.extend_from_slice(&chunk[..n]);
+        let looked_at = tail.len().saturating_sub(status_line.len() - 1);
+        for at in 0..looked_at {
+            if tail[at..].starts_with(status_line) {
+                answered += 1;
+            } else if tail[at..].starts_with(b"HTTP/1.1 ") {
+                others += 1;
+            }
+        }
+        tail.drain(..looked_at);
+    }
+    assert_eq!(others, 0);
+}
+
+/// R33: a client, or many, could open as many connections as the server
+/// had file descriptors, a thread each. At most 256 are open at once; the
+/// next waits until one closes — the timeout sees to it — and is then
+/// answered, neither refused nor lost.
+#[test]
+#[cfg(feature = "web")]
+fn r33_connections_past_the_limit_wait_their_turn() {
+    use std::io::{Read, Write};
+    use std::time::{Duration, Instant};
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, &timeout_config(&sb, 2), &[]);
+
+    // 256 idle connections fill the server; accepted in order, the next
+    // one's request is not read until they time out, 2 s after the first
+    // of them was accepted. (Opening them may itself take a second or so:
+    // a connection the listening socket's queue has no room for yet is
+    // tried again by the client's kernel.)
+    let started = Instant::now();
+    let mut idle = Vec::new();
+    for _ in 0..256 {
+        idle.push(std::net::TcpStream::connect(("127.0.0.1", server.port)).unwrap());
+    }
+    let opened = started.elapsed();
+    let mut next = Http::to(server.port);
+    next.0.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
+    write!(next.0, "GET /api/tasks HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
+    let err = next.0.read(&mut [0u8; 16]).expect_err("answered over the limit");
+    assert!(
+        matches!(err.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut),
+        "{err:?}"
+    );
+    next.0.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    let res = next.response("GET (over the limit)");
+    assert_eq!(status(&res), 200, "{res}");
+    let took = started.elapsed();
+    assert!(
+        took >= Duration::from_millis(1900) && took < Duration::from_secs(8),
+        "took {took:?} (the 256 opened in {opened:?})"
+    );
+    drop(idle);
+}
+
+/// R33: `web_timeout = 0` is the crate as published — no limits at all: a
+/// connection may stay idle for as long as it likes, and connections past
+/// 256 are taken all the same (review of R33: with no timeout to close
+/// them, connections dropped without a word filled the limit for good).
+#[test]
+#[cfg(feature = "web")]
+fn r33_web_timeout_zero_keeps_an_idle_connection() {
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, &timeout_config(&sb, 0), &[]);
+    let mut http = Http::to(server.port);
+    let idle: Vec<_> = (0..300)
+        .map(|_| std::net::TcpStream::connect(("127.0.0.1", server.port)).unwrap())
+        .collect();
+    std::thread::sleep(std::time::Duration::from_millis(2500));
+    let res = http.get("/api/tasks", "");
+    assert_eq!(status(&res), 200, "{res}");
+    let res = Http::to(server.port).get("/api/tasks", "");
+    assert_eq!(status(&res), 200, "{res}");
+    drop(idle);
+}
+
+/// Review of R33: 256 connections take 512 file descriptors, more than a
+/// process has on macOS (256) — the server ran out and ended. It raises its
+/// limit as far as allowed, and within a limit it cannot raise takes fewer
+/// connections at once: the banner says how many, and a flood of them
+/// leaves it up and answering.
+#[test]
+#[cfg(all(unix, feature = "web"))]
+fn r33_a_low_file_descriptor_limit_means_fewer_connections() {
+    use std::io::BufRead;
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let template = sb.cmd();
+    let mut sh = std::process::Command::new("sh");
+    for (key, value) in template.get_envs() {
+        match value {
+            Some(value) => sh.env(key, value),
+            None => sh.env_remove(key),
+        };
+    }
+    let mut child = sh
+        .env("RUSK_CONFIG", timeout_config(&sb, 1))
+        .current_dir(sb.path())
+        .arg("-c")
+        .arg("ulimit -n 96 && exec \"$0\" serve --port 0")
+        .arg(template.get_program())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut out = std::io::BufReader::new(child.stdout.take().unwrap());
+    let (mut port, mut limits) = (None, None);
+    for _ in 0..10 {
+        let mut line = String::new();
+        if out.read_line(&mut line).unwrap_or(0) == 0 {
+            break;
+        }
+        if let Some(addr) = line.split("http://").nth(1) {
+            port = addr.trim().rsplit(':').next().and_then(|p| p.parse::<u16>().ok());
+        }
+        if let Some(rest) = line.strip_prefix("Limits: ") {
+            limits = Some(rest.trim().to_string());
+        }
+        if line.contains("Ctrl+C") {
+            break;
+        }
+    }
+    let port = port.expect("no address");
+    // (96 - 64 kept for the rest) / 2 each.
+    assert_eq!(limits.as_deref(), Some("1 s timeout, up to 16 connections"));
+
+    let flood: Vec<_> = (0..64)
+        .filter_map(|_| std::net::TcpStream::connect(("127.0.0.1", port)).ok())
+        .collect();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert!(child.try_wait().unwrap().is_none(), "the server ended under the flood");
+    drop(flood);
+    let res = Http::to(port).get("/api/tasks", "");
+    assert_eq!(status(&res), 200, "{res}");
+    assert!(child.try_wait().unwrap().is_none(), "the server ended");
+    let _ = child.kill();
+    let _ = child.wait();
 }

@@ -77,8 +77,11 @@ windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
 [dev-dependencies]
 tempfile = "3.0"
 
-# tiny_http as published, with one change: an unread request body is thrown
-# away through a small buffer, not one as large as its `Content-Length` (a
-# petabyte announced by a client aborted the server). See vendor/README.md.
+# tiny_http as published, with rusk's changes: an unread request body is
+# thrown away through a small buffer, not one as large as its
+# `Content-Length` (a petabyte announced by a client aborted the server);
+# every connection of a burst is read; and limits — a timeout, a pace for
+# bodies and answers, a cap on connections, one request at a time — which
+# the crate has none of. See vendor/README.md.
 [patch.crates-io]
 tiny_http = { path = "vendor/tiny_http" }

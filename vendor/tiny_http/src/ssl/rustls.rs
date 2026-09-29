@@ -29,6 +29,30 @@ impl RustlsStream {
             .sock
             .shutdown(how)
     }
+
+    /// rusk: see `Connection::set_read_timeout`.
+    pub(crate) fn set_read_timeout(
+        &mut self,
+        timeout: Option<std::time::Duration>,
+    ) -> std::io::Result<()> {
+        self.0
+            .lock()
+            .expect("Failed to lock SSL stream mutex")
+            .sock
+            .set_read_timeout(timeout)
+    }
+
+    /// rusk: see `Connection::set_write_timeout`.
+    pub(crate) fn set_write_timeout(
+        &mut self,
+        timeout: Option<std::time::Duration>,
+    ) -> std::io::Result<()> {
+        self.0
+            .lock()
+            .expect("Failed to lock SSL stream mutex")
+            .sock
+            .set_write_timeout(timeout)
+    }
 }
 
 impl Clone for RustlsStream {

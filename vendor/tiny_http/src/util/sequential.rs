@@ -64,6 +64,17 @@ impl<R: Read + Send> SequentialReaderBuilder<R> {
     }
 }
 
+impl<R: Read + Send> SequentialReader<R> {
+    /// rusk: the reader itself, once it is this one's turn — from its
+    /// first read on.
+    pub fn reader_mut(&mut self) -> Option<&mut R> {
+        match &mut self.inner {
+            SequentialReaderInner::MyTurn(reader) => Some(reader),
+            _ => None,
+        }
+    }
+}
+
 impl<W: Write + Send> SequentialWriterBuilder<W> {
     pub fn new(writer: W) -> SequentialWriterBuilder<W> {
         SequentialWriterBuilder {

@@ -1,4 +1,4 @@
-# tiny_http 0.12.0, vendored with one change (see ../README.md). The
+# tiny_http 0.12.0, vendored with rusk's changes (see ../README.md). The
 # manifest is the crate's own without its dev-dependencies, examples,
 # benches and integration tests, which are not vendored.
 [package]

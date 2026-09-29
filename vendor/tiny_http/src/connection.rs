@@ -5,6 +5,7 @@ use std::os::unix::net as unix_net;
 use std::{
     net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs},
     path::PathBuf,
+    time::Duration,
 };
 
 /// Unified listener. Either a [`TcpListener`] or [`std::os::unix::net::UnixListener`]
@@ -100,6 +101,26 @@ impl Connection {
             Self::Tcp(s) => s.try_clone().map(Self::from),
             #[cfg(unix)]
             Self::Unix(s) => s.try_clone().map(Self::from),
+        }
+    }
+
+    /// rusk: how long a read may wait for data (`None`: for ever). See
+    /// `Limits`.
+    pub(crate) fn set_read_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()> {
+        match self {
+            Self::Tcp(s) => s.set_read_timeout(timeout),
+            #[cfg(unix)]
+            Self::Unix(s) => s.set_read_timeout(timeout),
+        }
+    }
+
+    /// rusk: how long a write may wait for room (`None`: for ever). See
+    /// `Limits`.
+    pub(crate) fn set_write_timeout(&self, timeout: Option<Duration>) -> std::io::Result<()> {
+        match self {
+            Self::Tcp(s) => s.set_write_timeout(timeout),
+            #[cfg(unix)]
+            Self::Unix(s) => s.set_write_timeout(timeout),
         }
     }
 }

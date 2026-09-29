@@ -22,6 +22,22 @@ impl SplitOpenSslStream {
     pub(crate) fn shutdown(&mut self, how: Shutdown) -> std::io::Result<()> {
         self.0.lock().unwrap().inner.get_mut().shutdown(how)
     }
+
+    /// rusk: see `Connection::set_read_timeout`.
+    pub(crate) fn set_read_timeout(
+        &mut self,
+        timeout: Option<std::time::Duration>,
+    ) -> std::io::Result<()> {
+        self.0.lock().unwrap().inner.get_ref().set_read_timeout(timeout)
+    }
+
+    /// rusk: see `Connection::set_write_timeout`.
+    pub(crate) fn set_write_timeout(
+        &mut self,
+        timeout: Option<std::time::Duration>,
+    ) -> std::io::Result<()> {
+        self.0.lock().unwrap().inner.get_ref().set_write_timeout(timeout)
+    }
 }
 
 impl Clone for SplitOpenSslStream {

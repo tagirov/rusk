@@ -29,3 +29,18 @@ jobs:
     - name: Run the vendored tiny_http tests
       run: cargo test -p tiny_http --lib --verbose
 
+  # REVIEW.md П2: nothing of rusk had been run on Windows before this job.
+  # The completion scripts run in the shells the image has (pwsh, and bash
+  # from Git for Windows).
+  windows:
+
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      run: cargo test --verbose
+    - name: Run the vendored tiny_http tests
+      run: cargo test -p tiny_http --lib --verbose

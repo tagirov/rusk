@@ -453,7 +453,8 @@ rusk gen -o -                     # write to stdout"
         about = "Serve the web UI with full task editing",
         long_about = "Serve the web UI with full task editing (mobile-first). Binds \
 127.0.0.1:7272 by default; host/port/token come from the config (web_host, web_port, \
-web_token).\n\n\
+web_token), and so does web_timeout: how long a connection may wait before it is closed \
+(60 s; 0 turns this and the limit of 256 connections off).\n\n\
 Examples:\n  \
 rusk serve\n  \
 rusk serve --port 8080\n  \

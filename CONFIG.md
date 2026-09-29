@@ -79,6 +79,7 @@ not take away a `db_token`); `RUSK_CONFIG=` is the exception, see above.
 | `web_host` | string | `127.0.0.1` | — | Bind address for `rusk serve` (see [WEB.md](WEB.md)); `localhost` binds 127.0.0.1 |
 | `web_port` | u16 | `7272` | — | Port for `rusk serve` |
 | `web_token` | string | — | — | Access token for `rusk serve`; required for non-loopback hosts. Printable ASCII (spaces inside are fine) without `;` and without spaces at its ends (it travels in a cookie and a header as it is) |
+| `web_timeout` | u64 | `60` | — | Seconds a connection of `rusk serve` may wait: idle, for the rest of a request's head after its first byte, for a stalled body or answer to move; past that, a body or answer has to keep up 1 KiB/s. One that waits longer is closed, with 408 when part of a request had come. At most 256 connections are open at once. `0`: none of these limits (see [WEB.md](WEB.md#rusk-serve)) |
 | `sync_remote` | string | — | `RUSK_SYNC_REMOTE` | Remote for `rusk sync`: `[user@]host:/path/tasks.json` (ssh) or `https://host` (serve API), read exactly like a remote `rusk_db` |
 | `sync_token` | string | — | `RUSK_SYNC_TOKEN` | Bearer token for http(s) sync remotes |
 | `keywords` | list | `TEMP INFO FIXME WIP` | — | Keywords highlighted when a task text starts with one (only the first word is matched; space- or comma-separated, case-sensitive; `keywords =` with no value disables). Color comes from the `keyword` theme key |

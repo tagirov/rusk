@@ -6,14 +6,15 @@
 //! every change goes through `TaskManager::update`, so a request and a CLI
 //! command saving at the same moment both take effect. Requests are read,
 //! checked and answered on threads of their own, so a client that sends its
-//! body slowly holds up nobody else; the work on the tasks itself is done
-//! by one request at a time ([`with_tasks`]). Clients that send back the
-//! `ETag` of the list or of a task as `If-Match` are told (412) when what
-//! they are changing is no longer what they have seen. Auth is a token from
-//! the config, entered once in a login form and kept in an HttpOnly cookie;
-//! `Authorization: Bearer` works for scripting. Without a token the server
-//! binds loopback only and answers only requests addressed to a loopback
-//! name.
+//! body slowly holds up nobody else — and not its own thread for longer
+//! than [`ServeOptions::timeout`] either (R33); the work on the tasks itself
+//! is done by one request at a time ([`with_tasks`]). Clients that send
+//! back the `ETag` of the list or of a task as `If-Match` are told (412)
+//! when what they are changing is no longer what they have seen. Auth is a
+//! token from the config, entered once in a login form and kept in an
+//! HttpOnly cookie; `Authorization: Bearer` works for scripting. Without a
+//! token the server binds loopback only and answers only requests addressed
+//! to a loopback name.
 
 use super::api::{self, ApiResponse};
 use crate::{TaskId, TaskManager};
@@ -21,12 +22,89 @@ use anyhow::{Result, anyhow, bail};
 use std::io::Read;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
-use tiny_http::{Header, Method, Request, Response, Server};
+use std::time::Duration;
+use tiny_http::{ConfigListenAddr, Header, Limits, Method, Request, Response, Server, ServerConfig};
 
 pub struct ServeOptions {
     pub host: String,
     pub port: u16,
     pub token: Option<String>,
+    /// How long a connection may wait (`web_timeout`): idle, for the next
+    /// request; for the rest of a request's head after its first byte; and,
+    /// in a body or an answer, for the socket to move at all — and then at
+    /// [`MIN_RATE`]. One that waits longer is closed — with 408 when part
+    /// of a request had come, without a word when it was idle. `None`: no
+    /// limits at all, as before R33 (no timeout, no pace, no limit on
+    /// connections: without a timeout, connections a client dropped without
+    /// a word would fill any limit for good; review of R33).
+    pub timeout: Option<Duration>,
+}
+
+/// Connections open at once, at most (fewer when the process may not open
+/// the file descriptors they take, see [`connection_limit`]). Every open
+/// connection costs a thread and two file descriptors for as long as the
+/// client keeps it — a browser keeps up to six, idle, until
+/// [`ServeOptions::timeout`] closes them — so a client, or many, cannot
+/// make the server grow threads without end: the connection past the limit
+/// waits in the listening socket's backlog until one closes. Within the
+/// limit, a connection's requests are read one at a time, the next after
+/// the answer to the one before, so requests in flight — a thread each —
+/// are bounded by it too (a client sending thousands of requests down one
+/// connection without reading the answers used to get a thread for each;
+/// see vendor/README.md). The limit is not fairness: a client that keeps
+/// 256 connections busy — a head a minute on each, bodies or answers at
+/// [`MIN_RATE`] — keeps everybody else waiting while it does; a proxy that
+/// buffers requests and answers (nginx) is what stands in front of that.
+const MAX_CONNECTIONS: usize = 256;
+
+/// File descriptors kept for the rest of the server when the connections'
+/// share is worked out: the listening socket, the database, its lock and
+/// its backup, the pipes of curl or ssh to a remote database, git.
+const RESERVED_FDS: usize = 64;
+
+/// Bytes a second a request body, and the answers of a connection, have to
+/// keep up once they have waited [`ServeOptions::timeout`] (see
+/// `tiny_http::Limits::min_rate`): without it, a client sending a byte of
+/// a body now and then, well within the timeout each time, held its
+/// connection for ever (review of R33). A kilobyte a second is far below
+/// any link a page is used over.
+const MIN_RATE: u32 = 1024;
+
+/// How many connections this process can keep open: [`MAX_CONNECTIONS`],
+/// unless the file descriptor limit is too low for them — it is raised as
+/// far as the hard limit allows first (macOS starts processes at 256,
+/// which 256 connections at two each would outgrow; the server then ended
+/// on a failed accept, review of R33).
+#[cfg(unix)]
+fn connection_limit() -> usize {
+    let wanted = (MAX_CONNECTIONS * 2 + RESERVED_FDS) as libc::rlim_t;
+    let mut limit = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+    // SAFETY: `limit` is a valid rlimit for getrlimit to fill in.
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } != 0 {
+        return MAX_CONNECTIONS;
+    }
+    if limit.rlim_cur < wanted && limit.rlim_max > limit.rlim_cur {
+        let raised = libc::rlimit { rlim_cur: wanted.min(limit.rlim_max), rlim_max: limit.rlim_max };
+        // SAFETY: `raised` is a valid rlimit within the hard limit.
+        if unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &raised) } == 0 {
+            limit.rlim_cur = raised.rlim_cur;
+        }
+    }
+    connections_within(limit.rlim_cur)
+}
+
+/// Windows has no such limit worth the name (handles, by the million).
+#[cfg(not(unix))]
+fn connection_limit() -> usize {
+    MAX_CONNECTIONS
+}
+
+/// The connections `descriptors` leave room for, two each, beside
+/// [`RESERVED_FDS`]; at least one, at most [`MAX_CONNECTIONS`].
+#[cfg_attr(not(unix), allow(dead_code))]
+fn connections_within(descriptors: u64) -> usize {
+    let spare = descriptors.saturating_sub(RESERVED_FDS as u64) / 2;
+    usize::try_from(spare).unwrap_or(usize::MAX).clamp(1, MAX_CONNECTIONS)
 }
 
 /// The largest request body taken. A task list of thousands of tasks is a
@@ -63,7 +141,9 @@ const PREFETCHED_BODY_BYTES: usize = 1024;
 /// whole server down (see vendor/README.md). tiny_http cannot be asked to
 /// close the connection instead (a `Connection` header of the answer is
 /// dropped), so a client that stalls holds up its own thread, as one does
-/// on a small body.
+/// on a small body — for [`ServeOptions::timeout`] at most (R33): a body
+/// that stops coming, or trickles in slower than [`MIN_RATE`], fails the
+/// read, the answer goes out, and the connection ends.
 const DISCARDED_BODY_BYTES: usize = 1024 * 1024;
 
 thread_local! {
@@ -306,7 +386,10 @@ fn form_value(data: &str, name: &str, plus_is_space: bool) -> Option<String> {
 
 /// The request body, whole: one larger than `limit` is 413, whether it
 /// says its length up front or not, and one that ends before the length it
-/// announced (the client gave up half-way) is not the request it meant.
+/// announced (the client gave up half-way) is not the request it meant. One
+/// that stops coming for [`ServeOptions::timeout`], or comes slower than
+/// [`MIN_RATE`] once it has waited that long, is 408 (R33): the connection
+/// is done with then, the client has to send the request again.
 fn read_body(request: &mut Request, limit: u64) -> std::result::Result<String, Reply> {
     let too_large = || {
         let size = if limit >= 1 << 20 {
@@ -325,7 +408,14 @@ fn read_body(request: &mut Request, limit: u64) -> std::result::Result<String, R
         .as_reader()
         .take(limit + 1)
         .read_to_end(&mut body)
-        .map_err(|e| Reply::json_error(400, &format!("failed to read request body: {e}")))?;
+        .map_err(|e| match e.kind() {
+            // A read that waited the timeout out: `WouldBlock` on unix,
+            // `TimedOut` on Windows.
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => {
+                Reply::json_error(408, "request body stopped coming, or came too slowly")
+            }
+            _ => Reply::json_error(400, &format!("failed to read request body: {e}")),
+        })?;
     if body.len() as u64 > limit {
         return Err(too_large());
     }
@@ -692,11 +782,28 @@ pub fn run(opts: ServeOptions) -> Result<()> {
 
     let _ = crate::SERVE_ID.set(format!("{:016x}", crate::atomic::unique()));
     let host = bind_host(&opts.host);
-    let server = match host.parse::<IpAddr>() {
-        Ok(ip) => Server::http(SocketAddr::new(ip, opts.port)),
-        Err(_) => Server::http(format!("{host}:{}", opts.port)),
+    let addr = match host.parse::<IpAddr>() {
+        Ok(ip) => ConfigListenAddr::from_socket_addrs(SocketAddr::new(ip, opts.port)),
+        Err(_) => ConfigListenAddr::from_socket_addrs(format!("{host}:{}", opts.port)),
     }
     .map_err(|e| anyhow!("failed to bind {}:{}: {e}", opts.host, opts.port))?;
+    let limits = match opts.timeout {
+        Some(timeout) => Limits {
+            timeout: Some(timeout),
+            max_connections: Some(connection_limit()),
+            min_rate: Some(MIN_RATE),
+        },
+        None => Limits::default(),
+    };
+    let limits_line = match (limits.timeout, limits.max_connections) {
+        (Some(timeout), Some(connections)) => {
+            let plural = if connections == 1 { "" } else { "s" };
+            format!("{} s timeout, up to {connections} connection{plural}", timeout.as_secs())
+        }
+        _ => "off (web_timeout = 0)".to_string(),
+    };
+    let server = Server::new(ServerConfig { addr, ssl: None, limits })
+        .map_err(|e| anyhow!("failed to bind {}:{}: {e}", opts.host, opts.port))?;
 
     // The actual address matters with --port 0 (tests parse this line).
     let addr = server
@@ -723,6 +830,7 @@ pub fn run(opts: ServeOptions) -> Result<()> {
         }
     )
     .ok();
+    crate::outln!("Limits: {limits_line}").ok();
     crate::outln!("Press Ctrl+C to stop.").ok();
 
     let opts = Arc::new(opts);
@@ -762,6 +870,7 @@ mod tests {
             host: "127.0.0.1".into(),
             port: 0,
             token: token.map(str::to_string),
+            timeout: None,
         }
     }
 
@@ -776,6 +885,18 @@ mod tests {
             .iter()
             .find(|(key, _)| key.eq_ignore_ascii_case(name))
             .map(|(_, value)| value.as_str())
+    }
+
+    /// Review of R33: 256 connections take 512 file descriptors, more than
+    /// the 256 a process starts with on macOS; within a lower limit, the
+    /// server takes fewer connections instead of failing to accept.
+    #[test]
+    fn the_connections_fit_the_file_descriptors() {
+        assert_eq!(connections_within(1024), MAX_CONNECTIONS);
+        assert_eq!(connections_within(u64::MAX), MAX_CONNECTIONS);
+        assert_eq!(connections_within(256), (256 - RESERVED_FDS) / 2);
+        assert_eq!(connections_within(RESERVED_FDS as u64 + 2), 1);
+        assert_eq!(connections_within(0), 1);
     }
 
     /// REVIEW №112: the loopback check compared strings.

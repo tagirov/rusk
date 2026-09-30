@@ -12,7 +12,7 @@ checksum in `Cargo.lock` before the patch): `src/`, the licenses and the
 README, with the manifest stripped of its dev-dependencies; the examples,
 benches and integration tests are left out. MIT OR Apache-2.0.
 
-Three changes, each marked `rusk:` in the code:
+Five changes, each marked `rusk:` in the code:
 
 - `src/util/equal_reader.rs`: `EqualReader::drop` throws the bytes a request
   left unread away through an 8 KiB buffer, and stops where the connection
@@ -63,9 +63,55 @@ Three changes, each marked `rusk:` in the code:
   taking any. `Server::http` and friends keep the crate's behaviour
   (`Limits::default()`); rusk uses `Server::new`. Eleven tests cover it in
   `lib.rs`, one `Pace` in `util/refined_tcp_stream.rs`.
+- `src/util/chunked_body.rs` (with `request.rs` and `client.rs`): a chunked
+  request body is a `ChunkedBody`, `chunked_transfer`'s `Decoder` (1.5.0,
+  from crates.io, not vendored) with what it gets wrong about its source put
+  right. The decoder turns any failed read in a CRLF — after a chunk's size
+  or data, at the end of the body — into a format error (`InvalidInput`,
+  "Error while decoding chunks"), a read that timed out among them, so a
+  chunked body that stopped there was a bad request, not a timeout: a body
+  whose connection was cut off fails as timed out wherever it stopped. The
+  decoder takes a source that ends inside a chunk for the end of the body:
+  that is an error (`UnexpectedEof`), not a body cut short passed off as
+  whole. A body in the wrong format ends the reading of its connection,
+  since where the next request starts is not known: upstream read it from
+  wherever the decoder stopped, inside the body — a request the client
+  never sent on its own. The rest of a body the request leaves unread is
+  thrown away when it goes, as `EqualReader` does for one of a known length:
+  upstream left it, and read the next request from the middle of it (a
+  `400`, and the end of the connection, mostly); it is thrown away for the
+  last request of the connection too, as `EqualReader` does, so that the
+  answer is not lost to the reset of a connection closed with bytes unread
+  (a client that never finishes it holds the connection's thread for the
+  timeout, or with no limits for as long as it likes — as it does with a
+  `Content-Length`). A chunk's size line, which the decoder keeps in memory
+  until its end, may take 4 KiB, no more (review of R34: a client sent
+  gigabytes of hex digits and the server kept them all — reachable before
+  R34 through any request whose body rusk reads, `POST /auth` among them,
+  and through any chunked request since the body is thrown away). And the
+  connection takes no request once its reading has ended, even one whose
+  turn came after the check (`ClientConnection::read` looks again once the
+  first byte of the head is there, which is when the turn comes — a body
+  before it may have gone wrong or stopped while it was thrown away, after
+  the connection's thread had passed the check and waited for its turn: a
+  head read ahead into the buffer was taken then, nonsense answered 400 —
+  and once more after the head, for a write that timed out meanwhile). Six
+  tests cover it in `util/chunked_body.rs`, four in `lib.rs`.
+- `src/response.rs` (with `request.rs` and `client.rs`): an answer after
+  which the server closes the connection says so, `Connection: close`
+  (RFC 9112 §9.6), which `Response::add_header` does not let a server say
+  (it drops a `Connection` header): the `400` to a request line or a header
+  that makes no sense, the `408` to a head that stalls, the `417`, the
+  answer to a request that said it was the last (`Connection: close`,
+  HTTP/1.0 without keep-alive), and whatever answers a request after its
+  connection's reading ended — the `408` rusk gives a body that stops, the
+  `400` to a chunked body it read and found in the wrong format (an answer
+  sent before the body is thrown away cannot know what becomes of it).
+  Answers on a connection that goes on are as they were. One test covers
+  it in `lib.rs`; two there check it on the way.
 
 To update: unpack the new crate, apply the changes (`git diff` of the vendored
 tree against the crate shows exactly what they are), run its unit tests with
 `cargo test -p tiny_http --lib` (the doc-tests need dev-dependencies that are
 not vendored), then rusk's. Drop the directory and the `[patch]` entry once
-upstream has all three.
+upstream has all five.

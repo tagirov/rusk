@@ -298,6 +298,16 @@ where
         self
     }
 
+    /// rusk: the same response, saying that the connection ends after it
+    /// (`Connection: close`, RFC 9112 §9.6), which `add_header` does not
+    /// let a server say: the crate says it whenever it knows (see
+    /// `Request::respond`, `ClientConnection::next`).
+    pub(crate) fn closing(mut self) -> Response<R> {
+        self.headers
+            .push(Header::from_bytes(&b"Connection"[..], &b"close"[..]).unwrap());
+        self
+    }
+
     /// Returns the same request, but with a different status code.
     #[inline]
     pub fn with_status_code<S>(mut self, code: S) -> Response<R>

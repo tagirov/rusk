@@ -8382,3 +8382,242 @@ fn r33_a_low_file_descriptor_limit_means_fewer_connections() {
     let _ = child.kill();
     let _ = child.wait();
 }
+
+// ---------------------------------------------------------------------------
+// R34 — a chunked body that stops, and the answers that end a connection
+// ---------------------------------------------------------------------------
+
+/// The answers in `raw`, what a connection sent until it closed, each with
+/// its status line.
+#[cfg(feature = "web")]
+fn answers_in(raw: &str) -> Vec<String> {
+    raw.split("HTTP/1.").skip(1).map(|answer| format!("HTTP/1.{answer}")).collect()
+}
+
+/// R34 (left by R33): a chunked body that stopped in a CRLF — after a
+/// chunk's size, after its data, at the end of the body — got 400 "Error
+/// while decoding chunks", not the 408 a body that stops anywhere else
+/// gets (`chunked_transfer` took the timeout for a format error). It is
+/// 408 wherever it stops, the answer says that the connection ends, and it
+/// does. A body in the wrong format is 400 still — and the end of the
+/// connection too: it used to be read on from where the decoder stopped,
+/// here a request nobody sent. A steady chunked body goes through.
+#[test]
+#[cfg(feature = "web")]
+fn r34_a_chunked_body_that_stops_is_408() {
+    use std::io::Write;
+    use std::time::{Duration, Instant};
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, &timeout_config(&sb, 1), &[]);
+    let second = Duration::from_secs(1);
+    let head = "POST /api/tasks HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n\
+                Transfer-Encoding: chunked\r\n\r\n";
+    let stops = [
+        "5\r",
+        "5\r\n{\"tex",
+        "5\r\n{\"tex\r",
+        "d\r\n{\"text\":\"ab\"}\r\n0\r\n",
+        "d\r\n{\"text\":\"ab\"}\r\n0\r\n\r",
+        "5",
+        "5\r\n{\"t",
+    ];
+    std::thread::scope(|scope| {
+        let runs: Vec<_> = stops
+            .iter()
+            .map(|stop| {
+                let port = server.port;
+                scope.spawn(move || {
+                    let mut http = Http::to(port);
+                    http.0.write_all(format!("{head}{stop}").as_bytes()).unwrap();
+                    let started = Instant::now();
+                    let raw = rest_of(&mut http.0);
+                    let took = started.elapsed();
+                    assert!(took >= second - Duration::from_millis(50) && took < second * 5, "{stop:?}: took {took:?}");
+                    let answers = answers_in(&raw);
+                    assert_eq!(answers.len(), 1, "{stop:?}: {raw}");
+                    assert_eq!(status(&answers[0]), 408, "{stop:?}: {raw}");
+                    assert!(raw.contains("request body stopped coming, or came too slowly"), "{stop:?}: {raw}");
+                    assert_eq!(header_in(&answers[0], "Connection"), Some("close"), "{stop:?}: {raw}");
+                })
+            })
+            .collect();
+        for run in runs {
+            run.join().unwrap();
+        }
+    });
+
+    // The wrong format: 400, and the connection ends with it — at once,
+    // not a timeout later — without a word more.
+    let mut http = Http::to(server.port);
+    write!(http.0, "{head}5\r\n{{\"texXYGET /api/tasks HTTP/1.1\r\nHost: localhost\r\n\r\n").unwrap();
+    let started = Instant::now();
+    let raw = rest_of(&mut http.0);
+    assert!(started.elapsed() < second, "took {:?}: {raw}", started.elapsed());
+    let answers = answers_in(&raw);
+    assert_eq!(answers.len(), 1, "{raw}");
+    assert_eq!(status(&answers[0]), 400, "{raw}");
+    assert!(raw.contains("Error while decoding chunks"), "{raw}");
+    assert_eq!(header_in(&answers[0], "Connection"), Some("close"), "{raw}");
+
+    // A chunk's size line kept in memory until its end (review of R34: a
+    // megabyte of hex digits was a megabyte of memory, and gigabytes
+    // gigabytes): the wrong format past 4 KiB, before the rest is read.
+    let mut http = Http::to(server.port);
+    write!(http.0, "{head}{}", "f".repeat(1 << 20)).unwrap();
+    let started = Instant::now();
+    let raw = rest_of(&mut http.0);
+    assert!(started.elapsed() < second, "took {:?}", started.elapsed());
+    assert_eq!(status(&raw), 400, "{raw}");
+    assert!(raw.contains("a chunk's size line is too long"), "{raw}");
+    assert_eq!(header_in(&raw, "Connection"), Some("close"), "{raw}");
+
+    // A body that ends inside a chunk (the client gave up) is not taken for
+    // the whole of it.
+    let mut http = Http::to(server.port);
+    write!(http.0, "{head}20\r\n{{\"text\":\"cut\"}}").unwrap();
+    http.0.shutdown(std::net::Shutdown::Write).unwrap();
+    let raw = rest_of(&mut http.0);
+    assert_eq!(status(&raw), 400, "{raw}");
+
+    // A steady chunked body goes through, however long it takes, and the
+    // connection goes on: 40 kB in chunks of 3000 bytes, over two and a
+    // half timeouts, sent in pieces that cut its CRLFs anywhere.
+    let mut http = Http::to(server.port);
+    write!(http.0, "{head}").unwrap();
+    let body = format!(r#"{{"text":"steady{}"}}"#, "x".repeat(40_000));
+    let mut encoded = Vec::new();
+    for (at, chunk) in body.as_bytes().chunks(3000).enumerate() {
+        write!(encoded, "{:x}{}\r\n", chunk.len(), if at % 2 == 1 { ";x=y" } else { "" }).unwrap();
+        encoded.extend_from_slice(chunk);
+        encoded.extend_from_slice(b"\r\n");
+    }
+    encoded.extend_from_slice(b"0\r\n\r\n");
+    for piece in encoded.chunks(4001) {
+        std::thread::sleep(Duration::from_millis(250));
+        http.0.write_all(piece).unwrap();
+    }
+    let res = http.response("POST (a steady chunked body)");
+    assert_eq!(status(&res), 201, "{}", &res[..res.len().min(300)]);
+    assert!(res.contains("\"text\":\"steadyxxx"), "{}", &res[..res.len().min(300)]);
+    assert_eq!(header_in(&res, "Connection"), None, "{res}");
+    let res = http.get("/api/tasks", "");
+    assert_eq!(status(&res), 200, "{}", &res[..res.len().min(300)]);
+    assert!(res.contains("steadyxxx"));
+    assert!(!res.contains("\"cut\""));
+}
+
+/// R34 (left by R33): an answer after which the server closes the
+/// connection did not say so — tiny_http drops a `Connection` header — as
+/// RFC 9112 §9.6 asks. The 408 of a head that stalls, the 400 of a request
+/// line that makes no sense, the 408 of a body that stops (small or large),
+/// the answer to a request that said it was the last: each says
+/// `Connection: close`. An answer on a connection that goes on — one at a
+/// time or sent ahead — does not.
+#[test]
+#[cfg(feature = "web")]
+fn r34_an_answer_before_the_connection_ends_says_so() {
+    use std::io::Write;
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, &timeout_config(&sb, 1), &[]);
+    let json = "Content-Type: application/json";
+    let ending = [
+        ("a head that stalls", "GET /api/tasks HTTP/1.1\r\nHost: localhost\r\n".to_string(), 408),
+        ("a request line that makes no sense", "NONSENSE\r\n\r\n".to_string(), 400),
+        (
+            "a small body that stops",
+            format!("POST /api/tasks HTTP/1.1\r\nHost: localhost\r\n{json}\r\nContent-Length: 500\r\n\r\n{{\"te"),
+            408,
+        ),
+        (
+            "a large body that stops",
+            format!("POST /api/tasks HTTP/1.1\r\nHost: localhost\r\n{json}\r\nContent-Length: 5000\r\n\r\n{{\"te"),
+            408,
+        ),
+        ("the last request", "GET /api/tasks HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n".to_string(), 200),
+        ("an HTTP/1.0 request", "GET /api/tasks HTTP/1.0\r\nHost: localhost\r\n\r\n".to_string(), 200),
+    ];
+    std::thread::scope(|scope| {
+        let runs: Vec<_> = ending
+            .iter()
+            .map(|(what, sent, code)| {
+                let port = server.port;
+                scope.spawn(move || {
+                    let mut http = Http::to(port);
+                    http.0.write_all(sent.as_bytes()).unwrap();
+                    let raw = rest_of(&mut http.0);
+                    let answers = answers_in(&raw);
+                    assert_eq!(answers.len(), 1, "{what}: {raw}");
+                    assert_eq!(status(&answers[0]), *code, "{what}: {raw}");
+                    assert_eq!(header_in(&answers[0], "Connection"), Some("close"), "{what}: {raw}");
+                })
+            })
+            .collect();
+        for run in runs {
+            run.join().unwrap();
+        }
+    });
+
+    // A connection that goes on: answers one at a time, and three sent
+    // ahead, the last of which says it is the last.
+    let mut http = Http::to(server.port);
+    for _ in 0..2 {
+        let res = http.get("/api/tasks", "");
+        assert_eq!(status(&res), 200, "{res}");
+        assert_eq!(header_in(&res, "Connection"), None, "{res}");
+    }
+    let get = "GET /api/tasks HTTP/1.1\r\nHost: localhost\r\n";
+    write!(http.0, "{get}\r\n{get}Connection: keep-alive\r\n\r\n{get}Connection: close\r\n\r\n").unwrap();
+    let raw = rest_of(&mut http.0);
+    let answers = answers_in(&raw);
+    assert_eq!(answers.len(), 3, "{raw}");
+    for answer in &answers {
+        assert_eq!(status(answer), 200, "{raw}");
+    }
+    assert_eq!(header_in(&answers[0], "Connection"), None, "{raw}");
+    assert_eq!(header_in(&answers[1], "Connection"), None, "{raw}");
+    assert_eq!(header_in(&answers[2], "Connection"), Some("close"), "{raw}");
+}
+
+/// R34, found on the way: a chunked body the server answered without
+/// reading (415, 401, 404…) was left where it stood, and the connection's
+/// next request was read from the middle of it — `400 Bad Request` to a
+/// request nobody sent, and the end of the connection. The rest of it is
+/// thrown away, as that of a body with a `Content-Length` is, and the next
+/// request is answered.
+#[test]
+#[cfg(feature = "web")]
+fn r34_an_unread_chunked_body_keeps_the_connection_in_step() {
+    use std::io::Write;
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, &timeout_config(&sb, 1), &[]);
+    let mut http = Http::to(server.port);
+    write!(
+        http.0,
+        "POST /api/tasks HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n\
+         5\r\nhello\r\n3;x=y\r\nabc\r\n0\r\n\r\n\
+         GET /api/tasks HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let raw = rest_of(&mut http.0);
+    let answers = answers_in(&raw);
+    assert_eq!(answers.len(), 2, "{raw}");
+    assert_eq!(status(&answers[0]), 415, "{raw}");
+    assert_eq!(status(&answers[1]), 200, "{raw}");
+
+    // Review of R34: one that goes wrong while it is thrown away — after
+    // the answer — ends the connection, and what follows it is no request:
+    // nonsense used to be answered 400, a head taken.
+    for rest in ["zz\r\nNONSENSE\r\n\r\n", "XYGET /api/tasks HTTP/1.1\r\nHost: localhost\r\n\r\n"] {
+        let mut http = Http::to(server.port);
+        write!(
+            http.0,
+            "POST /api/tasks HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n"
+        )
+        .unwrap();
+        let res = http.response("POST (a body left unread)");
+        assert_eq!(status(&res), 415, "{res}");
+        http.0.write_all(rest.as_bytes()).unwrap();
+        let raw = rest_of(&mut http.0);
+        assert_eq!(raw, "", "{rest:?}: {raw}");
+    }
+}

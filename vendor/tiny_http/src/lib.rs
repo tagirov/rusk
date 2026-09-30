@@ -161,7 +161,8 @@ pub struct Limits {
     /// longer is closed: with `408 Request Timeout` when part of a head had
     /// come, without a word when it was idle, and — a body or an answer —
     /// with the read or write failing as timed out for whoever holds the
-    /// `Request`, after which every read of it ends (EOF). `None`: for
+    /// `Request`, after which every read of it ends (EOF), and the answer
+    /// says that the connection ends (`Connection: close`). `None`: for
     /// ever.
     pub timeout: Option<Duration>,
 
@@ -606,7 +607,7 @@ impl Drop for Server {
 mod limits {
     use super::{ConfigListenAddr, Limits, Response, Server, ServerConfig};
     use crate::util::refined_tcp_stream::timed_out;
-    use std::io::{Read, Write};
+    use std::io::{ErrorKind, Read, Write};
     use std::net::{SocketAddr, TcpStream};
     use std::thread;
     use std::time::{Duration, Instant};
@@ -645,6 +646,17 @@ mod limits {
         let mut buf = Vec::new();
         let _ = stream.read_to_end(&mut buf);
         String::from_utf8_lossy(&buf).into_owned()
+    }
+
+    /// Whether the head of an answer (`answer` up to its blank line) says
+    /// that the connection ends after it.
+    fn says_close(answer: &str) -> bool {
+        answer
+            .split("\r\n\r\n")
+            .next()
+            .unwrap()
+            .lines()
+            .any(|line| line.eq_ignore_ascii_case("Connection: close"))
     }
 
     /// The server's next request, which has to be there.
@@ -710,6 +722,7 @@ mod limits {
         let started = Instant::now();
         let answer = rest_of(&mut slow);
         assert!(answer.starts_with("HTTP/1.1 408"), "{}", answer);
+        assert!(says_close(&answer), "{}", answer);
         assert_in_time(started.elapsed());
         assert!(server
             .recv_timeout(Duration::from_millis(100))
@@ -775,7 +788,255 @@ mod limits {
         request.respond(Response::empty(408)).unwrap();
         let answer = rest_of(&mut http);
         assert!(answer.starts_with("HTTP/1.1 408"), "{}", answer);
+        assert!(says_close(&answer), "{}", answer);
         assert_no_connection_left(&server);
+    }
+
+    /// R34: a chunked body that stops fails its reader as timed out
+    /// wherever it stops — in a CRLF after a chunk's size or data, or at
+    /// its end, too, where `chunked_transfer` took the timeout for a
+    /// format error — and the answer says that the connection ends.
+    #[test]
+    fn a_chunked_body_that_stops_anywhere_times_out() {
+        let (server, addr) = serve_within(timeout_only());
+        let head = "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n";
+        let stops = [
+            "5",
+            "5;ext",
+            "5\r",
+            "5\r\nhel",
+            "5\r\nhello",
+            "5\r\nhello\r",
+            "5\r\nhello\r\n0\r\n",
+            "5\r\nhello\r\n0\r\n\r",
+        ];
+        for stop in stops.iter() {
+            let mut http = client(addr);
+            http.write_all(format!("{}{}", head, stop).as_bytes())
+                .unwrap();
+            let mut request = next_request(&server);
+            let started = Instant::now();
+            let err = request
+                .as_reader()
+                .read_to_end(&mut Vec::new())
+                .unwrap_err();
+            assert!(timed_out(&err), "{:?}: {:?}", stop, err);
+            assert_in_time(started.elapsed());
+            request.respond(Response::empty(408)).unwrap();
+            let answer = rest_of(&mut http);
+            assert!(
+                answer.starts_with("HTTP/1.1 408") && says_close(&answer),
+                "{:?}: {}",
+                stop,
+                answer
+            );
+        }
+        assert_no_connection_left(&server);
+    }
+
+    /// R34: a chunked body in the wrong format is a format error still,
+    /// and the connection ends with the answer, which says so: where the
+    /// next request starts is not known. It used to be read from where the
+    /// decoder stopped — here, a request nobody sent.
+    #[test]
+    fn a_chunked_body_in_the_wrong_format_ends_the_connection() {
+        let (server, addr) = serve_within(timeout_only());
+        let mut http = client(addr);
+        http.write_all(
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n\
+              5\r\nhelloXYGET /2 HTTP/1.1\r\nHost: x\r\n\r\n",
+        )
+        .unwrap();
+        let mut request = next_request(&server);
+        let err = request
+            .as_reader()
+            .read_to_end(&mut Vec::new())
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidInput, "{:?}", err);
+        request.respond(Response::empty(400)).unwrap();
+        let started = Instant::now();
+        let answer = rest_of(&mut http);
+        assert!(
+            answer.starts_with("HTTP/1.1 400") && says_close(&answer),
+            "{}",
+            answer
+        );
+        assert!(started.elapsed() < TIMEOUT, "took {:?}", started.elapsed());
+        assert!(
+            server
+                .recv_timeout(Duration::from_millis(100))
+                .unwrap()
+                .is_none(),
+            "a request was read from the body"
+        );
+        assert_no_connection_left(&server);
+    }
+
+    /// R34: the rest of a chunked body the request left unread is thrown
+    /// away, and the next request is read from where it starts — it used
+    /// to be read from the middle of the body. With a limit on connections
+    /// and without.
+    #[test]
+    fn a_chunked_body_left_unread_keeps_the_connection_in_step() {
+        let one_at_a_time = Limits {
+            max_connections: Some(8),
+            ..timeout_only()
+        };
+        for limits in [timeout_only(), one_at_a_time].iter() {
+            let (server, addr) = serve_within(limits.clone());
+            let mut http = client(addr);
+            http.write_all(
+                b"POST /1 HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n\
+                  5\r\nhello\r\n3;x=y\r\nabc\r\n0\r\n\r\n\
+                  GET /2 HTTP/1.1\r\nHost: x\r\n\r\n",
+            )
+            .unwrap();
+            let first = next_request(&server);
+            assert_eq!(first.url(), "/1");
+            first.respond(Response::from_string("one")).unwrap();
+            let second = next_request(&server);
+            assert_eq!(second.url(), "/2");
+            second.respond(Response::from_string("two")).unwrap();
+            let mut answers = Vec::new();
+            let mut chunk = [0; 4096];
+            while !String::from_utf8_lossy(&answers).ends_with("two") {
+                let n = http.read(&mut chunk).unwrap();
+                assert!(n > 0, "the connection closed before both answers came");
+                answers.extend_from_slice(&chunk[..n]);
+            }
+            let answers = String::from_utf8_lossy(&answers);
+            assert_eq!(answers.matches("HTTP/1.1 200").count(), 2, "{}", answers);
+        }
+    }
+
+    /// Review of R34: a body left unread that goes wrong while it is
+    /// thrown away — after the answer, when the connection's thread waits
+    /// for the next head's turn already — ends the connection, and what
+    /// came after it is no request, whatever it looks like: it used to be
+    /// answered 400 (nonsense) or taken (a head). With a limit on
+    /// connections and without.
+    #[test]
+    fn what_follows_a_body_that_went_wrong_while_thrown_away_is_no_request() {
+        let one_at_a_time = Limits {
+            max_connections: Some(8),
+            ..timeout_only()
+        };
+        for limits in [timeout_only(), one_at_a_time].iter() {
+            for rest in ["zz\r\nNONSENSE\r\n\r\n", "XYGET /2 HTTP/1.1\r\nHost: x\r\n\r\n"] {
+                let (server, addr) = serve_within(limits.clone());
+                let mut http = client(addr);
+                http.write_all(
+                    b"POST /1 HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n",
+                )
+                .unwrap();
+                let first = next_request(&server);
+                assert_eq!(first.url(), "/1");
+                first.respond(Response::from_string("one")).unwrap();
+                let mut answer = [0; 256];
+                let n = http.read(&mut answer).unwrap();
+                assert!(String::from_utf8_lossy(&answer[..n]).starts_with("HTTP/1.1 200"));
+                http.write_all(rest.as_bytes()).unwrap();
+                let rest_of_it = rest_of(&mut http);
+                assert_eq!(rest_of_it, "", "{:?}: {}", rest, rest_of_it);
+                assert!(
+                    server
+                        .recv_timeout(Duration::from_millis(100))
+                        .unwrap()
+                        .is_none(),
+                    "{:?}: a request was read from the body",
+                    rest
+                );
+                assert_no_connection_left(&server);
+            }
+        }
+    }
+
+    /// R34: an answer after which the connection ends says so
+    /// (`Connection: close`, RFC 9112 §9.6): the 408 of a head that
+    /// stalls, the 400 of a request line or a header that makes no sense,
+    /// the 417 of an expectation nobody meets, the answer to a request
+    /// that said it was the last — `Connection: close`, HTTP/1.0. An answer
+    /// on a connection that goes on does not, with a limit on connections
+    /// (one request at a time) and without (pipelining).
+    #[test]
+    fn an_answer_after_which_the_connection_ends_says_so() {
+        let one_at_a_time = Limits {
+            max_connections: Some(8),
+            ..timeout_only()
+        };
+        let (server, addr) = serve_within(one_at_a_time.clone());
+        let refused = [
+            ("GET / HTTP/1.1\r\nHost: x\r\n", "HTTP/1.1 408"),
+            ("NONSENSE\r\n\r\n", "HTTP/1.1 400"),
+            ("GET / HTTP/1.1\r\nno header\r\n\r\n", "HTTP/1.1 400"),
+            ("GET / HTTP/1.1\r\nHost: x\r\nExpect: much\r\n\r\n", "HTTP/1.1 417"),
+        ];
+        for (sent, status) in refused.iter() {
+            let mut http = client(addr);
+            http.write_all(sent.as_bytes()).unwrap();
+            let answer = rest_of(&mut http);
+            assert!(
+                answer.starts_with(status) && says_close(&answer),
+                "{:?}: {}",
+                sent,
+                answer
+            );
+        }
+        let last = [
+            "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+            "GET / HTTP/1.0\r\n\r\n",
+        ];
+        for sent in last.iter() {
+            let mut http = client(addr);
+            http.write_all(sent.as_bytes()).unwrap();
+            next_request(&server)
+                .respond(Response::from_string("hi"))
+                .unwrap();
+            let answer = rest_of(&mut http);
+            assert!(
+                says_close(&answer) && answer.ends_with("hi"),
+                "{:?}: {}",
+                sent,
+                answer
+            );
+        }
+        drop(server);
+
+        for limits in [timeout_only(), one_at_a_time].iter() {
+            let (server, addr) = serve_within(limits.clone());
+            let mut http = client(addr);
+            http.write_all(
+                b"GET /1 HTTP/1.1\r\nHost: x\r\n\r\n\
+                  GET /2 HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n",
+            )
+            .unwrap();
+            for (path, text) in [("/1", "one"), ("/2", "two")].iter() {
+                let request = next_request(&server);
+                assert_eq!(request.url(), *path);
+                request.respond(Response::from_string(*text)).unwrap();
+            }
+            let mut answers = Vec::new();
+            let mut chunk = [0; 4096];
+            while !String::from_utf8_lossy(&answers).ends_with("two") {
+                let n = http.read(&mut chunk).unwrap();
+                assert!(n > 0, "the connection closed before both answers came");
+                answers.extend_from_slice(&chunk[..n]);
+            }
+            let answers = String::from_utf8_lossy(&answers);
+            assert!(!answers.contains("Connection"), "{}", answers);
+            // The connection goes on.
+            http.write_all(b"GET /3 HTTP/1.1\r\nHost: x\r\n\r\n")
+                .unwrap();
+            let request = next_request(&server);
+            assert_eq!(request.url(), "/3");
+            request.respond(Response::from_string("three")).unwrap();
+            let mut answer = Vec::new();
+            while !String::from_utf8_lossy(&answer).ends_with("three") {
+                let n = http.read(&mut chunk).unwrap();
+                assert!(n > 0, "the connection closed");
+                answer.extend_from_slice(&chunk[..n]);
+            }
+        }
     }
 
     /// A body that comes a few bytes at a time, each well within the

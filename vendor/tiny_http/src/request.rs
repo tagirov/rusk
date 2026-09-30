@@ -5,11 +5,12 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::str::FromStr;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 
-use crate::util::{EqualReader, FusedReader};
+use crate::util::{ChunkedBody, EqualReader, FusedReader};
 use crate::{HTTPVersion, Header, Method, Response, StatusCode};
-use chunked_transfer::Decoder;
 
 /// Represents an HTTP request made by a client.
 ///
@@ -74,6 +75,15 @@ pub struct Request {
 
     // If Some, a message must be sent after responding
     notify_when_responded: Option<Sender<()>>,
+
+    // rusk: the connection's flag, set once nothing more is read from it
+    // (see `RefinedTcpStream`, `ChunkedBody`); None for a request of no
+    // connection (`TestRequest`)
+    done_reading: Option<Arc<AtomicBool>>,
+
+    // rusk: no request follows this one on its connection (see
+    // `ClientConnection::next`)
+    last: bool,
 }
 
 struct NotifyOnDrop<R> {
@@ -125,6 +135,9 @@ impl From<IoError> for RequestCreationError {
 /// It is the responsibility of the `Request` to read only the data of the request and not further.
 ///
 /// The `Write` object will be used by the `Request` to write the response.
+///
+/// rusk: `done_reading` is the flag of the connection the request came
+/// by (see `RefinedTcpStream`), `None` for a request of none.
 #[allow(clippy::too_many_arguments)]
 pub fn new_request<R, W>(
     secure: bool,
@@ -135,6 +148,7 @@ pub fn new_request<R, W>(
     remote_addr: Option<SocketAddr>,
     mut source_data: R,
     writer: W,
+    done_reading: Option<Arc<AtomicBool>>,
 ) -> Result<Request, RequestCreationError>
 where
     R: Read + Send + 'static,
@@ -218,7 +232,10 @@ where
     } else if transfer_encoding.is_some() {
         // if a transfer-encoding was specified, then "chunked" is ALWAYS applied
         // over the message (RFC2616 #3.6)
-        Box::new(FusedReader::new(Decoder::new(source_data))) as Box<dyn Read + Send + 'static>
+        // rusk: the decoder, with what it gets wrong put right (see
+        // `ChunkedBody`)
+        Box::new(ChunkedBody::new(source_data, done_reading.clone()))
+            as Box<dyn Read + Send + 'static>
     } else {
         // if we have neither a Content-Length nor a Transfer-Encoding,
         // assuming that we have no data
@@ -238,6 +255,8 @@ where
         body_length: content_length,
         must_send_continue: expects_continue,
         notify_when_responded: None,
+        done_reading,
+        last: false,
     })
 }
 
@@ -448,6 +467,18 @@ impl Request {
 
         let do_not_send_body = self.method == Method::Head;
 
+        // rusk: an answer after which the connection ends says so
+        // (RFC 9112 §9.6): the client asked for that, or the connection
+        // was cut off, or its reading had to end, while the request was
+        // handled — a body that stopped coming (the 408 of whoever
+        // answers), or went wrong
+        let ends = self.last
+            || self
+                .done_reading
+                .as_ref()
+                .is_some_and(|flag| flag.load(Ordering::Acquire));
+        let response = if ends { response.closing() } else { response };
+
         Self::ignore_client_closing_errors(response.raw_print(
             writer.by_ref(),
             self.http_version.clone(),
@@ -471,6 +502,14 @@ impl Request {
 
     pub(crate) fn with_notify_sender(mut self, sender: Sender<()>) -> Self {
         self.notify_when_responded = Some(sender);
+        self
+    }
+
+    /// rusk: no request follows this one on its connection (the client
+    /// said `Connection: close`, or is HTTP/1.0 without keep-alive): its
+    /// answer says so.
+    pub(crate) fn last_on_connection(mut self, last: bool) -> Self {
+        self.last = last;
         self
     }
 }

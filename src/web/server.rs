@@ -143,7 +143,11 @@ const PREFETCHED_BODY_BYTES: usize = 1024;
 /// dropped), so a client that stalls holds up its own thread, as one does
 /// on a small body — for [`ServeOptions::timeout`] at most (R33): a body
 /// that stops coming, or trickles in slower than [`MIN_RATE`], fails the
-/// read, the answer goes out, and the connection ends.
+/// read, the answer goes out saying that the connection ends
+/// (`Connection: close`, R34), and it does. A chunked body, whose size is
+/// not known before its end, is thrown away by tiny_http after the answer
+/// whatever its size (R34: it used to be left where it stood, and the next
+/// request was read from the middle of it).
 const DISCARDED_BODY_BYTES: usize = 1024 * 1024;
 
 thread_local! {
@@ -386,10 +390,12 @@ fn form_value(data: &str, name: &str, plus_is_space: bool) -> Option<String> {
 
 /// The request body, whole: one larger than `limit` is 413, whether it
 /// says its length up front or not, and one that ends before the length it
-/// announced (the client gave up half-way) is not the request it meant. One
-/// that stops coming for [`ServeOptions::timeout`], or comes slower than
-/// [`MIN_RATE`] once it has waited that long, is 408 (R33): the connection
-/// is done with then, the client has to send the request again.
+/// announced, or inside a chunk (the client gave up half-way; R34), is not
+/// the request it meant. One that stops coming for
+/// [`ServeOptions::timeout`], or comes slower than [`MIN_RATE`] once it has
+/// waited that long, is 408 (R33) — chunked or not, wherever it stops
+/// (R34): the connection is done with then, the answer says so, and the
+/// client has to send the request again.
 fn read_body(request: &mut Request, limit: u64) -> std::result::Result<String, Reply> {
     let too_large = || {
         let size = if limit >= 1 << 20 {

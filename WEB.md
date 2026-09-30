@@ -63,9 +63,17 @@ come to the minute and a second more per kilobyte moved, so a client that
 keeps moving is never cut off, however long a big `PUT` takes, while one
 that sends a byte of a body — or takes a byte of an answer — now and then is.
 A connection that waits longer is closed: with `408 Request Timeout` when
-part of a request had come (a body that stops, or trickles, gets it too, and
-the request has to be sent again), without a word when it was idle, as
-browsers expect of a keep-alive connection. Up to 256 connections are open
+part of a request had come (a body that stops, or trickles, gets it too —
+chunked or not, wherever it stops — and the request has to be sent again),
+without a word when it was idle, as browsers expect of a keep-alive
+connection. An answer after which the server closes the connection says so
+(`Connection: close`): a 408, a 400 to a request it cannot make sense of —
+a chunked body it read and found in the wrong format among them, since
+where the next request would start is not known then — and the answer to
+a request that said it was the last. (A chunked body the server answers
+without reading — 401, 404, 415 — is read and thrown away after the
+answer, so that the connection stays in step; if it turns out wrong or
+stops then, the connection ends after an answer that could not say so.) Up to 256 connections are open
 at once (fewer if the process may not open the file descriptors they take;
 the limit is raised as far as allowed, and the startup banner says what it
 is); the next waits in the listening socket's queue until one closes. The

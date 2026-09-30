@@ -1,3 +1,4 @@
+pub use self::chunked_body::ChunkedBody;
 pub use self::custom_stream::CustomStream;
 pub use self::equal_reader::EqualReader;
 pub use self::fused_reader::FusedReader;
@@ -9,6 +10,7 @@ pub use self::task_pool::TaskPool;
 
 use std::str::FromStr;
 
+mod chunked_body;
 mod custom_stream;
 mod equal_reader;
 mod fused_reader;

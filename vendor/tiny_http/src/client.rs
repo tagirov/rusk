@@ -156,13 +156,17 @@ impl ClientConnection {
     /// The body, read by whoever answers the request, has the socket's
     /// timeout again on every read, and a pace to keep (`PacedBody`).
     /// Nothing more is read once a read or write of the connection has
-    /// waited its time out, not even a request read ahead into the buffer.
+    /// waited its time out, or a body of it went wrong (`ChunkedBody`), not
+    /// even a request read ahead into the buffer.
     fn read(&mut self) -> Result<Request, ReadError> {
-        if self.done_reading.load(Ordering::Acquire) {
-            return Err(ReadError::ReadIoError(IoError::new(
+        let cut_off = || {
+            ReadError::ReadIoError(IoError::new(
                 ErrorKind::ConnectionAborted,
                 "the connection was cut off",
-            )));
+            ))
+        };
+        if self.done_reading.load(Ordering::Acquire) {
+            return Err(cut_off());
         }
         let first = match self.next_header_source.by_ref().bytes().next() {
             Some(Ok(byte)) => byte,
@@ -175,6 +179,15 @@ impl ClientConnection {
                 )))
             }
         };
+        // rusk: the first byte comes with the head's turn, once the body
+        // before it is done with — and that may have ended the connection
+        // meanwhile (it stopped, or went wrong, while it was thrown away),
+        // after the check above: what was read ahead into the buffer is
+        // not a request then, whatever it looks like (R34: a head read
+        // ahead was taken, or answered 400, then)
+        if self.done_reading.load(Ordering::Acquire) {
+            return Err(cut_off());
+        }
         // A timeout too large to add to now is no deadline (review of R33:
         // `web_timeout = 18446744073709551615` panicked every connection).
         self.set_deadline(
@@ -184,6 +197,11 @@ impl ClientConnection {
         let head = self.read_head(first);
         self.set_deadline(None);
         let (method, path, version, headers) = head?;
+        // rusk: and once more for a write that timed out while the head
+        // was read (an answer sent ahead, without a limit on connections)
+        if self.done_reading.load(Ordering::Acquire) {
+            return Err(cut_off());
+        }
 
         // building the writer for the request
         let writer = self.sink.next().unwrap();
@@ -206,6 +224,7 @@ impl ClientConnection {
             *self.remote_addr.as_ref().unwrap(),
             data_source,
             writer,
+            Some(self.done_reading.clone()),
         )
         .map_err(|e| {
             use crate::request;
@@ -276,11 +295,13 @@ impl Iterator for ClientConnection {
             return None;
         }
 
+        // rusk: the answers after which the connection ends say so
+        // (`Response::closing`)
         loop {
             let rq = match self.read() {
                 Err(ReadError::WrongRequestLine) => {
                     let writer = self.sink.next().unwrap();
-                    let response = Response::new_empty(StatusCode(400));
+                    let response = Response::new_empty(StatusCode(400)).closing();
                     response
                         .raw_print(writer, HTTPVersion(1, 1), &[], false, None)
                         .ok();
@@ -290,7 +311,7 @@ impl Iterator for ClientConnection {
 
                 Err(ReadError::WrongHeader(ver)) => {
                     let writer = self.sink.next().unwrap();
-                    let response = Response::new_empty(StatusCode(400));
+                    let response = Response::new_empty(StatusCode(400)).closing();
                     response.raw_print(writer, ver, &[], false, None).ok();
                     return None; // we don't know where the next request would start,
                                  // se we have to close
@@ -302,7 +323,7 @@ impl Iterator for ClientConnection {
                     // of its reads waited the socket's timeout out (see
                     // `read`); written out at once: the connection ends here
                     let mut writer = self.sink.next().unwrap();
-                    let response = Response::new_empty(StatusCode(408));
+                    let response = Response::new_empty(StatusCode(408)).closing();
                     response
                         .raw_print(writer.by_ref(), HTTPVersion(1, 1), &[], false, None)
                         .ok();
@@ -317,7 +338,7 @@ impl Iterator for ClientConnection {
 
                 Err(ReadError::ExpectationFailed(ver)) => {
                     let writer = self.sink.next().unwrap();
-                    let response = Response::new_empty(StatusCode(417));
+                    let response = Response::new_empty(StatusCode(417)).closing();
                     response.raw_print(writer, ver, &[], true, None).ok();
                     return None; // TODO: should be recoverable, but needs handling in case of body
                 }
@@ -362,7 +383,8 @@ impl Iterator for ClientConnection {
             };
 
             // returning the request
-            return Some(rq);
+            // rusk: the last one on the connection says so in its answer
+            return Some(rq.last_on_connection(self.no_more_requests));
         }
     }
 }

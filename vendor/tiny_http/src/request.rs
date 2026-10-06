@@ -33,9 +33,11 @@ use crate::{HTTPVersion, Header, Method, Response, StatusCode};
 ///    body of the request in a buffer ; if the body is too big, tiny-http will avoid doing that)
 ///  - A request sends a `Expect: 100-continue` header (which means that the client waits to
 ///    know whether its body will be processed before sending it)
-///  - A request sends a `Connection: close` header or `Connection: upgrade` header (used for
-///    websockets), which indicates that this is the last request that will be received on this
-///    connection
+///  - A request sends a `Connection: close` header, which indicates that this is the last
+///    request that will be received on this connection
+///  - A request sends a `Connection: upgrade` header (used for websockets): the next request
+///    is read once this one has been answered without the connection being handed over
+///    (rusk: as published, such a request was the last one on the connection)
 ///
 /// # Automatic cleanup
 ///
@@ -100,6 +102,12 @@ pub struct Request {
     // `no_body` (see `new_request`)
     upgrade_handshake: bool,
     no_body: io::Empty,
+
+    // rusk: a request that asked for an upgrade tells its connection, on
+    // its way out, whether it was handed the connection (`upgrade()`) or
+    // answered as usual, after which the connection goes on (see
+    // `ClientConnection::next`); None for any other request
+    hands_over: Option<Sender<bool>>,
 }
 
 struct NotifyOnDrop<R> {
@@ -123,6 +131,29 @@ impl<R: Write> Write for NotifyOnDrop<R> {
 impl<R> Drop for NotifyOnDrop<R> {
     fn drop(&mut self) {
         self.sender.send(()).unwrap();
+    }
+}
+
+/// rusk: the writer of an upgrade request answered through `into_writer`:
+/// says, when it goes (the answer is out), that the connection stays (see
+/// `Request::hands_over`; review of R36: said before the answer was
+/// written, so that the next request was read meanwhile).
+struct KeptOnDrop<W> {
+    sender: Sender<bool>,
+    inner: W,
+}
+
+impl<W: Write> Write for KeptOnDrop<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.inner.write(buf)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+impl<W> Drop for KeptOnDrop<W> {
+    fn drop(&mut self) {
+        self.sender.send(false).ok();
     }
 }
 
@@ -223,16 +254,12 @@ where
     };
 
     // true if the client sent a `Connection: upgrade` header
-    let connection_upgrade = {
-        match headers
-            .iter()
-            .find(|h: &&Header| h.field.equiv("Connection"))
-            .map(|h| h.value.as_str())
-        {
-            Some(v) if v.to_ascii_lowercase().contains("upgrade") => true,
-            _ => false,
-        }
-    };
+    // rusk: in any of its `Connection` headers (review of R36: only the
+    // first was looked at; `ClientConnection::next` reads them the same way)
+    let connection_upgrade = headers
+        .iter()
+        .filter(|h: &&Header| h.field.equiv("Connection"))
+        .any(|h| h.value.as_str().to_ascii_lowercase().contains("upgrade"));
 
     // rusk: whether there is a body to read
     let has_body = transfer_encoding.is_some() || content_length.is_some_and(|len| len > 0);
@@ -240,16 +267,16 @@ where
     // rusk: a `Connection: upgrade` request's body is framed by its headers
     // like any other: an upgrade is a proposal the server may not take up
     // (curl proposes h2c on every request with `--http2`), and the answer
-    // to it is a usual one — after which the connection ends all the same
-    // (`ClientConnection::next`): whether the request is upgraded is not
-    // known when the next one would be read. The crate as published kept
-    // the connection's reader whole for every such request, for
-    // `upgrade()`, so that `as_reader()` read on past the body, to the
-    // timeout (a `POST` with `Connection: upgrade` was 408 with its body
-    // whole) — or for ever. The reader is kept whole for a request without
-    // a body (the handshake) only, where `as_reader()` has nothing to give
-    // anyway; `upgrade()` on a request with a body hands over a stream that
-    // reads the body and no more.
+    // to it is a usual one — after which the connection goes on, the next
+    // request read once the answer is out (`ClientConnection::next` waits
+    // to hear whether the connection was handed over, `hands_over`). The
+    // crate as published kept the connection's reader whole for every such
+    // request, for `upgrade()`, so that `as_reader()` read on past the
+    // body, to the timeout (a `POST` with `Connection: upgrade` was 408
+    // with its body whole) — or for ever. The reader is kept whole for a
+    // request without a body (the handshake) only, where `as_reader()` has
+    // nothing to give anyway; `upgrade()` on a request with a body hands
+    // over a stream that reads the body and no more.
     let upgrade_handshake = connection_upgrade && !has_body;
 
     // we wrap `source_data` around a reading whose nature depends on the transfer-encoding and
@@ -317,6 +344,7 @@ where
         has_body,
         upgrade_handshake,
         no_body: io::empty(),
+        hands_over: None,
     })
 }
 
@@ -400,6 +428,11 @@ impl Request {
 
         self.response_writer.as_mut().unwrap().flush().ok(); // TODO: unused result
 
+        // rusk: the connection goes with the stream (see `hands_over`)
+        if let Some(sender) = self.hands_over.take() {
+            sender.send(true).ok();
+        }
+
         let stream = CustomStream::new(self.extract_reader_impl(), self.extract_writer_impl());
         if let Some(sender) = self.notify_when_responded.take() {
             let stream = NotifyOnDrop {
@@ -473,6 +506,15 @@ impl Request {
     #[inline]
     pub fn into_writer(mut self) -> Box<dyn Write + Send + 'static> {
         let writer = self.extract_writer_impl();
+        // rusk: an upgrade request says that the connection stays once the
+        // answer is out — when this writer goes (see `hands_over`)
+        let writer = match self.hands_over.take() {
+            Some(sender) => Box::new(KeptOnDrop {
+                sender,
+                inner: writer,
+            }) as Box<dyn Write + Send + 'static>,
+            None => writer,
+        };
         if let Some(sender) = self.notify_when_responded.take() {
             let writer = NotifyOnDrop {
                 sender,
@@ -600,18 +642,21 @@ impl Request {
 
     /// rusk: the request's place on its connection — the `ordinal`th taken
     /// from it, `taken` counting them — and whether no request follows it
-    /// (the client said `Connection: close` or `Connection: upgrade`, or is
-    /// HTTP/1.0 without keep-alive): its answer says what becomes of the
-    /// connection (see `respond_impl`).
+    /// (the client said `Connection: close`, or is HTTP/1.0 without
+    /// keep-alive): its answer says what becomes of the connection (see
+    /// `respond_impl`). A request that asked for an upgrade gets
+    /// `hands_over`, to say whether it took the connection (see the field).
     pub(crate) fn on_connection(
         mut self,
         ordinal: usize,
         taken: Arc<AtomicUsize>,
         last: bool,
+        hands_over: Option<Sender<bool>>,
     ) -> Self {
         self.ordinal = ordinal;
         self.requests_taken = Some(taken);
         self.last = last;
+        self.hands_over = hands_over;
         self
     }
 }
@@ -634,6 +679,12 @@ impl Drop for Request {
             if let Some(sender) = self.notify_when_responded.take() {
                 sender.send(()).unwrap();
             }
+        }
+        // rusk: answered as usual (`respond`, or the 500 above) — the
+        // connection stays, and goes on (see `hands_over`; `upgrade` has
+        // said otherwise by now, and `into_writer` says it with its writer)
+        if let Some(sender) = self.hands_over.take() {
+            sender.send(false).ok();
         }
     }
 }

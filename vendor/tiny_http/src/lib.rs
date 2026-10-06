@@ -605,7 +605,7 @@ impl Drop for Server {
 /// Windows with its clock ticks, runs a little early or late.
 #[cfg(test)]
 mod limits {
-    use super::{ConfigListenAddr, Limits, Response, Server, ServerConfig};
+    use super::{ConfigListenAddr, HTTPVersion, Limits, Response, Server, ServerConfig};
     use crate::util::refined_tcp_stream::timed_out;
     use std::io::{ErrorKind, Read, Write};
     use std::net::{SocketAddr, TcpStream};
@@ -1338,9 +1338,9 @@ mod limits {
     /// R35: a `Connection: upgrade` request's body is read within its
     /// headers, like any other — the crate as published gave the socket
     /// whole, so that reading the body read on to the timeout — and the
-    /// answer says that the connection ends (the request might have been
-    /// upgraded). The handshake, an upgrade request without a body, reads
-    /// nothing, and `upgrade()` still hands the connection over whole.
+    /// connection goes on after the answer (R36; it used to end). The
+    /// handshake, an upgrade request without a body, reads nothing, and
+    /// `upgrade()` still hands the connection over whole.
     #[test]
     fn an_upgrade_requests_body_is_read_within_its_headers() {
         let (server, addr) = serve_within(timeout_only());
@@ -1366,13 +1366,19 @@ mod limits {
             assert_eq!(body, b"hello", "{}", what);
             assert!(started.elapsed() < TIMEOUT, "{}: took {:?}", what, started.elapsed());
             request.respond(Response::from_string("hi")).unwrap();
-            let answer = rest_of(&mut http);
+            let answer = up_to(&mut http, "hi");
             assert!(
-                answer.starts_with("HTTP/1.1 200") && says_close(&answer) && answer.ends_with("hi"),
+                answer.starts_with("HTTP/1.1 200") && !says_close(&answer),
                 "{}: {}",
                 what,
                 answer
             );
+            // R36: the connection goes on, in step
+            http.write_all(b"GET /next HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+            let request = next_request(&server);
+            assert_eq!(request.url(), "/next", "{}", what);
+            request.respond(Response::from_string("next")).unwrap();
+            assert!(up_to(&mut http, "next").starts_with("HTTP/1.1 200"), "{}", what);
         }
 
         let mut http = client(addr);
@@ -1407,6 +1413,276 @@ mod limits {
         assert_eq!(body, b"hello");
         drop(stream);
         assert!(rest_of(&mut http).starts_with("HTTP/1.1 101"));
+        assert_no_connection_left(&server);
+    }
+
+    /// R36: an upgrade the server does not take up — the request answered
+    /// as usual, by `respond`, `into_writer`, or the 500 of a request
+    /// dropped unanswered — leaves the connection open: the next request is
+    /// read once the answer is out, not before (the connection might have
+    /// gone with it), with a limit on connections and without one. The
+    /// crate as published ended the connection with every such request
+    /// (curl, which proposes h2c on every request with `--http2`, opened a
+    /// connection for each). One taken up (`upgrade()`) takes the
+    /// connection with it: what the client sends then is no request.
+    #[test]
+    fn an_upgrade_not_taken_up_leaves_the_connection_open() {
+        let handshake = "GET /up HTTP/1.1\r\nHost: x\r\nConnection: Upgrade, HTTP2-Settings\r\n\
+                         Upgrade: h2c\r\nHTTP2-Settings: AAMAAABkAAQCAAAAAAIAAAAA\r\n\r\n";
+        let next = "GET /next HTTP/1.1\r\nHost: x\r\n\r\n";
+        let limited = Limits {
+            max_connections: Some(8),
+            ..Limits::default()
+        };
+        for limits in [Limits::default(), limited] {
+            let what = format!("{:?}", limits.max_connections);
+            let (server, addr) = serve_within(limits);
+
+            // Pipelined: the next request waits for the answer to the
+            // upgrade request, then comes.
+            let mut http = client(addr);
+            http.write_all(format!("{}{}", handshake, next).as_bytes())
+                .unwrap();
+            let first = next_request(&server);
+            assert_eq!(first.url(), "/up", "{}", what);
+            assert!(
+                server
+                    .recv_timeout(Duration::from_millis(300))
+                    .unwrap()
+                    .is_none(),
+                "{}: the next request was read before the upgrade request was answered",
+                what
+            );
+            first.respond(Response::from_string("one")).unwrap();
+            let second = next_request(&server);
+            assert_eq!(second.url(), "/next", "{}", what);
+            second.respond(Response::from_string("two")).unwrap();
+            let answers = up_to(&mut http, "two");
+            let (one, two) = answers.split_once("one").unwrap();
+            assert!(
+                one.starts_with("HTTP/1.1 200") && !says_close(one),
+                "{}: {}",
+                what,
+                answers
+            );
+            assert!(two.starts_with("HTTP/1.1 200"), "{}: {}", what, answers);
+            // And one more, later, on the same connection.
+            http.write_all(next.as_bytes()).unwrap();
+            next_request(&server)
+                .respond(Response::from_string("three"))
+                .unwrap();
+            assert!(up_to(&mut http, "three").starts_with("HTTP/1.1 200"), "{}", what);
+            drop(http);
+
+            // Dropped unanswered, or answered through `into_writer`: the
+            // connection goes on all the same.
+            let mut http = client(addr);
+            http.write_all(handshake.as_bytes()).unwrap();
+            drop(next_request(&server));
+            let answer = up_to(&mut http, "\r\n\r\n");
+            assert!(
+                answer.starts_with("HTTP/1.1 500") && !says_close(&answer),
+                "{}: {}",
+                what,
+                answer
+            );
+            // (review of R36: the writer said "kept" as soon as it was
+            // made, and the next request was read before the answer was
+            // written)
+            http.write_all(format!("{}{}", handshake, next).as_bytes())
+                .unwrap();
+            let mut writer = next_request(&server).into_writer();
+            assert!(
+                server
+                    .recv_timeout(Duration::from_millis(300))
+                    .unwrap()
+                    .is_none(),
+                "{}: the next request was read before the writer went",
+                what
+            );
+            writer
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nraw")
+                .unwrap();
+            writer.flush().unwrap();
+            drop(writer);
+            assert!(up_to(&mut http, "raw").starts_with("HTTP/1.1 200"), "{}", what);
+            let request = next_request(&server);
+            assert_eq!(request.url(), "/next", "{}", what);
+            request.respond(Response::from_string("four")).unwrap();
+            assert!(up_to(&mut http, "four").starts_with("HTTP/1.1 200"), "{}", what);
+            drop(http);
+
+            // An upgrade asked for in a second `Connection` header is one
+            // (review of R36: the first header alone was looked at).
+            let mut http = client(addr);
+            http.write_all(
+                format!(
+                    "GET /up HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\
+                     Connection: Upgrade\r\nUpgrade: h2c\r\n\r\n{}",
+                    next
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+            let first = next_request(&server);
+            assert!(
+                server
+                    .recv_timeout(Duration::from_millis(300))
+                    .unwrap()
+                    .is_none(),
+                "{}: the next request was read before the upgrade request was answered",
+                what
+            );
+            first.respond(Response::from_string("five")).unwrap();
+            let request = next_request(&server);
+            assert_eq!(request.url(), "/next", "{}", what);
+            request.respond(Response::from_string("six")).unwrap();
+            assert!(up_to(&mut http, "six").contains("five"), "{}", what);
+            drop(http);
+
+            // Taken up: what comes after the handshake is the upgraded
+            // protocol's, not a request.
+            let mut http = client(addr);
+            http.write_all(format!("{}{}", handshake, next).as_bytes())
+                .unwrap();
+            let mut stream = next_request(&server).upgrade("h2c", Response::empty(101));
+            assert!(
+                server
+                    .recv_timeout(Duration::from_millis(300))
+                    .unwrap()
+                    .is_none(),
+                "{}: what the client sent after the upgrade was taken for a request",
+                what
+            );
+            let mut got = vec![0; next.len()];
+            stream.read_exact(&mut got).unwrap();
+            assert_eq!(got, next.as_bytes(), "{}", what);
+            drop(stream);
+            assert!(rest_of(&mut http).starts_with("HTTP/1.1 101"), "{}", what);
+            assert_no_connection_left(&server);
+        }
+    }
+
+    /// Review of R36 (older than it): an empty line before the request
+    /// line — a client may send one after a body — was a `400`, and the
+    /// end of the connection. It is ignored (RFC 9112 §2.2), any number of
+    /// them. (A bare LF before the request line was whitespace of it
+    /// already — the line is trimmed — and still is.)
+    #[test]
+    fn empty_lines_before_the_request_line_are_ignored() {
+        let (server, addr) = serve_within(timeout_only());
+        let mut http = client(addr);
+        http.write_all(b"\r\n\r\nGET /1 HTTP/1.1\r\nHost: x\r\n\r\n")
+            .unwrap();
+        let request = next_request(&server);
+        assert_eq!(request.url(), "/1");
+        request.respond(Response::from_string("one")).unwrap();
+        let answer = up_to(&mut http, "one");
+        assert!(
+            answer.starts_with("HTTP/1.1 200") && !says_close(&answer),
+            "{}",
+            answer
+        );
+        http.write_all(b"POST /2 HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\nhi\r\n")
+            .unwrap();
+        let mut request = next_request(&server);
+        assert_eq!(request.url(), "/2");
+        let mut body = String::new();
+        request.as_reader().read_to_string(&mut body).unwrap();
+        assert_eq!(body, "hi");
+        request.respond(Response::from_string("two")).unwrap();
+        assert!(up_to(&mut http, "two").starts_with("HTTP/1.1 200"));
+        http.write_all(b"GET /3 HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+        let request = next_request(&server);
+        assert_eq!(request.url(), "/3");
+        request.respond(Response::from_string("three")).unwrap();
+        assert!(up_to(&mut http, "three").starts_with("HTTP/1.1 200"));
+        drop(http);
+
+        let mut http = client(addr);
+        http.write_all(b"\nGET /1 HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+        let request = next_request(&server);
+        assert_eq!(request.url(), "/1");
+        request.respond(Response::from_string("one")).unwrap();
+        assert!(up_to(&mut http, "one").starts_with("HTTP/1.1 200"));
+        drop(http);
+        assert_no_connection_left(&server);
+    }
+
+    /// R36: an HTTP/0.9 request — `GET /path` and nothing else, no headers
+    /// to come — is answered 505 at once, and the connection ends with it:
+    /// the crate as published took the request line for nonsense (400),
+    /// and served one that named the version (`GET / HTTP/0.9`) in a
+    /// version the client knows nothing of, on a connection that stayed
+    /// open. A minor version above the one spoken is taken for it (RFC
+    /// 9112 §2.3): `HTTP/1.2` is served as HTTP/1.1, where it used to be
+    /// 400; a major version not spoken is 505 whatever the minor; and what
+    /// is no version at all is 400.
+    #[test]
+    fn an_http_0_9_request_is_answered_505_at_once() {
+        let (server, addr) = serve_within(timeout_only());
+        for sent in [
+            "GET /\r\n",
+            "GET / HTTP/0.9\r\nHost: x\r\n\r\n",
+            "GET / HTTP/0.0\r\n",
+        ] {
+            let mut http = client(addr);
+            let started = Instant::now();
+            http.write_all(sent.as_bytes()).unwrap();
+            let answer = rest_of(&mut http);
+            assert!(
+                started.elapsed() < TIMEOUT / 2,
+                "{:?}: took {:?}",
+                sent,
+                started.elapsed()
+            );
+            assert_eq!(answer.matches("HTTP/1.").count(), 1, "{:?}: {}", sent, answer);
+            assert!(
+                answer.starts_with("HTTP/1.1 505") && says_close(&answer),
+                "{:?}: {}",
+                sent,
+                answer
+            );
+            assert!(
+                server
+                    .recv_timeout(Duration::from_millis(100))
+                    .unwrap()
+                    .is_none(),
+                "{:?}: a request came",
+                sent
+            );
+        }
+
+        let mut http = client(addr);
+        http.write_all(b"GET /minor HTTP/1.2\r\nHost: x\r\n\r\n").unwrap();
+        let request = next_request(&server);
+        assert_eq!(*request.http_version(), HTTPVersion(1, 1));
+        request.respond(Response::from_string("hi")).unwrap();
+        let answer = up_to(&mut http, "hi");
+        assert!(
+            answer.starts_with("HTTP/1.1 200") && !says_close(&answer),
+            "{}",
+            answer
+        );
+        drop(http);
+
+        for (sent, status) in [
+            ("GET / HTTP/2.5\r\nHost: x\r\n\r\n", "505"),
+            ("GET / HTTP/1.x\r\nHost: x\r\n\r\n", "400"),
+            ("GET / HTTP/10.0\r\n\r\n", "400"),
+            ("GET / http/1.1\r\n\r\n", "400"),
+            ("POST /\r\n", "400"),
+        ] {
+            let mut http = client(addr);
+            http.write_all(sent.as_bytes()).unwrap();
+            let answer = rest_of(&mut http);
+            assert!(
+                answer.starts_with(&format!("HTTP/1.1 {}", status)) && says_close(&answer),
+                "{:?}: {}",
+                sent,
+                answer
+            );
+        }
         assert_no_connection_left(&server);
     }
 

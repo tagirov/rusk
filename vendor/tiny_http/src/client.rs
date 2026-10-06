@@ -7,6 +7,7 @@ use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -53,6 +54,11 @@ pub struct ClientConnection {
     // rusk: the requests taken from the connection so far (see
     // `Request::respond`)
     requests_taken: Arc<AtomicUsize>,
+
+    // rusk: the request taken last asked for an upgrade (`Connection:
+    // upgrade`): whether it was handed the connection is heard here, once
+    // it has been answered, before the next request is read (see `next`)
+    handed_over: Option<Receiver<bool>>,
 }
 
 /// Error that can happen when reading a request.
@@ -99,6 +105,7 @@ impl ClientConnection {
             body_pace: head_timeout.and_then(|timeout| min_rate.map(|rate| Pace::new(timeout, rate))),
             done_reading,
             requests_taken: Arc::new(AtomicUsize::new(0)),
+            handed_over: None,
         }
     }
 
@@ -212,7 +219,9 @@ impl ClientConnection {
         // rusk: a version the server does not speak is answered here, like
         // a head that makes no sense, before a request is built of it (see
         // `next`): built, and dropped unanswered, it answered 500 before
-        // the 505 came, and took the rest of its body first
+        // the 505 came, and took the rest of its body first (HTTP/0.9,
+        // which has no headers, is answered before they are waited for:
+        // see `read_head`)
         if version > HTTPVersion(1, 1) {
             return Err(ReadError::VersionNotSupported);
         }
@@ -266,14 +275,37 @@ impl ClientConnection {
         first: u8,
     ) -> Result<(Method, String, HTTPVersion, Vec<Header>), ReadError> {
         // reading the request line
+        // rusk: empty lines before it are ignored (RFC 9112 §2.2: a client
+        // may send one after a body; review of R36: it was a `400`, and the
+        // end of the connection); they are read under the head's deadline
         let (method, path, version) = {
-            let line = self
+            let mut line = self
                 .read_next_line(Some(first))
                 .map_err(ReadError::ReadIoError)?;
+            while line.is_empty() {
+                line = self.read_next_line(None).map_err(ReadError::ReadIoError)?;
+            }
 
             parse_request_line(
                 line.as_str().trim(), // TODO: remove this conversion
             )?
+        };
+
+        // rusk: an HTTP/0.9 request — `GET /path`, nothing else, and no
+        // headers to come (RFC 1945 §4.1) — is answered here, before the
+        // headers are waited for (a timeout long, for a `408`); the crate
+        // as published took the request line for nonsense (`400`) — and
+        // served one that named the version, `GET / HTTP/0.9`, answering
+        // in a version the client knows nothing of. A minor version above
+        // the one spoken, `HTTP/1.2`, is taken for the one spoken (RFC
+        // 9112 §2.3; it used to be `400`). A major version not spoken is
+        // answered once the head is read (see `read`).
+        if version < HTTPVersion(1, 0) {
+            return Err(ReadError::VersionNotSupported);
+        }
+        let version = match version {
+            HTTPVersion(1, minor) if minor > 1 => HTTPVersion(1, 1),
+            version => version,
         };
 
         // getting all headers
@@ -313,6 +345,22 @@ impl Iterator for ClientConnection {
         //  or is using HTTP 1.0, meaning that no new request will come
         if self.no_more_requests {
             return None;
+        }
+
+        // rusk: the request before asked for an upgrade: nothing is read
+        // until it has been answered, and nothing more if the connection
+        // went with the answer (`Request::upgrade`): what the client sends
+        // then is the upgraded protocol's, not a request. One answered as
+        // usual — an upgrade the server did not take up — is a request
+        // like any other, and the connection goes on; the crate as
+        // published ended it (curl, which proposes h2c on every request
+        // with `--http2`, opened a connection for each). A `Request` that
+        // went without a word (it cannot) is taken for handed over.
+        if let Some(decision) = self.handed_over.take() {
+            match decision.recv() {
+                Ok(false) => (),
+                Ok(true) | Err(_) => return None,
+            }
         }
 
         // rusk: the answers after which the connection ends say so
@@ -391,17 +439,25 @@ impl Iterator for ClientConnection {
             let ordinal = self.requests_taken.fetch_add(1, Ordering::AcqRel) + 1;
 
             // updating the status of the connection
+            // rusk: from every `Connection` header, not the first alone
+            // (review of R36: `Connection: keep-alive` and a second
+            // `Connection: Upgrade` was no upgrade request)
             let connection_header = rq
                 .headers()
                 .iter()
-                .find(|h| h.field.equiv("Connection"))
-                .map(|h| h.value.as_str());
+                .filter(|h| h.field.equiv("Connection"))
+                .map(|h| h.value.as_str())
+                .collect::<Vec<_>>();
 
-            let lowercase = connection_header.map(|h| h.to_ascii_lowercase());
+            let lowercase = match connection_header.is_empty() {
+                true => None,
+                false => Some(connection_header.join(",").to_ascii_lowercase()),
+            };
 
+            // rusk: `upgrade` does not end the connection by itself any
+            // more (see above)
             match lowercase {
                 Some(ref val) if val.contains("close") => self.no_more_requests = true,
-                Some(ref val) if val.contains("upgrade") => self.no_more_requests = true,
                 Some(ref val)
                     if !val.contains("keep-alive") && *rq.http_version() == HTTPVersion(1, 0) =>
                 {
@@ -411,12 +467,24 @@ impl Iterator for ClientConnection {
                 _ => (),
             };
 
+            // rusk: a request that asks for an upgrade says, on its way
+            // out, whether it took the connection with it
+            let hands_over = match lowercase {
+                Some(ref val) if val.contains("upgrade") => {
+                    let (sender, receiver) = channel();
+                    self.handed_over = Some(receiver);
+                    Some(sender)
+                }
+                _ => None,
+            };
+
             // returning the request
             // rusk: its answer says what becomes of the connection
             return Some(rq.on_connection(
                 ordinal,
                 self.requests_taken.clone(),
                 self.no_more_requests,
+                hands_over,
             ));
         }
     }
@@ -462,27 +530,40 @@ impl Drop for PacedBody {
 }
 
 /// Parses a "HTTP/1.1" string.
+///
+/// rusk: any `HTTP/<digit>.<digit>` (RFC 9112 §2.3), so that a version the
+/// server does not speak is answered as such (`505`, see
+/// `ClientConnection::read_head`); the crate as published knew five by
+/// name and took the rest for nonsense (`400`).
 fn parse_http_version(version: &str) -> Result<HTTPVersion, ReadError> {
-    let (major, minor) = match version {
-        "HTTP/0.9" => (0, 9),
-        "HTTP/1.0" => (1, 0),
-        "HTTP/1.1" => (1, 1),
-        "HTTP/2.0" => (2, 0),
-        "HTTP/3.0" => (3, 0),
-        _ => return Err(ReadError::WrongRequestLine),
-    };
-
-    Ok(HTTPVersion(major, minor))
+    let digits = version
+        .strip_prefix("HTTP/")
+        .map(str::as_bytes)
+        .filter(|rest| rest.len() == 3 && rest[1] == b'.');
+    match digits {
+        Some([major, _, minor]) if major.is_ascii_digit() && minor.is_ascii_digit() => {
+            Ok(HTTPVersion(major - b'0', minor - b'0'))
+        }
+        _ => Err(ReadError::WrongRequestLine),
+    }
 }
 
 /// Parses the request line of the request.
 /// eg. GET / HTTP/1.1
+///
+/// rusk: `GET /path` with no version is an HTTP/0.9 request (RFC 1945
+/// §4.1), `HTTPVersion(0, 9)`; the crate as published took it for
+/// nonsense.
 fn parse_request_line(line: &str) -> Result<(Method, String, HTTPVersion), ReadError> {
     let mut parts = line.split(' ');
 
-    let method = parts.next().and_then(|w| w.parse().ok());
+    let method: Option<Method> = parts.next().and_then(|w| w.parse().ok());
     let path = parts.next().map(ToOwned::to_owned);
-    let version = parts.next().and_then(|w| parse_http_version(w).ok());
+    let version = match parts.next() {
+        Some(w) => parse_http_version(w).ok(),
+        None if method == Some(Method::Get) && path.is_some() => Some(HTTPVersion(0, 9)),
+        None => None,
+    };
 
     method
         .and_then(|method| Some((method, path?, version?)))
@@ -499,7 +580,27 @@ mod test {
         assert!(path == "/hello");
         assert!(ver == crate::common::HTTPVersion(1, 1));
 
-        assert!(super::parse_request_line("GET /hello").is_err());
         assert!(super::parse_request_line("qsd qsd qsd").is_err());
+
+        // rusk: HTTP/0.9, and any `HTTP/<digit>.<digit>`
+        let (method, path, ver) = super::parse_request_line("GET /hello").unwrap();
+        assert!(method == crate::Method::Get);
+        assert!(path == "/hello");
+        assert!(ver == crate::common::HTTPVersion(0, 9));
+        assert!(super::parse_request_line("POST /hello").is_err());
+        assert!(super::parse_request_line("GET").is_err());
+        for (text, (major, minor)) in [
+            ("HTTP/0.9", (0, 9)),
+            ("HTTP/1.0", (1, 0)),
+            ("HTTP/1.7", (1, 7)),
+            ("HTTP/2.0", (2, 0)),
+            ("HTTP/9.9", (9, 9)),
+        ] {
+            let (_, _, ver) = super::parse_request_line(&format!("GET / {}", text)).unwrap();
+            assert!(ver == crate::common::HTTPVersion(major, minor), "{}", text);
+        }
+        for text in ["HTTP/1", "HTTP/1.", "HTTP/1.x", "HTTP/10.0", "HTTP/1.10", "http/1.1", "HTTP/1.1x"] {
+            assert!(super::parse_request_line(&format!("GET / {}", text)).is_err(), "{}", text);
+        }
     }
 }

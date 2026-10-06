@@ -105,9 +105,17 @@ Six changes, each marked `rusk:` in the code:
   head that stalls, the `417`, the `505` to an HTTP version the server does
   not speak (answered once, before a request is built of it, and the
   connection ends with it: upstream built the request, whose drop answered
-  `500` first, and read on), the answer to a request that said it was the
-  last (`Connection: close`, `Connection: upgrade`, HTTP/1.0 without
-  keep-alive), the answer to a client waiting to be told to send its body
+  `500` first, and read on — an HTTP/0.9 request, `GET /path` with no
+  version and no headers to come, among them, answered before headers are
+  waited for: upstream took it for nonsense, `400`, and served one that
+  named the version, `GET / HTTP/0.9`, answering in a version the client
+  knows nothing of; a minor version above the one spoken, `HTTP/1.2`, is
+  served as HTTP/1.1, RFC 9112 §2.3, where upstream knew five versions by
+  name and answered the rest `400`; and empty lines before a request line,
+  which a client may send after a body, are ignored, RFC 9112 §2.2, where
+  upstream answered `400` and closed), the answer to a request that said it
+  was the last (`Connection: close`, HTTP/1.0 without keep-alive), the
+  answer to a client waiting to be told to send its body
   (`Expect: 100-continue`) that is a final one instead — the client is not
   going to send the body, and nothing more is read from the connection,
   where upstream waited the body out when the request went, a timeout
@@ -129,7 +137,7 @@ Six changes, each marked `rusk:` in the code:
   speak is answered in one it does (`HTTP/1.1 400`, not `HTTP/2.0 400`);
   an HTTP/1.0 client's `Expect` is ignored (RFC 9110 §10.1.1; upstream
   sent it a `100 Continue`); a `1xx` or `204` answer says no
-  `Content-Length` (RFC 9112 §6.2; the `100 Continue` said `0`). Seven
+  `Content-Length` (RFC 9112 §6.2; the `100 Continue` said `0`). Nine
   tests cover it in `lib.rs`; two there check it on the way.
 - `src/request.rs`: a `Connection: upgrade` request's body is read within
   its headers (`Content-Length`, `Transfer-Encoding`), like any other.
@@ -141,8 +149,15 @@ Six changes, each marked `rusk:` in the code:
   later) or for ever. The reader is kept whole for a request without a
   body (the handshake) only, where `as_reader` gives nothing and
   `upgrade` hands the connection over as before; `upgrade` on a request
-  with a body hands over a stream that reads the body and no more. One
-  test covers it in `lib.rs`.
+  with a body hands over a stream that reads the body and no more. The
+  connection goes on after the answer to an upgrade the server does not
+  take up: the next request is read once the answer is out (the request
+  tells its connection, on its way out — the writer of `into_writer` on
+  its — whether it took the connection with it), and not at all when it
+  did (`upgrade`); upstream ended the connection with every such request —
+  curl, which proposes h2c on every request with `--http2`, got a
+  connection per request. Every `Connection` header is read for it, not
+  the first alone (review of R36). Two tests cover it in `lib.rs`.
 
 To update: unpack the new crate, apply the changes (`git diff` of the vendored
 tree against the crate shows exactly what they are), run its unit tests with

@@ -72,12 +72,16 @@ a chunked body it read and found in the wrong format, a `Content-Length`
 that is no number among them, since where the next request would start is
 not known then — and the answer to
 a request that said it was the last — `Connection: close`, HTTP/1.0 without
-keep-alive, `Connection: upgrade` (an upgrade the server does not take up:
-curl proposes h2c on every request with `--http2`; the request is answered
-as any other, its body read within its headers). An HTTP/1.0 client that
+keep-alive. An upgrade the server does not take up (curl proposes h2c on
+every request with `--http2`) is answered as any other request, its body
+read within its headers, and the connection goes on — the next request is
+read once the answer is out. An HTTP/1.0 client that
 asks to keep the connection is told that it is kept (`Connection:
 keep-alive`). A request in an HTTP version the server does not speak is
-answered `505` once, and the connection ends. A client waiting to be told to
+answered `505` once, and the connection ends — HTTP/0.9 (`GET /path` with
+no version) among them; `HTTP/1.2` to `HTTP/1.9` are served as HTTP/1.1.
+Empty lines before a request line are ignored. A client waiting to be told
+to
 send its body (`Expect: 100-continue`) is told (`100 Continue`) when the
 server reads it, or throws it away — a body up to a megabyte it answers
 without reading; a bigger one, or a chunked one, it does not ask for: the
@@ -120,7 +124,8 @@ as the client liked, and a client could send requests down one connection
 faster than they were answered, a thread each; a chunked body that stops is
 a timeout, not a bad request, and one left unread is thrown away; an answer
 says what becomes of the connection; and a `Connection: upgrade` request's
-body is read within its headers.
+body is read within its headers, the connection going on when the upgrade
+is not taken up.
 
 ### Authentication
 

@@ -8631,8 +8631,8 @@ fn r34_an_unread_chunked_body_keeps_the_connection_in_step() {
 /// request with `--http2` — got the connection's reader whole, so that its
 /// body was read on to the timeout: a `POST` with a whole body was 408 a
 /// timeout later. The body is read within its headers, like any other, and
-/// the request is answered; the answer says that the connection ends (the
-/// request might have been upgraded), and it does.
+/// the request is answered; the connection goes on (R36: the answer used
+/// to say `Connection: close`, and the connection ended).
 #[test]
 #[cfg(feature = "web")]
 fn r35_an_upgrade_requests_body_is_read_within_its_headers() {
@@ -8646,23 +8646,116 @@ fn r35_an_upgrade_requests_body_is_read_within_its_headers() {
         ("a known length", "Content-Length: 16\r\n", "{\"text\":\"sized\"}"),
         ("chunked", "Transfer-Encoding: chunked\r\n", "12\r\n{\"text\":\"chunked\"}\r\n0\r\n\r\n"),
     ];
+    let mut http = Http::to(server.port);
     for (what, framing, sent) in bodies.iter() {
-        let mut http = Http::to(server.port);
         let head = format!("POST /api/tasks HTTP/1.1\r\nHost: localhost\r\n{h2c}\r\n{json}\r\n{framing}");
         write!(http.0, "{head}\r\n{sent}").unwrap();
         let started = Instant::now();
         let res = http.response(&head);
         assert!(started.elapsed() < Duration::from_millis(500), "{what}: took {:?}", started.elapsed());
         assert_eq!(status(&res), 201, "{what}: {res}");
-        assert_eq!(header_in(&res, "Connection"), Some("close"), "{what}: {res}");
-        assert_eq!(rest_of(&mut http.0), "", "{what}: the connection went on");
+        assert_eq!(header_in(&res, "Connection"), None, "{what}: {res}");
     }
-    let mut http = Http::to(server.port);
     let res = http.get("/api/tasks", &format!("\r\n{h2c}"));
     assert_eq!(status(&res), 200, "{res}");
-    assert_eq!(header_in(&res, "Connection"), Some("close"), "{res}");
+    assert_eq!(header_in(&res, "Connection"), None, "{res}");
     assert!(res.contains("\"sized\"") && res.contains("\"chunked\""), "{res}");
-    assert_eq!(rest_of(&mut http.0), "");
+}
+
+/// R36 (left by R35): an upgrade the server does not take up — curl
+/// proposes h2c on every request with `--http2` — still ended the
+/// connection: the answer said `Connection: close`, and curl opened a
+/// connection per request. The request is answered as any other, the
+/// connection goes on, and the next request is read once the answer is
+/// out — with the limits (one request at a time anyway) and without them
+/// (`web_timeout = 0`: the requests of a connection are read as they come,
+/// but not past an upgrade request until it is answered, since the
+/// connection might go with the answer).
+#[test]
+#[cfg(feature = "web")]
+fn r36_an_upgrade_not_taken_up_keeps_the_connection() {
+    use std::io::Write;
+    let h2c = "\r\nConnection: Upgrade, HTTP2-Settings\r\nUpgrade: h2c\r\nHTTP2-Settings: AAMAAABkAAQCAAAAAAIAAAAA";
+    for seconds in [1, 0] {
+        let sb = Sandbox::with_db(THREE_TASKS_DB);
+        let server = serve(&sb, &timeout_config(&sb, seconds), &[]);
+        let mut http = Http::to(server.port);
+        let res = http.send(
+            &format!("POST /api/tasks HTTP/1.1\r\nHost: localhost{h2c}\r\nContent-Type: application/json"),
+            "{\"text\":\"kept\"}",
+        );
+        assert_eq!(status(&res), 201, "{seconds}: {res}");
+        assert_eq!(header_in(&res, "Connection"), None, "{seconds}: {res}");
+        let res = http.get("/api/tasks", h2c);
+        assert_eq!(status(&res), 200, "{seconds}: {res}");
+        assert_eq!(header_in(&res, "Connection"), None, "{seconds}: {res}");
+        assert!(res.contains("\"kept\""), "{seconds}: {res}");
+        let res = http.get("/api/tasks", "");
+        assert_eq!(status(&res), 200, "{seconds}: {res}");
+
+        // Pipelined: the upgrade request and the next in one write are
+        // answered in order, on the same connection.
+        let mut http = Http::to(server.port);
+        write!(
+            http.0,
+            "GET /api/tasks HTTP/1.1\r\nHost: localhost{h2c}\r\n\r\n\
+             GET /api/tasks HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+        )
+        .unwrap();
+        let raw = rest_of(&mut http.0);
+        let answers = answers_in(&raw);
+        assert_eq!(answers.len(), 2, "{seconds}: {}", &raw[..raw.len().min(400)]);
+        assert_eq!(status(&answers[0]), 200, "{seconds}: {}", &answers[0][..answers[0].len().min(400)]);
+        assert_eq!(header_in(&answers[0], "Connection"), None, "{seconds}: {}", &answers[0][..answers[0].len().min(400)]);
+        assert_eq!(status(&answers[1]), 200, "{seconds}: {}", &answers[1][..answers[1].len().min(400)]);
+        assert_eq!(header_in(&answers[1], "Connection"), Some("close"), "{seconds}: {}", &answers[1][..answers[1].len().min(400)]);
+    }
+}
+
+/// R36 (old, outside R35): an HTTP/0.9 request — `GET /path`, no version,
+/// no headers to come — was taken for nonsense (400), and one that named
+/// the version (`GET / HTTP/0.9`) was served, in a version the client
+/// knows nothing of, on a connection that stayed open. Both are 505, at
+/// once, and the connection ends. A minor version above the one spoken
+/// (`HTTP/1.2`) is served as HTTP/1.1 (RFC 9112 §2.3); it used to be 400.
+#[test]
+#[cfg(feature = "web")]
+fn r36_an_http_0_9_request_is_answered_505() {
+    use std::io::Write;
+    use std::time::{Duration, Instant};
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, &timeout_config(&sb, 1), &[]);
+    for sent in ["GET /api/tasks\r\n", "GET /api/tasks HTTP/0.9\r\nHost: localhost\r\n\r\n"] {
+        let mut http = Http::to(server.port);
+        let started = Instant::now();
+        http.0.write_all(sent.as_bytes()).unwrap();
+        let raw = rest_of(&mut http.0);
+        assert!(started.elapsed() < Duration::from_millis(500), "{sent:?}: took {:?}", started.elapsed());
+        let answers = answers_in(&raw);
+        assert_eq!(answers.len(), 1, "{sent:?}: {raw}");
+        assert_eq!(status(&answers[0]), 505, "{sent:?}: {raw}");
+        assert_eq!(header_in(&answers[0], "Connection"), Some("close"), "{sent:?}: {raw}");
+    }
+    let mut http = Http::to(server.port);
+    let res = http.send("GET /api/tasks HTTP/1.2\r\nHost: localhost", "");
+    assert!(res.starts_with("HTTP/1.1 200"), "{res}");
+    assert_eq!(header_in(&res, "Connection"), None, "{res}");
+    let res = http.get("/api/tasks", "");
+    assert_eq!(status(&res), 200, "{res}");
+
+    // Review of R36: an empty line before the request line — a client may
+    // send one after a body — was 400 and the end of the connection; it is
+    // ignored (RFC 9112 §2.2).
+    let res = http.send("\r\nGET /api/tasks HTTP/1.1\r\nHost: localhost", "");
+    assert_eq!(status(&res), 200, "{res}");
+    assert_eq!(header_in(&res, "Connection"), None, "{res}");
+    let res = http.send("POST /api/tasks HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json", "{\"text\":\"crlf\"}\r\n");
+    // The CRLF after the body is counted in its length here, so the JSON
+    // is taken whole with it; the next request starts clean.
+    assert_eq!(status(&res), 201, "{res}");
+    let res = http.get("/api/tasks", "");
+    assert_eq!(status(&res), 200, "{res}");
+    assert!(res.contains("\"crlf\""), "{res}");
 }
 
 /// R35: an HTTP/1.0 client that asks to keep the connection

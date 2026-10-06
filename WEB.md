@@ -68,12 +68,25 @@ chunked or not, wherever it stops — and the request has to be sent again),
 without a word when it was idle, as browsers expect of a keep-alive
 connection. An answer after which the server closes the connection says so
 (`Connection: close`): a 408, a 400 to a request it cannot make sense of —
-a chunked body it read and found in the wrong format among them, since
-where the next request would start is not known then — and the answer to
-a request that said it was the last. (A chunked body the server answers
-without reading — 401, 404, 415 — is read and thrown away after the
-answer, so that the connection stays in step; if it turns out wrong or
-stops then, the connection ends after an answer that could not say so.) Up to 256 connections are open
+a chunked body it read and found in the wrong format, a `Content-Length`
+that is no number among them, since where the next request would start is
+not known then — and the answer to
+a request that said it was the last — `Connection: close`, HTTP/1.0 without
+keep-alive, `Connection: upgrade` (an upgrade the server does not take up:
+curl proposes h2c on every request with `--http2`; the request is answered
+as any other, its body read within its headers). An HTTP/1.0 client that
+asks to keep the connection is told that it is kept (`Connection:
+keep-alive`). A request in an HTTP version the server does not speak is
+answered `505` once, and the connection ends. A client waiting to be told to
+send its body (`Expect: 100-continue`) is told (`100 Continue`) when the
+server reads it, or throws it away — a body up to a megabyte it answers
+without reading; a bigger one, or a chunked one, it does not ask for: the
+answer (401, 413, 415…) says that the connection ends, and it does, without
+waiting for a body the client was never told to send. (A chunked body the
+server answers without reading — 401, 404, 415 — is read and thrown away
+after the answer, so that the connection stays in step; if it turns out
+wrong or stops then, the connection ends after an answer that could not say
+so.) Up to 256 connections are open
 at once (fewer if the process may not open the file descriptors they take;
 the limit is raised as far as allowed, and the startup banner says what it
 is); the next waits in the listening socket's queue until one closes. The
@@ -94,17 +107,20 @@ that buffers requests and answers and limits them per client (nginx does,
 see below) — it is the place for TLS anyway.
 
 `rusk serve` runs on [tiny_http](https://github.com/tiny-http/tiny-http)
-0.12, vendored under `vendor/` with three changes of rusk's (see
+0.12, vendored under `vendor/` with six changes of rusk's (see
 `vendor/README.md`): a request answered without reading its body (a wrong
 token, a body too big) takes the rest of that body from the connection
 before it goes — through a small buffer, up to where the connection ends,
 where the crate as published took a buffer as large as the announced rest and
 a `Content-Length: 1000000000000000` aborted the server; every connection of
 a burst is read (as published, some of six opened at once by a browser could
-hang until another closed); and the limits above, which the crate as
+hang until another closed); the limits above, which the crate as
 published has nothing of — every open connection cost a thread for as long
 as the client liked, and a client could send requests down one connection
-faster than they were answered, a thread each.
+faster than they were answered, a thread each; a chunked body that stops is
+a timeout, not a bad request, and one left unread is thrown away; an answer
+says what becomes of the connection; and a `Connection: upgrade` request's
+body is read within its headers.
 
 ### Authentication
 

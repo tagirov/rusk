@@ -147,7 +147,10 @@ const PREFETCHED_BODY_BYTES: usize = 1024;
 /// (`Connection: close`, R34), and it does. A chunked body, whose size is
 /// not known before its end, is thrown away by tiny_http after the answer
 /// whatever its size (R34: it used to be left where it stood, and the next
-/// request was read from the middle of it).
+/// request was read from the middle of it). A client waiting to be told
+/// to send a bigger body, or a chunked one, is not told: tiny_http says in
+/// the answer that the connection ends, and ends it without waiting for a
+/// body the client was never asked for (R35: it waited the timeout out).
 const DISCARDED_BODY_BYTES: usize = 1024 * 1024;
 
 thread_local! {

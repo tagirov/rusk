@@ -8621,3 +8621,233 @@ fn r34_an_unread_chunked_body_keeps_the_connection_in_step() {
         assert_eq!(raw, "", "{rest:?}: {raw}");
     }
 }
+
+// ---------------------------------------------------------------------------
+// R35 — what the R34 status left open in tiny_http: `Connection: upgrade`,
+// HTTP/1.0 keep-alive, 505, `Expect: 100-continue` unanswered, pipelining
+// ---------------------------------------------------------------------------
+
+/// R35: a request with `Connection: upgrade` — curl proposes h2c on every
+/// request with `--http2` — got the connection's reader whole, so that its
+/// body was read on to the timeout: a `POST` with a whole body was 408 a
+/// timeout later. The body is read within its headers, like any other, and
+/// the request is answered; the answer says that the connection ends (the
+/// request might have been upgraded), and it does.
+#[test]
+#[cfg(feature = "web")]
+fn r35_an_upgrade_requests_body_is_read_within_its_headers() {
+    use std::io::Write;
+    use std::time::{Duration, Instant};
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, &timeout_config(&sb, 1), &[]);
+    let h2c = "Connection: Upgrade, HTTP2-Settings\r\nUpgrade: h2c\r\nHTTP2-Settings: AAMAAABkAAQCAAAAAAIAAAAA";
+    let json = "Content-Type: application/json";
+    let bodies = [
+        ("a known length", "Content-Length: 16\r\n", "{\"text\":\"sized\"}"),
+        ("chunked", "Transfer-Encoding: chunked\r\n", "12\r\n{\"text\":\"chunked\"}\r\n0\r\n\r\n"),
+    ];
+    for (what, framing, sent) in bodies.iter() {
+        let mut http = Http::to(server.port);
+        let head = format!("POST /api/tasks HTTP/1.1\r\nHost: localhost\r\n{h2c}\r\n{json}\r\n{framing}");
+        write!(http.0, "{head}\r\n{sent}").unwrap();
+        let started = Instant::now();
+        let res = http.response(&head);
+        assert!(started.elapsed() < Duration::from_millis(500), "{what}: took {:?}", started.elapsed());
+        assert_eq!(status(&res), 201, "{what}: {res}");
+        assert_eq!(header_in(&res, "Connection"), Some("close"), "{what}: {res}");
+        assert_eq!(rest_of(&mut http.0), "", "{what}: the connection went on");
+    }
+    let mut http = Http::to(server.port);
+    let res = http.get("/api/tasks", &format!("\r\n{h2c}"));
+    assert_eq!(status(&res), 200, "{res}");
+    assert_eq!(header_in(&res, "Connection"), Some("close"), "{res}");
+    assert!(res.contains("\"sized\"") && res.contains("\"chunked\""), "{res}");
+    assert_eq!(rest_of(&mut http.0), "");
+}
+
+/// R35: an HTTP/1.0 client that asks to keep the connection
+/// (`Connection: keep-alive`, ApacheBench with `-k`) had it kept, but was
+/// not told so — and such a client takes an answer that does not say
+/// `Connection: keep-alive` for the last on the connection. The answer
+/// says so; one to an HTTP/1.0 request without it says that the
+/// connection ends, as before.
+#[test]
+#[cfg(feature = "web")]
+fn r35_an_http_1_0_client_that_keeps_the_connection_is_told_so() {
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, &timeout_config(&sb, 1), &[]);
+    let mut http = Http::to(server.port);
+    for _ in 0..2 {
+        let res = http.send("GET /api/tasks HTTP/1.0\r\nHost: localhost\r\nConnection: keep-alive", "");
+        assert_eq!(status(&res), 200, "{res}");
+        assert!(res.starts_with("HTTP/1.0 "), "{res}");
+        assert_eq!(header_in(&res, "Connection"), Some("keep-alive"), "{res}");
+        assert!(header_in(&res, "Content-Length").is_some(), "{res}");
+    }
+    let res = http.send("GET /api/tasks HTTP/1.0\r\nHost: localhost", "");
+    assert_eq!(status(&res), 200, "{res}");
+    assert_eq!(header_in(&res, "Connection"), Some("close"), "{res}");
+    assert_eq!(rest_of(&mut http.0), "");
+
+    // An HTTP/1.1 answer on a connection that goes on says neither.
+    let mut http = Http::to(server.port);
+    let res = http.get("/api/tasks", "");
+    assert_eq!(status(&res), 200, "{res}");
+    assert_eq!(header_in(&res, "Connection"), None, "{res}");
+}
+
+/// R35: a request in an HTTP version the server does not speak was
+/// answered twice — 500 by the request dropped unanswered, then the 505.
+/// It is 505 once, the answer says that the connection ends, and it does.
+#[test]
+#[cfg(feature = "web")]
+fn r35_an_http_version_not_spoken_is_answered_505_once() {
+    use std::io::Write;
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, &timeout_config(&sb, 1), &[]);
+    for sent in ["GET /api/tasks HTTP/2.0\r\nHost: localhost\r\n\r\n", "PRI * HTTP/2.0\r\n\r\n"] {
+        let mut http = Http::to(server.port);
+        http.0.write_all(sent.as_bytes()).unwrap();
+        let raw = rest_of(&mut http.0);
+        let answers = answers_in(&raw);
+        assert_eq!(answers.len(), 1, "{sent:?}: {raw}");
+        assert_eq!(status(&answers[0]), 505, "{sent:?}: {raw}");
+        assert_eq!(header_in(&answers[0], "Connection"), Some("close"), "{sent:?}: {raw}");
+    }
+}
+
+/// R35: a client waiting to be told to send its body (`Expect:
+/// 100-continue`) that the server answered without reading it — 415 to a
+/// chunked body, 415 or 413 to one too big to throw away — was never told,
+/// and the rest of the body was waited for all the same, a timeout long,
+/// the client waiting for the 100 meanwhile. The answer says that the
+/// connection ends, and it does at once. A body the server does read, or
+/// throws away (one up to a megabyte), is asked for with a 100 and the
+/// connection goes on, as before.
+#[test]
+#[cfg(feature = "web")]
+fn r35_a_client_waiting_to_send_its_body_is_not_waited_for() {
+    use std::io::Write;
+    use std::time::{Duration, Instant};
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, &timeout_config(&sb, 1), &[]);
+    let expect = "Expect: 100-continue";
+    let text = "Content-Type: text/plain";
+    let json = "Content-Type: application/json";
+    let unanswered = [
+        ("a chunked body nobody reads", format!("POST /api/tasks HTTP/1.1\r\nHost: localhost\r\n{text}\r\n{expect}\r\nTransfer-Encoding: chunked"), 415),
+        ("a body too big to throw away", format!("POST /api/tasks HTTP/1.1\r\nHost: localhost\r\n{text}\r\n{expect}\r\nContent-Length: 2000000"), 415),
+        ("a body too big to read", format!("PUT /api/tasks HTTP/1.1\r\nHost: localhost\r\n{json}\r\n{expect}\r\nContent-Length: 40000000"), 413),
+    ];
+    for (what, head, code) in unanswered.iter() {
+        let mut http = Http::to(server.port);
+        write!(http.0, "{head}\r\n\r\n").unwrap();
+        let started = Instant::now();
+        let raw = rest_of(&mut http.0);
+        assert!(started.elapsed() < Duration::from_millis(500), "{what}: took {:?}", started.elapsed());
+        let answers = answers_in(&raw);
+        assert_eq!(answers.len(), 1, "{what}: {raw}");
+        assert_eq!(status(&answers[0]), *code, "{what}: {raw}");
+        assert_eq!(header_in(&answers[0], "Connection"), Some("close"), "{what}: {raw}");
+    }
+
+    // A body the server reads: told to send it, the client does, and the
+    // connection goes on.
+    let mut http = Http::to(server.port);
+    let body = "{\"text\":\"told\"}";
+    write!(http.0, "POST /api/tasks HTTP/1.1\r\nHost: localhost\r\n{json}\r\n{expect}\r\nContent-Length: {}\r\n\r\n", body.len()).unwrap();
+    let interim = http.response("POST (waiting for the 100)");
+    assert_eq!(status(&interim), 100, "{interim}");
+    write!(http.0, "{body}").unwrap();
+    let res = http.response("POST (the body sent)");
+    assert_eq!(status(&res), 201, "{res}");
+    assert_eq!(header_in(&res, "Connection"), None, "{res}");
+    // A small one the server throws away: told to send it too (R31).
+    write!(http.0, "POST /api/tasks HTTP/1.1\r\nHost: localhost\r\n{text}\r\n{expect}\r\nContent-Length: 5\r\n\r\n").unwrap();
+    let interim = http.response("POST (waiting for the 100, to be thrown away)");
+    assert_eq!(status(&interim), 100, "{interim}");
+    write!(http.0, "hello").unwrap();
+    let res = http.response("POST (the body thrown away)");
+    assert_eq!(status(&res), 415, "{res}");
+    assert_eq!(header_in(&res, "Connection"), None, "{res}");
+    let res = http.get("/api/tasks", "");
+    assert_eq!(status(&res), 200, "{res}");
+    assert!(res.contains("\"told\""), "{res}");
+}
+
+/// Review of R34: without limits (`web_timeout = 0`, requests taken as
+/// they come), the answer to a request, written after the body of a later
+/// one — sent ahead — went wrong, said `Connection: close`, though the
+/// later request is answered after it: a client takes a request answered
+/// after a close for one never sent, and sends it again. The answer to the
+/// last request taken says so, and no other.
+#[test]
+#[cfg(feature = "web")]
+fn r35_an_answer_ahead_of_a_broken_body_does_not_say_close() {
+    use std::io::Write;
+    // A database that takes a while to read, so that the first request is
+    // still at work when the second's body breaks.
+    let mut tasks = String::from("[");
+    for id in 1..=40_000 {
+        if id > 1 {
+            tasks.push(',');
+        }
+        tasks.push_str(&format!(
+            "{{\"id\":{id},\"text\":\"task {id} {}\",\"date\":null,\"done\":false,\"priority\":false}}",
+            "x".repeat(60)
+        ));
+    }
+    tasks.push(']');
+    let sb = Sandbox::with_db(&tasks);
+    let server = serve(&sb, &timeout_config(&sb, 0), &[]);
+    for _ in 0..3 {
+        let mut http = Http::to(server.port);
+        write!(
+            http.0,
+            "GET /api/tasks HTTP/1.1\r\nHost: localhost\r\n\r\n\
+             POST /api/tasks HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n\
+             Transfer-Encoding: chunked\r\n\r\nzz\r\n"
+        )
+        .unwrap();
+        let raw = rest_of(&mut http.0);
+        let answers = answers_in(&raw);
+        assert_eq!(answers.len(), 2, "{}", &raw[..raw.len().min(400)]);
+        assert_eq!(status(&answers[0]), 200, "{}", &answers[0][..answers[0].len().min(400)]);
+        assert_eq!(header_in(&answers[0], "Connection"), None, "{}", &answers[0][..answers[0].len().min(400)]);
+        assert_eq!(status(&answers[1]), 400, "{}", answers[1]);
+        assert_eq!(header_in(&answers[1], "Connection"), Some("close"), "{}", answers[1]);
+    }
+}
+
+/// Review of R35, found on the way: a `Content-Length` that is no number
+/// (`1e6`) was taken for no body at all, and the body the client sent was
+/// read as its next request — 400 to a request nobody sent, or worse. It
+/// is a bad request (RFC 9112 §6.3), and the connection ends with the
+/// answer. And an HTTP/1.0 client, whose `Expect` is to be ignored, got a
+/// `100 Continue` it knows nothing of; it gets its answer alone.
+#[test]
+#[cfg(feature = "web")]
+fn r35_a_content_length_that_is_no_number_is_400() {
+    use std::io::Write;
+    let sb = Sandbox::with_db(THREE_TASKS_DB);
+    let server = serve(&sb, &timeout_config(&sb, 1), &[]);
+    let json = "Content-Type: application/json";
+    for length in ["1e6", "5, 6", "+14"] {
+        let mut http = Http::to(server.port);
+        write!(http.0, "POST /api/tasks HTTP/1.1\r\nHost: localhost\r\n{json}\r\nContent-Length: {length}\r\n\r\n").unwrap();
+        let raw = rest_of(&mut http.0);
+        let answers = answers_in(&raw);
+        assert_eq!(answers.len(), 1, "{length:?}: {raw}");
+        assert_eq!(status(&answers[0]), 400, "{length:?}: {raw}");
+        assert_eq!(header_in(&answers[0], "Connection"), Some("close"), "{length:?}: {raw}");
+    }
+
+    let mut http = Http::to(server.port);
+    let body = "{\"text\":\"one-oh\"}";
+    write!(http.0, "POST /api/tasks HTTP/1.0\r\nHost: localhost\r\n{json}\r\nExpect: 100-continue\r\nContent-Length: {}\r\n\r\n{body}", body.len()).unwrap();
+    let raw = rest_of(&mut http.0);
+    let answers = answers_in(&raw);
+    assert_eq!(answers.len(), 1, "{raw}");
+    assert_eq!(status(&answers[0]), 201, "{raw}");
+    assert!(raw.starts_with("HTTP/1.0 201"), "{raw}");
+}

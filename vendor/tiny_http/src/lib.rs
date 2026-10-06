@@ -648,15 +648,38 @@ mod limits {
         String::from_utf8_lossy(&buf).into_owned()
     }
 
-    /// Whether the head of an answer (`answer` up to its blank line) says
-    /// that the connection ends after it.
-    fn says_close(answer: &str) -> bool {
+    /// Whether the head of an answer (`answer` up to its blank line) has
+    /// the header line `line`.
+    fn head_says(answer: &str, line: &str) -> bool {
         answer
             .split("\r\n\r\n")
             .next()
             .unwrap()
             .lines()
-            .any(|line| line.eq_ignore_ascii_case("Connection: close"))
+            .any(|l| l.eq_ignore_ascii_case(line))
+    }
+
+    /// Whether the answer says that the connection ends after it.
+    fn says_close(answer: &str) -> bool {
+        head_says(answer, "Connection: close")
+    }
+
+    /// Whether the answer says that the connection goes on (HTTP/1.0).
+    fn says_keep_alive(answer: &str) -> bool {
+        head_says(answer, "Connection: keep-alive")
+    }
+
+    /// What the server sends until `text` ends it, on a connection that
+    /// stays open.
+    fn up_to(stream: &mut TcpStream, text: &str) -> String {
+        let mut got = Vec::new();
+        let mut chunk = [0; 4096];
+        while !String::from_utf8_lossy(&got).ends_with(text) {
+            let n = stream.read(&mut chunk).unwrap();
+            assert!(n > 0, "the connection closed before {:?} came", text);
+            got.extend_from_slice(&chunk[..n]);
+        }
+        String::from_utf8_lossy(&got).into_owned()
     }
 
     /// The server's next request, which has to be there.
@@ -1310,5 +1333,407 @@ mod limits {
         let second = next_request(&server);
         assert_eq!(second.url(), "/2");
         drop((first, second));
+    }
+
+    /// R35: a `Connection: upgrade` request's body is read within its
+    /// headers, like any other — the crate as published gave the socket
+    /// whole, so that reading the body read on to the timeout — and the
+    /// answer says that the connection ends (the request might have been
+    /// upgraded). The handshake, an upgrade request without a body, reads
+    /// nothing, and `upgrade()` still hands the connection over whole.
+    #[test]
+    fn an_upgrade_requests_body_is_read_within_its_headers() {
+        let (server, addr) = serve_within(timeout_only());
+        let bodies = [
+            ("a known length", "Content-Length: 5\r\n", "hello"),
+            ("chunked", "Transfer-Encoding: chunked\r\n", "5\r\nhello\r\n0\r\n\r\n"),
+        ];
+        for (what, framing, sent) in bodies.iter() {
+            let mut http = client(addr);
+            http.write_all(
+                format!(
+                    "POST / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade, HTTP2-Settings\r\n\
+                     Upgrade: h2c\r\n{}\r\n{}",
+                    framing, sent
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+            let mut request = next_request(&server);
+            let started = Instant::now();
+            let mut body = Vec::new();
+            request.as_reader().read_to_end(&mut body).unwrap();
+            assert_eq!(body, b"hello", "{}", what);
+            assert!(started.elapsed() < TIMEOUT, "{}: took {:?}", what, started.elapsed());
+            request.respond(Response::from_string("hi")).unwrap();
+            let answer = rest_of(&mut http);
+            assert!(
+                answer.starts_with("HTTP/1.1 200") && says_close(&answer) && answer.ends_with("hi"),
+                "{}: {}",
+                what,
+                answer
+            );
+        }
+
+        let mut http = client(addr);
+        http.write_all(b"GET /echo HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n")
+            .unwrap();
+        let mut request = next_request(&server);
+        assert_eq!(request.as_reader().read(&mut [0; 8]).unwrap(), 0);
+        let mut stream = request.upgrade("echo", Response::empty(101));
+        http.write_all(b"ping").unwrap();
+        let mut got = [0; 4];
+        stream.read_exact(&mut got).unwrap();
+        assert_eq!(&got, b"ping");
+        stream.write_all(b"pong").unwrap();
+        stream.flush().unwrap();
+        drop(stream);
+        let answer = rest_of(&mut http);
+        assert!(
+            answer.starts_with("HTTP/1.1 101") && answer.ends_with("pong"),
+            "{}",
+            answer
+        );
+
+        // `upgrade()` on a request with a body hands over a stream that
+        // reads the body and no more.
+        let mut http = client(addr);
+        http.write_all(b"POST /up HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: echo\r\nContent-Length: 5\r\n\r\nhello")
+            .unwrap();
+        let request = next_request(&server);
+        let mut stream = request.upgrade("echo", Response::empty(101));
+        let mut body = Vec::new();
+        stream.read_to_end(&mut body).unwrap();
+        assert_eq!(body, b"hello");
+        drop(stream);
+        assert!(rest_of(&mut http).starts_with("HTTP/1.1 101"));
+        assert_no_connection_left(&server);
+    }
+
+    /// R35: an HTTP/1.0 client that asked to keep the connection is told
+    /// that it is kept (`Connection: keep-alive`, RFC 9112 §9.3) — without
+    /// it, such a client takes every answer for the last; one that did not
+    /// ask is told that the connection ends.
+    #[test]
+    fn an_http_1_0_connection_that_goes_on_says_so() {
+        let (server, addr) = serve_within(timeout_only());
+        let mut http = client(addr);
+        http.write_all(b"GET /1 HTTP/1.0\r\nHost: x\r\nConnection: keep-alive\r\n\r\n")
+            .unwrap();
+        next_request(&server)
+            .respond(Response::from_string("one"))
+            .unwrap();
+        let answer = up_to(&mut http, "one");
+        assert!(
+            answer.starts_with("HTTP/1.0 200") && says_keep_alive(&answer) && !says_close(&answer),
+            "{}",
+            answer
+        );
+        // A HEAD says so too, with the length and without the body.
+        http.write_all(b"HEAD /h HTTP/1.0\r\nHost: x\r\nConnection: keep-alive\r\n\r\n")
+            .unwrap();
+        next_request(&server)
+            .respond(Response::from_string("head"))
+            .unwrap();
+        let answer = up_to(&mut http, "\r\n\r\n");
+        assert!(
+            answer.starts_with("HTTP/1.0 200")
+                && says_keep_alive(&answer)
+                && head_says(&answer, "Content-Length: 4"),
+            "{}",
+            answer
+        );
+        http.write_all(b"GET /2 HTTP/1.0\r\nHost: x\r\n\r\n").unwrap();
+        let request = next_request(&server);
+        assert_eq!(request.url(), "/2");
+        request.respond(Response::from_string("two")).unwrap();
+        let answer = rest_of(&mut http);
+        assert!(
+            answer.starts_with("HTTP/1.0 200")
+                && says_close(&answer)
+                && !says_keep_alive(&answer)
+                && answer.ends_with("two"),
+            "{}",
+            answer
+        );
+        assert_no_connection_left(&server);
+
+        // An HTTP/1.1 answer says neither on a connection that goes on.
+        let mut http = client(addr);
+        http.write_all(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+        next_request(&server)
+            .respond(Response::from_string("hi"))
+            .unwrap();
+        let answer = up_to(&mut http, "hi");
+        assert!(!answer.to_ascii_lowercase().contains("connection:"), "{}", answer);
+    }
+
+    /// R35: a request in an HTTP version the server does not speak is
+    /// answered 505 once — the request, dropped unanswered, used to answer
+    /// 500 first — and the connection ends with it, which the answer says.
+    #[test]
+    fn an_http_version_not_spoken_is_answered_505_once() {
+        let (server, addr) = serve_within(timeout_only());
+        for sent in ["GET / HTTP/2.0\r\nHost: x\r\n\r\n", "PRI * HTTP/2.0\r\n\r\n"] {
+            let mut http = client(addr);
+            http.write_all(sent.as_bytes()).unwrap();
+            let answer = rest_of(&mut http);
+            assert_eq!(answer.matches("HTTP/1.").count(), 1, "{:?}: {}", sent, answer);
+            assert!(
+                answer.starts_with("HTTP/1.1 505") && says_close(&answer),
+                "{:?}: {}",
+                sent,
+                answer
+            );
+            assert!(
+                server
+                    .recv_timeout(Duration::from_millis(100))
+                    .unwrap()
+                    .is_none(),
+                "{:?}: a request came",
+                sent
+            );
+        }
+        // Review of R35: a head that makes no sense in such a version is
+        // answered in one the server speaks (it used to be `HTTP/2.0 400`).
+        let mut http = client(addr);
+        http.write_all(b"GET / HTTP/2.0\r\nno header\r\n\r\n").unwrap();
+        let answer = rest_of(&mut http);
+        assert!(
+            answer.starts_with("HTTP/1.1 400") && says_close(&answer),
+            "{}",
+            answer
+        );
+        assert_no_connection_left(&server);
+    }
+
+    /// R35: a client waiting to be told to send its body (`Expect:
+    /// 100-continue`) that gets a final answer instead — without a 100 —
+    /// is told that the connection ends, and it does at once: the body it
+    /// was never told to send used to be waited for, a timeout long, when
+    /// the request went. One told to send it (the request reads the body)
+    /// sends it, and the connection goes on.
+    #[test]
+    fn a_final_answer_to_a_client_waiting_to_send_ends_the_connection() {
+        let (server, addr) = serve_within(timeout_only());
+        for framing in ["Transfer-Encoding: chunked", "Content-Length: 5000"] {
+            let mut http = client(addr);
+            http.write_all(
+                format!("POST / HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\n{}\r\n\r\n", framing)
+                    .as_bytes(),
+            )
+            .unwrap();
+            let request = next_request(&server);
+            request.respond(Response::empty(415)).unwrap();
+            let started = Instant::now();
+            let answer = rest_of(&mut http);
+            assert!(
+                started.elapsed() < TIMEOUT / 2,
+                "{}: took {:?}",
+                framing,
+                started.elapsed()
+            );
+            assert!(
+                answer.starts_with("HTTP/1.1 415")
+                    && says_close(&answer)
+                    && !answer.contains("100 Continue"),
+                "{}: {}",
+                framing,
+                answer
+            );
+            assert_no_connection_left(&server);
+        }
+
+        let mut http = client(addr);
+        http.write_all(b"POST / HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\n")
+            .unwrap();
+        let mut request = next_request(&server);
+        request.as_reader();
+        let interim = up_to(&mut http, "\r\n\r\n");
+        // Review of R35: a 1xx has no body, and says no length of it.
+        assert!(
+            interim.starts_with("HTTP/1.1 100") && !interim.to_ascii_lowercase().contains("content-length"),
+            "{}",
+            interim
+        );
+        http.write_all(b"hello").unwrap();
+        let mut body = Vec::new();
+        request.as_reader().read_to_end(&mut body).unwrap();
+        assert_eq!(body, b"hello");
+        request.respond(Response::from_string("ok")).unwrap();
+        let answer = up_to(&mut http, "ok");
+        assert!(!answer.to_ascii_lowercase().contains("connection:"), "{}", answer);
+        http.write_all(b"GET /next HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+        assert_eq!(next_request(&server).url(), "/next");
+        drop(http);
+
+        // A request dropped unanswered (500) is one of those final answers.
+        let mut http = client(addr);
+        http.write_all(b"POST / HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 5000\r\n\r\n")
+            .unwrap();
+        drop(next_request(&server));
+        let started = Instant::now();
+        let answer = rest_of(&mut http);
+        assert!(started.elapsed() < TIMEOUT / 2, "took {:?}", started.elapsed());
+        assert!(
+            answer.starts_with("HTTP/1.1 500") && says_close(&answer),
+            "{}",
+            answer
+        );
+
+        // A request sent ahead of it (pipelining) is neither taken nor
+        // answered: the client was told that the connection ends.
+        let mut http = client(addr);
+        http.write_all(
+            b"POST / HTTP/1.1\r\nHost: x\r\nExpect: 100-continue\r\nTransfer-Encoding: chunked\r\n\r\n\
+              GET /behind HTTP/1.1\r\nHost: x\r\n\r\n",
+        )
+        .unwrap();
+        next_request(&server)
+            .respond(Response::empty(415))
+            .unwrap();
+        let answer = rest_of(&mut http);
+        assert_eq!(answer.matches("HTTP/1.").count(), 1, "{}", answer);
+        assert!(says_close(&answer), "{}", answer);
+        assert!(
+            server
+                .recv_timeout(Duration::from_millis(100))
+                .unwrap()
+                .is_none(),
+            "the request behind was taken"
+        );
+
+        // Review of R35: an HTTP/1.0 client's expectation is ignored — it
+        // sends the body whatever comes, and knows no 100.
+        let mut http = client(addr);
+        http.write_all(b"POST / HTTP/1.0\r\nHost: x\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\nhello")
+            .unwrap();
+        let mut request = next_request(&server);
+        let mut body = Vec::new();
+        request.as_reader().read_to_end(&mut body).unwrap();
+        assert_eq!(body, b"hello");
+        request.respond(Response::from_string("ok")).unwrap();
+        let answer = rest_of(&mut http);
+        assert_eq!(answer.matches("HTTP/1.").count(), 1, "{}", answer);
+        assert!(answer.starts_with("HTTP/1.0 200") && answer.ends_with("ok"), "{}", answer);
+        assert_no_connection_left(&server);
+    }
+
+    /// Review of R34: an answer written after a later request's body — one
+    /// taken ahead, without a limit on connections — ended the reading of
+    /// the connection said `Connection: close`, though the later request
+    /// is answered after it: a client takes a request answered after a
+    /// close for one never sent, and sends it again. The answer to the last
+    /// request taken says so, and no other.
+    #[test]
+    fn an_answer_ahead_of_a_broken_body_does_not_say_close() {
+        let (server, addr) = serve_within(timeout_only());
+        let mut http = client(addr);
+        http.write_all(
+            b"GET /1 HTTP/1.1\r\nHost: x\r\n\r\n\
+              POST /2 HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n",
+        )
+        .unwrap();
+        let first = next_request(&server);
+        assert_eq!(first.url(), "/1");
+        let mut second = next_request(&server);
+        assert_eq!(second.url(), "/2");
+        let err = second
+            .as_reader()
+            .read_to_end(&mut Vec::new())
+            .unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::InvalidInput, "{:?}", err);
+        first.respond(Response::from_string("one")).unwrap();
+        second.respond(Response::empty(400)).unwrap();
+        let answers = rest_of(&mut http);
+        let answers: Vec<&str> = answers.split("HTTP/1.1 ").skip(1).collect();
+        assert_eq!(answers.len(), 2, "{:?}", answers);
+        assert!(
+            answers[0].starts_with("200") && !says_close(answers[0]),
+            "{}",
+            answers[0]
+        );
+        assert!(
+            answers[1].starts_with("400") && says_close(answers[1]),
+            "{}",
+            answers[1]
+        );
+        assert_no_connection_left(&server);
+    }
+
+    /// Review of R35: a `Content-Length` that is no number, or two that
+    /// differ, is a bad request (RFC 9112 §6.3), and the connection ends
+    /// with the answer: the crate as published took it for a request
+    /// without a body, and read the body as the next request. Two that
+    /// agree are one.
+    #[test]
+    fn a_content_length_that_is_no_number_is_a_bad_request() {
+        let (server, addr) = serve_within(timeout_only());
+        let bad = [
+            "Content-Length: 1e6",
+            "Content-Length: +5",
+            "Content-Length: -1",
+            "Content-Length: 5, 6",
+            "Content-Length: 99999999999999999999999",
+            "Content-Length: 5\r\nContent-Length: 6",
+        ];
+        for headers in bad.iter() {
+            let mut http = client(addr);
+            http.write_all(format!("POST / HTTP/1.1\r\nHost: x\r\n{}\r\n\r\n", headers).as_bytes())
+                .unwrap();
+            let answer = rest_of(&mut http);
+            assert!(
+                answer.starts_with("HTTP/1.1 400") && says_close(&answer),
+                "{:?}: {}",
+                headers,
+                answer
+            );
+            assert!(
+                server
+                    .recv_timeout(Duration::from_millis(100))
+                    .unwrap()
+                    .is_none(),
+                "{:?}: a request came",
+                headers
+            );
+        }
+        let mut http = client(addr);
+        http.write_all(b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\nContent-Length: 5\r\n\r\nhello")
+            .unwrap();
+        let mut request = next_request(&server);
+        let mut body = Vec::new();
+        request.as_reader().read_to_end(&mut body).unwrap();
+        assert_eq!(body, b"hello");
+        request.respond(Response::from_string("ok")).unwrap();
+        assert!(up_to(&mut http, "ok").starts_with("HTTP/1.1 200"));
+        assert_no_connection_left(&server);
+    }
+
+    /// Review of R35: a 204 has no body, and says no length of it (RFC
+    /// 9112 §6.2); a 200 without one says `Content-Length: 0`, as before.
+    #[test]
+    fn an_answer_without_a_body_says_no_length_of_it() {
+        let (server, addr) = serve_within(timeout_only());
+        let mut http = client(addr);
+        http.write_all(b"DELETE /1 HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+        next_request(&server)
+            .respond(Response::empty(204))
+            .unwrap();
+        let answer = up_to(&mut http, "\r\n\r\n");
+        assert!(
+            answer.starts_with("HTTP/1.1 204") && !answer.to_ascii_lowercase().contains("content-length"),
+            "{}",
+            answer
+        );
+        http.write_all(b"GET /2 HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+        next_request(&server)
+            .respond(Response::empty(200))
+            .unwrap();
+        let answer = up_to(&mut http, "\r\n\r\n");
+        assert!(
+            answer.starts_with("HTTP/1.1 200") && head_says(&answer, "Content-Length: 0"),
+            "{}",
+            answer
+        );
     }
 }

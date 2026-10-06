@@ -5,7 +5,7 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::str::FromStr;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
@@ -84,6 +84,22 @@ pub struct Request {
     // rusk: no request follows this one on its connection (see
     // `ClientConnection::next`)
     last: bool,
+
+    // rusk: which request of its connection this is, and how many the
+    // connection has taken so far (see `respond_impl`); None for a request
+    // of no connection
+    ordinal: usize,
+    requests_taken: Option<Arc<AtomicUsize>>,
+
+    // rusk: whether the request has a body to read — a `Content-Length`
+    // above zero, or a `Transfer-Encoding` (see `respond_impl`)
+    has_body: bool,
+
+    // rusk: a `Connection: upgrade` request without a body keeps the
+    // connection's reader whole for `upgrade()`; `as_reader()` gives it
+    // `no_body` (see `new_request`)
+    upgrade_handshake: bool,
+    no_body: io::Empty,
 }
 
 struct NotifyOnDrop<R> {
@@ -115,6 +131,9 @@ impl<R> Drop for NotifyOnDrop<R> {
 pub enum RequestCreationError {
     /// The client sent an `Expect` header that was not recognized by tiny-http.
     ExpectationFailed,
+
+    /// rusk: the `Content-Length` is no number, or two of them differ
+    BadContentLength,
 
     /// Error while reading data from the socket during the creation of the `Request`.
     CreationIoError(IoError),
@@ -166,14 +185,32 @@ where
         // header must be ignored (RFC2616 #4.4)
         None
     } else {
-        headers
-            .iter()
-            .find(|h: &&Header| h.field.equiv("Content-Length"))
-            .and_then(|h| FromStr::from_str(h.value.as_str()).ok())
+        // rusk: a `Content-Length` that is no number (digits only), or two
+        // that differ, is a bad request (RFC 9112 §6.3), not a request
+        // without a body: the crate as published took it for one, and read
+        // the body as the next request (review of R35)
+        let mut length = None;
+        for header in headers.iter().filter(|h| h.field.equiv("Content-Length")) {
+            let value = header.value.as_str().trim();
+            let value: usize = match value.bytes().all(|b| b.is_ascii_digit()) {
+                true => value.parse().map_err(|_| RequestCreationError::BadContentLength)?,
+                false => return Err(RequestCreationError::BadContentLength),
+            };
+            if length.is_some_and(|known| known != value) {
+                return Err(RequestCreationError::BadContentLength);
+            }
+            length = Some(value);
+        }
+        length
     };
 
     // true if the client sent a `Expect: 100-continue` header
-    let expects_continue = {
+    // rusk: an HTTP/1.0 client's expectation is ignored (RFC 9110
+    // §10.1.1): it sends its body whatever comes, and a `100 Continue` is
+    // nothing it knows (review of R35: it was sent one)
+    let expects_continue = if version < HTTPVersion(1, 1) {
+        false
+    } else {
         match headers
             .iter()
             .find(|h: &&Header| h.field.equiv("Expect"))
@@ -197,10 +234,28 @@ where
         }
     };
 
+    // rusk: whether there is a body to read
+    let has_body = transfer_encoding.is_some() || content_length.is_some_and(|len| len > 0);
+
+    // rusk: a `Connection: upgrade` request's body is framed by its headers
+    // like any other: an upgrade is a proposal the server may not take up
+    // (curl proposes h2c on every request with `--http2`), and the answer
+    // to it is a usual one — after which the connection ends all the same
+    // (`ClientConnection::next`): whether the request is upgraded is not
+    // known when the next one would be read. The crate as published kept
+    // the connection's reader whole for every such request, for
+    // `upgrade()`, so that `as_reader()` read on past the body, to the
+    // timeout (a `POST` with `Connection: upgrade` was 408 with its body
+    // whole) — or for ever. The reader is kept whole for a request without
+    // a body (the handshake) only, where `as_reader()` has nothing to give
+    // anyway; `upgrade()` on a request with a body hands over a stream that
+    // reads the body and no more.
+    let upgrade_handshake = connection_upgrade && !has_body;
+
     // we wrap `source_data` around a reading whose nature depends on the transfer-encoding and
     // content-length headers
-    let reader = if connection_upgrade {
-        // if we have a `Connection: upgrade`, always keeping the whole reader
+    let reader = if upgrade_handshake {
+        // the handshake of an upgrade: keeping the whole reader
         Box::new(source_data) as Box<dyn Read + Send + 'static>
     } else if let Some(content_length) = content_length {
         if content_length == 0 {
@@ -257,6 +312,11 @@ where
         notify_when_responded: None,
         done_reading,
         last: false,
+        ordinal: 0,
+        requests_taken: None,
+        has_body,
+        upgrade_handshake,
+        no_body: io::empty(),
     })
 }
 
@@ -392,6 +452,11 @@ impl Request {
             self.must_send_continue = false;
         }
 
+        // rusk: see `new_request`
+        if self.upgrade_handshake {
+            return &mut self.no_body;
+        }
+
         self.data_reader.as_mut().unwrap()
     }
 
@@ -467,17 +532,45 @@ impl Request {
 
         let do_not_send_body = self.method == Method::Head;
 
+        // rusk: a client waiting to be told to send its body (`Expect:
+        // 100-continue`) that gets a final answer instead is not going to
+        // send it (RFC 9110 §10.1.1): the answer says that the connection
+        // ends, and nothing more is read from it — the rest of the body used
+        // to be waited for when the request went, a timeout long (for ever
+        // without one), with the client waiting for the 100 all the while.
+        let waits_to_send = self.must_send_continue && self.has_body;
+        if waits_to_send {
+            if let Some(flag) = &self.done_reading {
+                flag.store(true, Ordering::Release);
+            }
+        }
+
         // rusk: an answer after which the connection ends says so
         // (RFC 9112 §9.6): the client asked for that, or the connection
         // was cut off, or its reading had to end, while the request was
         // handled — a body that stopped coming (the 408 of whoever
-        // answers), or went wrong
-        let ends = self.last
-            || self
-                .done_reading
-                .as_ref()
-                .is_some_and(|flag| flag.load(Ordering::Acquire));
-        let response = if ends { response.closing() } else { response };
+        // answers), or went wrong — and no request has been taken from the
+        // connection since: one taken ahead (pipelining) is answered after
+        // this one, and the last of them says so (review of R34: an answer
+        // said close for a later request's body). An answer on an HTTP/1.0
+        // connection that goes on says so too (`Connection: keep-alive`):
+        // such a client takes the answer for the last without it.
+        let cut_off = self
+            .done_reading
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::Acquire));
+        let last_taken = self
+            .requests_taken
+            .as_ref()
+            .is_none_or(|taken| taken.load(Ordering::Acquire) == self.ordinal);
+        let ends = self.last || waits_to_send || (cut_off && last_taken);
+        let response = if ends {
+            response.closing()
+        } else if self.http_version == HTTPVersion(1, 0) {
+            response.keeping_alive()
+        } else {
+            response
+        };
 
         Self::ignore_client_closing_errors(response.raw_print(
             writer.by_ref(),
@@ -505,10 +598,19 @@ impl Request {
         self
     }
 
-    /// rusk: no request follows this one on its connection (the client
-    /// said `Connection: close`, or is HTTP/1.0 without keep-alive): its
-    /// answer says so.
-    pub(crate) fn last_on_connection(mut self, last: bool) -> Self {
+    /// rusk: the request's place on its connection — the `ordinal`th taken
+    /// from it, `taken` counting them — and whether no request follows it
+    /// (the client said `Connection: close` or `Connection: upgrade`, or is
+    /// HTTP/1.0 without keep-alive): its answer says what becomes of the
+    /// connection (see `respond_impl`).
+    pub(crate) fn on_connection(
+        mut self,
+        ordinal: usize,
+        taken: Arc<AtomicUsize>,
+        last: bool,
+    ) -> Self {
+        self.ordinal = ordinal;
+        self.requests_taken = Some(taken);
         self.last = last;
         self
     }

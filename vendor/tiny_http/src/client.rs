@@ -6,7 +6,7 @@ use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
 
 use std::net::SocketAddr;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -49,6 +49,10 @@ pub struct ClientConnection {
     // rusk: set once a read or write of the connection waited its time
     // out: no further request is taken from it (see `RefinedTcpStream`)
     done_reading: Arc<AtomicBool>,
+
+    // rusk: the requests taken from the connection so far (see
+    // `Request::respond`)
+    requests_taken: Arc<AtomicUsize>,
 }
 
 /// Error that can happen when reading a request.
@@ -58,6 +62,8 @@ enum ReadError {
     WrongHeader(HTTPVersion),
     /// the client sent an unrecognized `Expect` header
     ExpectationFailed(HTTPVersion),
+    /// rusk: the request is in an HTTP version the server does not speak
+    VersionNotSupported,
     ReadIoError(IoError),
     /// rusk: nothing came for as long as the connection may stay idle
     Idle,
@@ -92,6 +98,7 @@ impl ClientConnection {
             head_timeout,
             body_pace: head_timeout.and_then(|timeout| min_rate.map(|rate| Pace::new(timeout, rate))),
             done_reading,
+            requests_taken: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -202,6 +209,13 @@ impl ClientConnection {
         if self.done_reading.load(Ordering::Acquire) {
             return Err(cut_off());
         }
+        // rusk: a version the server does not speak is answered here, like
+        // a head that makes no sense, before a request is built of it (see
+        // `next`): built, and dropped unanswered, it answered 500 before
+        // the 505 came, and took the rest of its body first
+        if version > HTTPVersion(1, 1) {
+            return Err(ReadError::VersionNotSupported);
+        }
 
         // building the writer for the request
         let writer = self.sink.next().unwrap();
@@ -232,6 +246,10 @@ impl ClientConnection {
                 request::RequestCreationError::CreationIoError(e) => ReadError::ReadIoError(e),
                 request::RequestCreationError::ExpectationFailed => {
                     ReadError::ExpectationFailed(version)
+                }
+                // rusk: a bad request, like a header that makes no sense
+                request::RequestCreationError::BadContentLength => {
+                    ReadError::WrongHeader(version)
                 }
             }
         })?;
@@ -270,7 +288,9 @@ impl ClientConnection {
                 headers.push(match FromStr::from_str(line.as_str().trim()) {
                     // TODO: remove this conversion
                     Ok(h) => h,
-                    _ => return Err(ReadError::WrongHeader(version)),
+                    // rusk: answered in a version the server speaks (it
+                    // used to be `HTTP/2.0 400`; review of R35)
+                    _ => return Err(ReadError::WrongHeader(version.min(HTTPVersion(1, 1)))),
                 });
             }
 
@@ -343,23 +363,32 @@ impl Iterator for ClientConnection {
                     return None; // TODO: should be recoverable, but needs handling in case of body
                 }
 
+                // rusk: 505, once, and the connection ends with it (it
+                // used to go on, reading whatever the client speaks as
+                // requests); written out at once
+                Err(ReadError::VersionNotSupported) => {
+                    let mut writer = self.sink.next().unwrap();
+                    let response = Response::from_string(
+                        "This server only supports HTTP versions 1.0 and 1.1".to_owned(),
+                    )
+                    .with_status_code(StatusCode(505))
+                    .closing();
+                    response
+                        .raw_print(writer.by_ref(), HTTPVersion(1, 1), &[], false, None)
+                        .ok();
+                    writer.flush().ok();
+                    return None;
+                }
+
                 Err(ReadError::ReadIoError(_)) => return None,
 
                 Ok(rq) => rq,
             };
 
-            // checking HTTP version
-            if *rq.http_version() > (1, 1) {
-                let writer = self.sink.next().unwrap();
-                let response = Response::from_string(
-                    "This server only supports HTTP versions 1.0 and 1.1".to_owned(),
-                )
-                .with_status_code(StatusCode(505));
-                response
-                    .raw_print(writer, HTTPVersion(1, 1), &[], false, None)
-                    .ok();
-                continue;
-            }
+            // rusk: one more request taken from the connection (see
+            // `Request::respond`); the HTTP version has been checked by
+            // `read`
+            let ordinal = self.requests_taken.fetch_add(1, Ordering::AcqRel) + 1;
 
             // updating the status of the connection
             let connection_header = rq
@@ -383,8 +412,12 @@ impl Iterator for ClientConnection {
             };
 
             // returning the request
-            // rusk: the last one on the connection says so in its answer
-            return Some(rq.last_on_connection(self.no_more_requests));
+            // rusk: its answer says what becomes of the connection
+            return Some(rq.on_connection(
+                ordinal,
+                self.requests_taken.clone(),
+                self.no_more_requests,
+            ));
         }
     }
 }

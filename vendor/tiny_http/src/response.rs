@@ -308,6 +308,16 @@ where
         self
     }
 
+    /// rusk: the same response, saying that the connection goes on
+    /// (`Connection: keep-alive`): what an HTTP/1.0 client has to hear to
+    /// keep it (RFC 9112 §9.3), and `add_header` does not let a server say
+    /// (see `Request::respond`).
+    pub(crate) fn keeping_alive(mut self) -> Response<R> {
+        self.headers
+            .push(Header::from_bytes(&b"Connection"[..], &b"keep-alive"[..]).unwrap());
+        self
+    }
+
     /// Returns the same request, but with a different status code.
     #[inline]
     pub fn with_status_code<S>(mut self, code: S) -> Response<R>
@@ -413,7 +423,10 @@ where
                 .headers
                 .push(Header::from_bytes(&b"Transfer-Encoding"[..], &b"chunked"[..]).unwrap()),
 
-            Some(TransferEncoding::Identity) => {
+            // rusk: not on a 1xx or a 204, which have no body (RFC 9112
+            // §6.2; the `100 Continue` used to say `Content-Length: 0`,
+            // review of R35)
+            Some(TransferEncoding::Identity) if !matches!(self.status_code.0, 100..=199 | 204) => {
                 assert!(data_length.is_some());
                 let data_length = data_length.unwrap();
 

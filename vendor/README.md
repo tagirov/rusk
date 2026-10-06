@@ -12,7 +12,7 @@ checksum in `Cargo.lock` before the patch): `src/`, the licenses and the
 README, with the manifest stripped of its dev-dependencies; the examples,
 benches and integration tests are left out. MIT OR Apache-2.0.
 
-Five changes, each marked `rusk:` in the code:
+Six changes, each marked `rusk:` in the code:
 
 - `src/util/equal_reader.rs`: `EqualReader::drop` throws the bytes a request
   left unread away through an 8 KiB buffer, and stops where the connection
@@ -97,21 +97,55 @@ Five changes, each marked `rusk:` in the code:
   head read ahead into the buffer was taken then, nonsense answered 400 —
   and once more after the head, for a write that timed out meanwhile). Six
   tests cover it in `util/chunked_body.rs`, four in `lib.rs`.
-- `src/response.rs` (with `request.rs` and `client.rs`): an answer after
-  which the server closes the connection says so, `Connection: close`
-  (RFC 9112 §9.6), which `Response::add_header` does not let a server say
-  (it drops a `Connection` header): the `400` to a request line or a header
-  that makes no sense, the `408` to a head that stalls, the `417`, the
-  answer to a request that said it was the last (`Connection: close`,
-  HTTP/1.0 without keep-alive), and whatever answers a request after its
-  connection's reading ended — the `408` rusk gives a body that stops, the
-  `400` to a chunked body it read and found in the wrong format (an answer
-  sent before the body is thrown away cannot know what becomes of it).
-  Answers on a connection that goes on are as they were. One test covers
-  it in `lib.rs`; two there check it on the way.
+- `src/response.rs` (with `request.rs` and `client.rs`): an answer says
+  what becomes of the connection, which `Response::add_header` does not let
+  a server say (it drops a `Connection` header). One after which the server
+  closes the connection says so, `Connection: close` (RFC 9112 §9.6): the
+  `400` to a request line or a header that makes no sense, the `408` to a
+  head that stalls, the `417`, the `505` to an HTTP version the server does
+  not speak (answered once, before a request is built of it, and the
+  connection ends with it: upstream built the request, whose drop answered
+  `500` first, and read on), the answer to a request that said it was the
+  last (`Connection: close`, `Connection: upgrade`, HTTP/1.0 without
+  keep-alive), the answer to a client waiting to be told to send its body
+  (`Expect: 100-continue`) that is a final one instead — the client is not
+  going to send the body, and nothing more is read from the connection,
+  where upstream waited the body out when the request went, a timeout
+  long, the client waiting for the `100` meanwhile (RFC 9110 §10.1.1) —
+  and the answer to the last request taken from a connection whose reading
+  ended meanwhile (the `408` rusk gives a body that stops, the `400` to a
+  chunked body it read and found in the wrong format; an answer sent before
+  the body is thrown away cannot know what becomes of it). Without a limit
+  on connections, where requests are taken as they come, the answer to an
+  earlier one says nothing of a later one's body: the last request taken
+  is answered after it, and says so (review of R34). An answer on an
+  HTTP/1.0 connection that goes on says that, `Connection: keep-alive`
+  (RFC 9112 §9.3): such a client takes an answer without it for the last.
+  Answers on an HTTP/1.1 connection that goes on are as they were. Found
+  on the way (review of R35): a `Content-Length` that is no number, or two
+  that differ, is a `400` and the end of the connection (RFC 9112 §6.3),
+  where upstream took it for no body and read the body as the next
+  request; a head that makes no sense in a version the server does not
+  speak is answered in one it does (`HTTP/1.1 400`, not `HTTP/2.0 400`);
+  an HTTP/1.0 client's `Expect` is ignored (RFC 9110 §10.1.1; upstream
+  sent it a `100 Continue`); a `1xx` or `204` answer says no
+  `Content-Length` (RFC 9112 §6.2; the `100 Continue` said `0`). Seven
+  tests cover it in `lib.rs`; two there check it on the way.
+- `src/request.rs`: a `Connection: upgrade` request's body is read within
+  its headers (`Content-Length`, `Transfer-Encoding`), like any other.
+  An upgrade is a proposal the server may not take up — curl proposes h2c
+  on every request with `--http2` — and the answer to it is a usual one;
+  upstream kept the connection's reader whole for every such request, for
+  `Request::upgrade`, so that `as_reader` read on past the body, to the
+  timeout (a `POST` with its body whole was answered `408` a timeout
+  later) or for ever. The reader is kept whole for a request without a
+  body (the handshake) only, where `as_reader` gives nothing and
+  `upgrade` hands the connection over as before; `upgrade` on a request
+  with a body hands over a stream that reads the body and no more. One
+  test covers it in `lib.rs`.
 
 To update: unpack the new crate, apply the changes (`git diff` of the vendored
 tree against the crate shows exactly what they are), run its unit tests with
 `cargo test -p tiny_http --lib` (the doc-tests need dev-dependencies that are
 not vendored), then rusk's. Drop the directory and the `[patch]` entry once
-upstream has all five.
+upstream has all six.

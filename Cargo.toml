@@ -1,6 +1,6 @@
 [package]
 name = "rusk"
-version = "0.7.3"
+version = "1.0.0-beta.1"
 authors = ["github.com/tagirov/rusk/graphs/contributors"]
 edition = "2024"
 # let-chains (`if let … && let …`) are stable from 1.88, `File::try_lock`

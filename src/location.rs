@@ -324,7 +324,7 @@ fn expand_home(path: &Path) -> Result<PathBuf> {
     let Ok(rest) = path.strip_prefix("~") else {
         return Ok(path.to_path_buf());
     };
-    let home = dirs::home_dir().context("`~` stands for the home directory, which is unknown")?;
+    let home = std::env::home_dir().context("`~` stands for the home directory, which is unknown")?;
     Ok(if rest.as_os_str().is_empty() {
         home
     } else {
@@ -549,7 +549,7 @@ mod tests {
 
     #[test]
     fn local_tilde_is_the_home_directory() {
-        let Some(home) = dirs::home_dir() else { return };
+        let Some(home) = std::env::home_dir() else { return };
         assert_eq!(
             local_path("~/tilde/tasks.json"),
             home.join("tilde/tasks.json")

@@ -311,7 +311,7 @@ fn unfit_for_a_repository(dir: &Path) -> Option<String> {
     let same = |other: Option<PathBuf>| other.and_then(|p| p.canonicalize().ok()).as_deref() == Some(dir);
     if dir.parent().is_none() {
         Some("the root of the filesystem".to_string())
-    } else if same(dirs::home_dir()) {
+    } else if same(std::env::home_dir()) {
         Some("your home directory".to_string())
     } else if same(Some(std::env::temp_dir())) {
         Some("the temp directory".to_string())

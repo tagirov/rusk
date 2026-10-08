@@ -77,7 +77,7 @@ impl Shell {
     }
 
     pub fn get_default_path(&self) -> Result<std::path::PathBuf, anyhow::Error> {
-        let home = dirs::home_dir()
+        let home = std::env::home_dir()
             .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
 
         let path = match self {

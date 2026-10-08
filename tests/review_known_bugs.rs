@@ -5315,6 +5315,19 @@ impl Http {
         Self(stream)
     }
 
+    /// One read of the connection, taken again after a signal (`EINTR`:
+    /// the harness gets a `SIGCHLD` for every server it ends, and a read
+    /// that one interrupted is no answer of the server).
+    fn read_some(&mut self, chunk: &mut [u8]) -> std::io::Result<usize> {
+        use std::io::Read;
+        loop {
+            match self.0.read(chunk) {
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                other => return other,
+            }
+        }
+    }
+
     /// Sends `head` (request line and headers, without the blank line) and
     /// `body`, and returns the response: headers, then the body unless the
     /// request was a HEAD.
@@ -5332,7 +5345,7 @@ impl Http {
         let mut buf = Vec::new();
         let mut chunk = [0u8; 8192];
         let end = loop {
-            let n = self.0.read(&mut chunk).unwrap_or_else(|e| panic!("{head}: {e}"));
+            let n = self.read_some(&mut chunk).unwrap_or_else(|e| panic!("{head}: {e}"));
             assert!(n > 0, "{head}: connection closed");
             buf.extend_from_slice(&chunk[..n]);
             if let Some(at) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
@@ -5358,13 +5371,13 @@ impl Http {
                     buf.extend_from_slice(&body);
                     break;
                 }
-                let n = self.0.read(&mut chunk).unwrap();
+                let n = self.read_some(&mut chunk).unwrap();
                 assert!(n > 0, "{head}: connection closed in a chunked body");
                 raw.extend_from_slice(&chunk[..n]);
             }
         } else {
             while buf.len() < end + length {
-                let n = self.0.read(&mut chunk).unwrap();
+                let n = self.read_some(&mut chunk).unwrap();
                 if n == 0 {
                     break;
                 }
@@ -8243,7 +8256,7 @@ fn r33_requests_down_one_connection_are_taken_one_at_a_time() {
     let mut tail: Vec<u8> = Vec::new();
     let mut chunk = vec![0u8; 1 << 16];
     while answered < 300 {
-        let n = flood.0.read(&mut chunk).expect("the flooded connection");
+        let n = flood.read_some(&mut chunk).expect("the flooded connection");
         assert!(n > 0, "the flooded connection closed after {answered} answers");
         // Every position is looked at once, with a whole status line's
         // worth after it: the last few bytes wait for the next read.

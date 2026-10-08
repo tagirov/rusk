@@ -261,7 +261,7 @@ CLI stores it; a new task takes the lowest free id and goes in front of the
 first task with a higher one, so a reused id is not listed at the end.
 
 `PUT` stores the list exactly as sent, so it has to follow the rules every
-list read from a database is held to (README, "Notes on the text formats"):
+list read from a database is held to ([STORAGE.md](STORAGE.md#what-every-format-is-held-to)):
 each task has a text and an id of its own (nonzero), and `after` lists only
 other tasks of the list, each once. A list that breaks one is refused with
 `400` and says what is wrong (`not a valid task list: task 3 has no text`).

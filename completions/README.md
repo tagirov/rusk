@@ -22,6 +22,20 @@ rusk completions install fish nu powershell
 rusk completions show zsh > ~/.zsh/completions/_rusk
 ```
 
+## What is completed
+
+- Commands: `add`, `edit`, `mark`, `del`, `completions`, etc. and their aliases
+- Task text: `rusk edit <id><tab>` appends the task text for that ID, quoted so that running the line stores exactly that text: when it contains shell-special characters (``| ; & > < ( ) [ ] { } $ " ' \` * ? ~ # @ ! % ^ = + - / : ,``), line breaks, tabs, runs of spaces or spaces at either end, it is wrapped in single quotes (in nu a raw string `r#'…'#` if the text has `'`); a text that starts with `-` is put after `--`, so it is not read as options. In fish the id completes first and the next `<tab>` inserts the text, escaped by fish itself (see [Fish](#fish))
+- Flags: `--date` / `--after` (add, edit after an id), `--done`, etc.
+
+## Windows
+
+- Git Bash: Works with `bash` completions (uses Unix-style paths)
+- WSL: Works with `bash`, `zsh`, `fish`, and `nu` completions
+- Nu Shell: Works natively on Windows (uses `%APPDATA%\nushell\completions\`)
+- PowerShell: Works natively on Windows (uses `Documents\PowerShell\rusk-completions.ps1`)
+- CMD: Basic commands work (add, list, mark, del, edit with text). Due dates: interactive editor (`rusk edit` without argv text) on the first line, or `rusk edit <id> -d <date>`. Interactive editing requires Windows 10+ and may have limited functionality. Tab completion is not supported. Colors work on Windows 10+ (build 1511 and later)
+
 ## Manual Installation
 
 If you prefer manual installation or need to customize the setup:

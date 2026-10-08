@@ -222,7 +222,7 @@ exists so that the next edit of that task can offer the text back.
 
 - **Where.** One file per task, next to the database:
   `editor-task-3.draft`, `editor-new-task.draft`. `$RUSK_DB` falls back to
-  `./.rusk/` when not set (see the [main README](README.md#database-location)).
+  `./.rusk/` when not set (see [STORAGE.md](STORAGE.md#database-location)).
   For an http(s) or ssh database there is no local directory to use, so the
   drafts go to `$XDG_RUNTIME_DIR/rusk`, or `<temp>/rusk-<uid>` when there is
   no runtime directory — created `0700`, never a `/tmp/rusk` shared with
@@ -293,7 +293,7 @@ the deadline. A **recognized** token is **highlighted in color** on that line
 date is not colored. The following text are the body. A date alone on the
 first line is fine: the text starts on the next one. Empty lines before and
 after the text are not stored. A task due in a year outside 1000–9999 (a
-file an older rusk wrote; see README → Database Formats) opens with that date as
+file an older rusk wrote; see [STORAGE.md](STORAGE.md#what-every-format-is-held-to)) opens with that date as
 its first token, and keeps it when you leave the token as it is.
 
 A `_` word right after the date — or right after the `_` that is no date —

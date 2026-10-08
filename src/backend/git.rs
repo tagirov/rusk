@@ -240,7 +240,7 @@ fn git_dir_above(dir: &Path, ceilings: &[PathBuf], across_filesystems: bool) -> 
     let start = device(dir);
     let is_ceiling = |path: &Path| {
         ceilings.iter().any(|ceiling| {
-            ceiling == path || ceiling.canonicalize().is_ok_and(|c| c == path)
+            ceiling == path || ceiling.canonicalize().map(plain).is_ok_and(|c| c == path)
         })
     };
     for current in dir.ancestors() {
@@ -308,7 +308,11 @@ fn repository_writable_by_others(repo: &Repository) -> Option<String> {
 /// would take in everything under it (REVIEW №98), or would be a repository
 /// other users can program (the temp directory, a shared one).
 fn unfit_for_a_repository(dir: &Path) -> Option<String> {
-    let same = |other: Option<PathBuf>| other.and_then(|p| p.canonicalize().ok()).as_deref() == Some(dir);
+    // `dir` is canonical and plain (no `\\?\` on Windows): the other side
+    // has to be the same to compare equal.
+    let same = |other: Option<PathBuf>| {
+        other.and_then(|p| p.canonicalize().ok()).map(plain).as_deref() == Some(dir)
+    };
     if dir.parent().is_none() {
         Some("the root of the filesystem".to_string())
     } else if same(std::env::home_dir()) {

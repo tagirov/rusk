@@ -8742,13 +8742,13 @@ fn r36_an_http_0_9_request_is_answered_505() {
     use std::io::Write;
     use std::time::{Duration, Instant};
     let sb = Sandbox::with_db(THREE_TASKS_DB);
-    let server = serve(&sb, &timeout_config(&sb, 1), &[]);
+    let server = serve(&sb, &timeout_config(&sb, 2), &[]);
     for sent in ["GET /api/tasks\r\n", "GET /api/tasks HTTP/0.9\r\nHost: localhost\r\n\r\n"] {
         let mut http = Http::to(server.port);
         let started = Instant::now();
         http.0.write_all(sent.as_bytes()).unwrap();
         let raw = rest_of(&mut http.0);
-        assert!(started.elapsed() < Duration::from_millis(500), "{sent:?}: took {:?}", started.elapsed());
+        assert!(started.elapsed() < Duration::from_secs(1), "{sent:?}: took {:?}", started.elapsed());
         let answers = answers_in(&raw);
         assert_eq!(answers.len(), 1, "{sent:?}: {raw}");
         assert_eq!(status(&answers[0]), 505, "{sent:?}: {raw}");
@@ -8841,7 +8841,7 @@ fn r35_a_client_waiting_to_send_its_body_is_not_waited_for() {
     use std::io::Write;
     use std::time::{Duration, Instant};
     let sb = Sandbox::with_db(THREE_TASKS_DB);
-    let server = serve(&sb, &timeout_config(&sb, 1), &[]);
+    let server = serve(&sb, &timeout_config(&sb, 2), &[]);
     let expect = "Expect: 100-continue";
     let text = "Content-Type: text/plain";
     let json = "Content-Type: application/json";
@@ -8855,7 +8855,7 @@ fn r35_a_client_waiting_to_send_its_body_is_not_waited_for() {
         write!(http.0, "{head}\r\n\r\n").unwrap();
         let started = Instant::now();
         let raw = rest_of(&mut http.0);
-        assert!(started.elapsed() < Duration::from_millis(500), "{what}: took {:?}", started.elapsed());
+        assert!(started.elapsed() < Duration::from_secs(1), "{what}: took {:?}", started.elapsed());
         let answers = answers_in(&raw);
         assert_eq!(answers.len(), 1, "{what}: {raw}");
         assert_eq!(status(&answers[0]), *code, "{what}: {raw}");

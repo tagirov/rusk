@@ -6254,7 +6254,10 @@ fn r22_the_home_directory_is_not_made_a_repository() {
     let out = sb
         .cmd()
         .env("RUSK_CONFIG", &config)
+        // The home directory as std reads it: `HOME` on unix, `USERPROFILE`
+        // on Windows.
         .env("HOME", &home)
+        .env("USERPROFILE", &home)
         .args(["add", "first"])
         .output()
         .unwrap();

@@ -22,6 +22,7 @@
   - [Sync](#sync)
   - [Data Safety & Backup](#data-safety--backup)
     - [Automatic Backups](#automatic-backups)
+    - [Concurrent Writers](#concurrent-writers)
     - [Manual Restore](#manual-restore)
   - [Aliases](#aliases)
 - [Configuration](#configuration)
@@ -36,7 +37,9 @@
       - [PowerShell](completions/README.md#powershell)
   - [Database Location](#database-location)
   - [Database Formats](#database-formats)
+  - [Remote and git-backed Databases](#remote-and-git-backed-databases)
   - [Disabling Colors](#disabling-colors)
+  - [Output in Scripts](#output-in-scripts)
 
 # Install
 #### Linux/MacOS/Windows
@@ -52,6 +55,12 @@ Make sure that these paths are added to your $PATH environment variable to use `
 #### Arch Linux (AUR)
 ```bash
 yay -S rusk
+```
+
+#### Nix (flake)
+```bash
+nix run github:tagirov/rusk             # try it without installing
+nix profile install github:tagirov/rusk # bash, zsh and fish completions come with it
 ```
 
 #### Manually
@@ -255,6 +264,14 @@ rusk serve                  # http://127.0.0.1:7272
 rusk serve --host 0.0.0.0   # requires web_token in the config
 ```
 
+The server stays up whatever clients do: a connection may wait a minute
+(`web_timeout` in the config, seconds), a request body or an answer has to
+keep moving, and up to 256 connections are open at once. A connection that
+waits longer is closed — with `408 Request Timeout` once part of a request
+had come. `web_timeout = 0` turns these limits off. They keep the server
+up, not fair: exposed beyond loopback or a VPN, put a reverse proxy in front
+(see [WEB.md](WEB.md#rusk-serve))
+
 ## Sync
 
 Synchronize the database with your VPS over SSH, or with a running
@@ -381,6 +398,7 @@ priority_marker = accent
 
 # web & sync
 # web_token = your-secret
+# web_timeout = 60
 # sync_remote = user@vps:/srv/tasks/tasks.json
 ```
 

@@ -114,9 +114,9 @@ fn root_after_long_help() -> String {
          Pass `_` to clear where `-d` is supported. See `rusk add --help` for date syntax.\n\n"
     });
     help.push_str(
-        "Configuration file (theme colors, defaults; see CONFIG.md): auto-created at \
-         ~/.config/rusk/cfg (Linux) or the platform config dir. Environment variables win over \
-         config values.\n\nEnvironment:\n",
+        "Configuration file (theme colors, defaults, web and sync settings; see CONFIG.md): \
+         auto-created at ~/.config/rusk/cfg (Linux) or the platform config dir. Environment \
+         variables win over config values.\n\nEnvironment:\n",
     );
     help.push_str(&env_entry(
         "RUSK_DB",
@@ -136,7 +136,9 @@ fn root_after_long_help() -> String {
     ));
     help.push_str(&env_entry(
         "RUSK_NO_COLOR",
-        "Disable ANSI colors when set to any non-empty value (NO_COLOR is also respected).",
+        "Disable ANSI colors when set to any non-empty value; NO_COLOR and `no_color = true` in \
+         the config do the same, and nothing turns them back on then. Otherwise CLICOLOR_FORCE \
+         turns colors on (into a pipe as well), CLICOLOR=0 or TERM=dumb off.",
     ));
     if cfg!(feature = "sync") {
         help.push_str(&env_entry(
@@ -316,7 +318,9 @@ pub enum Command {
     #[command(
         visible_alias = "m",
         about = "Mark tasks as done/undone, or toggle priority with -p",
-        long_about = "Toggle task completion by ID, or priority with -p (orange `p` instead of `•`).\n\n\
+        long_about = "Toggle task completion by ID, or priority with -p (a `p` instead of `•`, in the \
+`priority_marker` color of the config: orange by default). It says what it changed: done, undone, \
+priority or priority removed.\n\n\
 Examples:\n  \
 rusk mark 3\n  \
 rusk mark 1,2,3\n  \
@@ -424,7 +428,18 @@ rusk s --id protein"
     },
     #[command(
         visible_alias = "r",
-        about = "Restore task database from the automatic backup (<database>.backup)"
+        about = "Restore task database from the automatic backup (<database>.backup)",
+        long_about = "Restore the task database from the automatic backup (<database>.backup) that \
+every save keeps beside it. Nothing is lost on the way: the backup is checked first (an empty \
+file, or one that is not a task list, is refused and the database is left as it is); the current \
+database is copied byte for byte to <database>.before_restore — or .before_restore.1, .2, … so \
+that an earlier copy is never overwritten; only then is the backup put in place of the database, \
+atomically (with git_backend as a commit of its own; SQLite inside a transaction). The backup \
+itself stays. It says when the backup was saved, and warns when it is much older than the \
+database. Local databases only: for an ssh or http(s) database it says where the backup is.\n\n\
+Examples:\n  \
+rusk restore\n  \
+rusk r"
     )]
     Restore,
     #[cfg(feature = "web")]
@@ -432,7 +447,8 @@ rusk s --id protein"
         visible_alias = "g",
         about = "Generate a read-only HTML page with all tasks",
         long_about = "Generate a self-contained read-only HTML page with all tasks \
-(mobile-first, themed from the config).\n\n\
+(mobile-first, themed from the config). The page is written atomically, so a web server never \
+sees it half done, and never over the database or a file rusk keeps beside it (.backup, …).\n\n\
 Examples:\n  \
 rusk gen\n  \
 rusk gen -o /var/www/tasks/index.html\n  \

@@ -5341,7 +5341,6 @@ impl Http {
     /// The next response on the connection: headers, then the body unless
     /// the request (`head`) was a HEAD.
     fn response(&mut self, head: &str) -> String {
-        use std::io::Read;
         let mut buf = Vec::new();
         let mut chunk = [0u8; 8192];
         let end = loop {
@@ -8223,7 +8222,7 @@ fn r33_a_connection_that_stalls_is_cut_off() {
 #[test]
 #[cfg(feature = "web")]
 fn r33_requests_down_one_connection_are_taken_one_at_a_time() {
-    use std::io::{Read, Write};
+    use std::io::Write;
     use std::time::Duration;
     let tasks: Vec<String> = (1..=1000)
         .map(|id| {
@@ -8655,7 +8654,10 @@ fn r35_an_upgrade_requests_body_is_read_within_its_headers() {
     use std::io::Write;
     use std::time::{Duration, Instant};
     let sb = Sandbox::with_db(THREE_TASKS_DB);
-    let server = serve(&sb, &timeout_config(&sb, 1), &[]);
+    // Answered now, or a timeout later: a whole second apart, so that a
+    // loaded CI runner (the first request took 500 ms once) is not mistaken
+    // for the timeout.
+    let server = serve(&sb, &timeout_config(&sb, 2), &[]);
     let h2c = "Connection: Upgrade, HTTP2-Settings\r\nUpgrade: h2c\r\nHTTP2-Settings: AAMAAABkAAQCAAAAAAIAAAAA";
     let json = "Content-Type: application/json";
     let bodies = [
@@ -8668,7 +8670,7 @@ fn r35_an_upgrade_requests_body_is_read_within_its_headers() {
         write!(http.0, "{head}\r\n{sent}").unwrap();
         let started = Instant::now();
         let res = http.response(&head);
-        assert!(started.elapsed() < Duration::from_millis(500), "{what}: took {:?}", started.elapsed());
+        assert!(started.elapsed() < Duration::from_secs(1), "{what}: took {:?}", started.elapsed());
         assert_eq!(status(&res), 201, "{what}: {res}");
         assert_eq!(header_in(&res, "Connection"), None, "{what}: {res}");
     }

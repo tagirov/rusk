@@ -7,6 +7,25 @@ use tempfile::TempDir;
 
 use crate::common;
 
+/// `bash` as the tests run it: on Windows the one of Git for Windows when it
+/// is there, since the `bash.exe` of System32 is the WSL launcher, which
+/// fails without a word on stderr where no distribution is installed (a CI
+/// runner).
+fn bash() -> Command {
+    #[cfg(windows)]
+    {
+        for var in ["ProgramFiles", "ProgramW6432"] {
+            if let Some(dir) = std::env::var_os(var) {
+                let git_bash = Path::new(&dir).join("Git").join("bin").join("bash.exe");
+                if git_bash.exists() {
+                    return Command::new(git_bash);
+                }
+            }
+        }
+    }
+    Command::new("bash")
+}
+
 fn with_isolated_home(cmd: &mut Command, home: &Path) {
     cmd.env("HOME", home);
     cmd.env("USERPROFILE", home);
@@ -872,15 +891,13 @@ fn test_completion_install_creates_file_with_correct_permissions() -> Result<()>
 
 #[test]
 fn test_bash_completion_syntax() -> Result<()> {
-    use std::process::Command;
-
     let script = Shell::Bash.get_script();
     let temp_dir = TempDir::new()?;
     let script_path = temp_dir.path().join("rusk.bash");
     fs::write(&script_path, script)?;
 
     // Check bash syntax: bash -n script.bash
-    let output = Command::new("bash").arg("-n").arg(&script_path).output();
+    let output = bash().arg("-n").arg(&script_path).output();
 
     // Bash might not be installed, so we skip if command not found
     match output {

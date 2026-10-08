@@ -260,14 +260,24 @@ User input → clap (args.rs) → main.rs (config::load → init) dispatch
       task text through printable::escape first, so a control character in it is shown,
       not obeyed)
 
-rusk serve: browser ←→ tiny_http (web/server.rs), each request read, checked and answered
-    on a thread of its own (a body up to 32 MiB, the sign-in form up to 4 KiB) → auth: any
-    presented token (cookie, Bearer) matches; without a token only a loopback `Host`; a
-    change from another origin by the browser's `Sec-Fetch-Site` is 403 →
-    api.rs handlers → fresh TaskManager per request, one request at a time
-    (`server::DATABASE`: an ssh database has no lock of its own) ←→ database (and the writer
-    lock against CLI commands). An unread body is thrown away by its thread (up to 1 MiB)
-    or one at a time (`server::DRAIN`): tiny_http buffers what is left of it whole. A
+rusk serve: browser ←→ tiny_http (web/server.rs; vendored under `vendor/` with rusk's
+    changes, see vendor/README.md), each request read, checked and answered on a thread of
+    its own (a body up to 32 MiB, the sign-in form up to 4 KiB) → auth: any presented token
+    (cookie, Bearer) matches; without a token only a loopback `Host`; a change from another
+    origin by the browser's `Sec-Fetch-Site` is 403 → api.rs handlers → fresh TaskManager
+    per request, one request at a time (`server::DATABASE`: an ssh database has no lock of
+    its own) ←→ database (and the writer lock against CLI commands). Limits
+    (`ServeOptions::timeout`, `web_timeout` in the config, a minute by default): a
+    connection may wait the timeout — idle, for the rest of a request's head, for a body or
+    an answer to move — and past that a body or an answer keeps `server::MIN_RATE`
+    (1 KiB/s) or the connection is closed, with 408 when part of a request had come; at
+    most `server::MAX_CONNECTIONS` (256, fewer when the file descriptors are not to be had)
+    are open at once, the next waits in the listening socket's backlog; a connection's
+    requests are read one at a time, so the threads in flight are bounded by the same
+    number. `web_timeout = 0` turns all of it off. An unread body up to
+    `server::DISCARDED_BODY_BYTES` (1 MiB) is thrown away by its request before the answer;
+    a bigger one, or a chunked one, by tiny_http after it, through a small buffer, and the
+    answer says `Connection: close` when the next request could not be found in it. A
     request the server makes to reach an http database carries `X-Rusk-Serve: <its id>`
     (`crate::SERVE_ID`): one that comes back to the server itself — its `rusk_db` names
     its own address — is answered 508 at once, before anything else

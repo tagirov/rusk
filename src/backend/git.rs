@@ -420,10 +420,17 @@ fn quiet_config_hooks(git: &mut Git) -> Result<(), String> {
 }
 
 /// What of an identity git could not commit without, from its words: the
-/// settings that stand in for it.
+/// settings that stand in for it. git makes an identity up from the user
+/// and host names where none is configured, and takes it where the host
+/// has a domain; where it has none, or `user.useConfigOnly` forbids making
+/// one up, it says so — in one of these words for the name, one of those
+/// for the email.
 fn missing_identity(stderr: &str) -> Vec<(&'static str, &'static str)> {
     let mut missing = Vec::new();
-    if stderr.contains("empty ident name") {
+    if stderr.contains("empty ident name")
+        || stderr.contains("no name was given")
+        || stderr.contains("unable to auto-detect name")
+    {
         missing.push(("user.name", "rusk"));
     }
     if stderr.contains("unable to auto-detect email address") || stderr.contains("no email was given") {
@@ -644,8 +651,70 @@ mod tests {
         assert_eq!(commits.lines().count(), 3, "{commits}");
         assert!(commits.contains("rusk: update tasks.json (1 tasks)"));
         assert!(commits.contains("rusk: restore tasks.json from backup (0 tasks)"));
-        // Git has no email here (no configuration at all): rusk's.
-        assert_eq!(git_in(dir.path(), &["log", "-1", "--format=%ae"]).trim(), "rusk@localhost");
+        // Whose the commits are depends on the host: git makes an identity
+        // up from the user and host names and takes it where the host has
+        // a domain (a CI runner); see the next test for rusk's stand-in.
+    }
+
+    /// The identity git has is used (REVIEW №21); what it has not got,
+    /// `rusk <rusk@localhost>` stands in for. `user.useConfigOnly` makes
+    /// that the same on every host: without it, a host with a domain in
+    /// its name gives git an identity to make up, a laptop does not.
+    #[test]
+    fn rusk_stands_in_for_the_identity_git_has_not_got() {
+        if !git_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        git_in(dir.path(), &["init", "-q"]);
+        git_in(dir.path(), &["config", "user.useConfigOnly", "true"]);
+        let db = dir.path().join("tasks.json");
+        std::fs::write(&db, "[]").unwrap();
+        try_commit(&db, 0, Change::Update).unwrap();
+        assert_eq!(
+            git_in(dir.path(), &["log", "-1", "--format=%an <%ae>"]).trim(),
+            "rusk <rusk@localhost>"
+        );
+
+        // A name git has got is kept; only the email is rusk's.
+        let dir = tempfile::tempdir().unwrap();
+        git_in(dir.path(), &["init", "-q"]);
+        git_in(dir.path(), &["config", "user.useConfigOnly", "true"]);
+        git_in(dir.path(), &["config", "user.name", "Alice"]);
+        let db = dir.path().join("tasks.json");
+        std::fs::write(&db, "[]").unwrap();
+        try_commit(&db, 0, Change::Update).unwrap();
+        assert_eq!(
+            git_in(dir.path(), &["log", "-1", "--format=%an <%ae>"]).trim(),
+            "Alice <rusk@localhost>"
+        );
+    }
+
+    /// git's words for each part of an identity it has not got, with and
+    /// without `user.useConfigOnly`.
+    #[test]
+    fn missing_identity_reads_every_wording_of_git() {
+        assert_eq!(
+            missing_identity("fatal: empty ident name (for <a@b>) not allowed"),
+            vec![("user.name", "rusk")]
+        );
+        assert_eq!(
+            missing_identity("fatal: no name was given and auto-detection is disabled"),
+            vec![("user.name", "rusk")]
+        );
+        assert_eq!(
+            missing_identity("fatal: unable to auto-detect name (got '')"),
+            vec![("user.name", "rusk")]
+        );
+        assert_eq!(
+            missing_identity("fatal: unable to auto-detect email address (got 'alex@host.(none)')"),
+            vec![("user.email", "rusk@localhost")]
+        );
+        assert_eq!(
+            missing_identity("fatal: no email was given and auto-detection is disabled"),
+            vec![("user.email", "rusk@localhost")]
+        );
+        assert!(missing_identity("fatal: not a git repository").is_empty());
     }
 
     #[test]
@@ -811,18 +880,19 @@ mod tests {
     }
 
     /// Review of R22: a glob in the name of the database took in files
-    /// next to it.
+    /// next to it. Brackets, since Windows allows no `*` in a file name:
+    /// `tasks[1].json` as a pattern is `tasks1.json`.
     #[test]
     fn the_name_is_no_pattern() {
         if !git_available() {
             return;
         }
         let dir = alices_repository();
-        std::fs::write(dir.path().join("tasks-private.json"), "secret").unwrap();
-        let db = dir.path().join("tasks*.json");
+        std::fs::write(dir.path().join("tasks1.json"), "secret").unwrap();
+        let db = dir.path().join("tasks[1].json");
         std::fs::write(&db, "[]").unwrap();
         try_commit(&db, 0, Change::Update).unwrap();
-        assert_eq!(git_in(dir.path(), &["ls-files"]).trim(), "tasks*.json");
+        assert_eq!(git_in(dir.path(), &["ls-files"]).trim(), "tasks[1].json");
     }
 
     /// Review of R22 (C7): a database inside the git directory is no file

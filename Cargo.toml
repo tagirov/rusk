@@ -8,6 +8,8 @@ edition = "2024"
 # APIs the code uses against it.
 rust-version = "1.89"
 description = "Minimal cross-platform terminal task manager"
+license = "GPL-3.0-only"
+repository = "https://github.com/tagirov/rusk"
 
 [lib]
 name = "rusk"

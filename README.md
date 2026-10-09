@@ -473,7 +473,7 @@ turns them off as well, and so does `TERM=dumb` unless `CLICOLOR_FORCE` is set.
 
 ## Documentation
 
-| | |
+| File | Covers |
 |---|---|
 | [CONFIG.md](CONFIG.md) | the configuration file: settings, theme, variables |
 | [EDITOR.md](EDITOR.md) | the interactive editor: keys, drafts, the date header |

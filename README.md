@@ -53,7 +53,7 @@
 
 ### Cargo (Linux, macOS, Windows)
 
-```bash
+```sh
 cargo install --git https://github.com/tagirov/rusk
 ```
 
@@ -63,39 +63,39 @@ The binary lands in `$HOME/.cargo/bin/rusk` (Windows:
 
 ### Arch Linux (AUR)
 
-```bash
+```sh
 yay -S rusk
 ```
 
 ### Nix (flake)
 
-```bash
+```sh
 nix run github:tagirov/rusk             # try it without installing
 nix profile install github:tagirov/rusk # bash, zsh and fish completions come with it
 ```
 
 ### From source
 
-```bash
+```sh
 git clone https://github.com/tagirov/rusk && cd rusk
 cargo build --release
 ```
 
 Linux/macOS:
 
-```bash
+```sh
 sudo install -m 755 ./target/release/rusk /usr/local/bin
 ```
 
 Windows:
 
-```bash
+```sh
 copy .\target\release\rusk.exe "%USERPROFILE%\AppData\Local\Microsoft\WindowsApps\"
 ```
 
 ## Quick start
 
-```bash
+```sh
 rusk add Buy groceries                  # add a task
 rusk add Finish the report -d 31-12-25  # with a due date
 rusk                                    # list the tasks (same as `rusk list`)
@@ -124,7 +124,7 @@ A relative offset adds the months first, then the days, so from the 31st a
 shorter month ends the date at its last day (`31-01 + 1m = 28-02`). Years run
 from 1000 to 9999.
 
-```bash
+```sh
 rusk add Tax return -d 30-apr-26
 rusk add Follow up -d 2w
 rusk edit 1 -d +2w
@@ -136,7 +136,7 @@ of the first line.
 
 ### Listing and search
 
-```bash
+```sh
 rusk                     # or `rusk list`
 rusk list --compact      # one line per task; `…` marks a task that goes on
 rusk list --no-compact   # full view for one run, even with `compact = true` in the config
@@ -156,7 +156,7 @@ one), but not accents (`cafe` does not find `café`).
 
 ### Marking
 
-```bash
+```sh
 rusk mark 1              # done; run it again to undo
 rusk mark 1 --priority   # priority on; run it again to remove it
 ```
@@ -166,7 +166,7 @@ Priority survives done/undone toggles.
 
 ### Editing
 
-```bash
+```sh
 rusk edit 1 Complete the project documentation  # new text in one shot
 rusk edit 1 -d 1-1-25                            # only the date
 rusk edit 1 -- -x means exclude                  # text that starts with a dash
@@ -179,7 +179,7 @@ with a dash is an option, and `-h` prints the help. Without new text,
 
 ### Dependencies and keywords
 
-```bash
+```sh
 rusk add deploy --after 19,22   # shown as `deploy (19,22)` in the list
 rusk edit 1 --after 19,22       # change the list (a set: the order does not matter)
 rusk edit 1 --after _           # clear it
@@ -193,14 +193,14 @@ A task text that starts with `TEMP`, `INFO`, `FIXME` or `WIP` gets that word
 highlighted in the list. The set is configurable (`keywords` in the config; an
 empty value disables it), and so is the color (the `keyword` theme key).
 
-```bash
+```sh
 rusk add TEMP debug flag for the release
 rusk add INFO deploy notes are in the wiki
 ```
 
 ### Deleting
 
-```bash
+```sh
 rusk del 1          # asks for confirmation first
 rusk del --done     # all completed tasks
 rusk del 1 --yes    # no question asked: for scripts and pipes
@@ -217,7 +217,7 @@ guessing: `--yes` is how to delete there.
 `mark`, `edit` and `del` take one comma-separated list of ids: `1,2,3`
 (`1, 2, 3` is read the same way).
 
-```bash
+```sh
 rusk mark 1,2,3
 rusk edit 1,2,3 Update status to completed
 rusk del 1,2,3
@@ -236,7 +236,7 @@ The interactive multi-line editor supports selection, the system clipboard,
 undo/redo, word navigation, the mouse, crash-safe autosave and a colored date
 header on the first line. The full reference is [EDITOR.md](EDITOR.md).
 
-```bash
+```sh
 rusk add            # create a task in the editor
 rusk add -d 2w      # with the first line pre-filled
 rusk edit 1         # edit the text and the due date on the first line
@@ -275,7 +275,7 @@ and built from a single embedded template: there is no separate frontend to
 install. The full guide (authentication, deployment behind Caddy or nginx,
 the API, sync) is [WEB.md](WEB.md).
 
-```bash
+```sh
 rusk gen -o index.html      # a self-contained read-only page with all tasks
 rusk serve                  # the interactive UI at http://127.0.0.1:7272: full task editing from a phone
 rusk serve --host 0.0.0.0   # requires web_token in the config
@@ -293,7 +293,7 @@ fair: exposed beyond loopback or a VPN, put a reverse proxy in front (see
 
 Sync works over SSH, or over HTTP(S) with a running `rusk serve`:
 
-```bash
+```sh
 # in the config: sync_remote = user@vps:/srv/tasks/tasks.json
 rusk sync              # fast-forward in whichever direction changed
 rusk sync push         # upload local tasks
@@ -315,7 +315,7 @@ how backups and concurrent writers work, is [STORAGE.md](STORAGE.md).
 By default rusk stores tasks in `./.rusk/tasks.json`, relative to the current
 directory, so every project has a task list of its own:
 
-```bash
+```sh
 cd ~/projects/website && rusk add Fix responsive layout
 cd ~/projects/api && rusk add Add authentication endpoint
 ```
@@ -323,7 +323,7 @@ cd ~/projects/api && rusk add Add authentication endpoint
 The `RUSK_DB` environment variable or the `rusk_db` key in the
 [configuration file](CONFIG.md) point elsewhere (`RUSK_DB` wins):
 
-```bash
+```sh
 export RUSK_DB="/path/to/your/db.json"    # a file
 export RUSK_DB="/path/to/your/project/"   # a directory: tasks.json is created inside
 ```
@@ -336,7 +336,7 @@ under the temp directory; see [STORAGE.md](STORAGE.md#debug-builds).
 The last extension of the database file name picks the format (JSON by
 default; `notes.txt.json` is JSON):
 
-```bash
+```sh
 export RUSK_DB="$HOME/tasks/tasks.csv"    # or rusk_db = ~/tasks/tasks.csv in the config
 ```
 
@@ -362,7 +362,7 @@ file is held to when it is read, are in
 
 The *shape* of `rusk_db` picks the storage backend:
 
-```bash
+```sh
 rusk_db = https://tasks.example.com     # the API of a running `rusk serve` (feature backend-http)
 db_token = s3cret                       # its web_token, if set (or RUSK_DB_TOKEN)
 
@@ -433,7 +433,7 @@ location; an empty `RUSK_CONFIG` disables the config entirely.
 
 ### Shell completion
 
-```bash
+```sh
 rusk completions install zsh      # bash, zsh, fish, nu, powershell; several at once
 rusk completions show zsh         # print the script for a manual install
 ```
@@ -449,7 +449,7 @@ per shell, what exactly is completed and the Windows notes are in
 `RUSK_NO_COLOR` set to any non-empty value disables ANSI colors in all output:
 the task list, dialogs, errors, `--help` and argument errors.
 
-```bash
+```sh
 export RUSK_NO_COLOR=1
 ```
 

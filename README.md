@@ -125,7 +125,7 @@ shorter month ends the date at its last day (`31-01 + 1m = 28-02`). Years run
 from 1000 to 9999.
 
 ```bash
-rusk add Tax return -d 30-apr-26
+rusk add Tax filing -d 30-apr-26
 rusk add Follow up -d 2w
 rusk edit 1 -d +2w
 rusk edit 1 -d _
@@ -194,8 +194,8 @@ highlighted in the list. The set is configurable (`keywords` in the config; an
 empty value disables it), and so is the color (the `keyword` theme key).
 
 ```bash
-rusk add TEMP debug flag for the release
-rusk add INFO deploy notes are in the wiki
+rusk add TEMP debug flag until the release
+rusk add INFO deploy notes live on the wiki
 ```
 
 ### Deleting

@@ -113,15 +113,15 @@ rusk --help                             # help; `rusk add --help` for one comman
 
 | Form | Examples | Notes |
 |---|---|---|
-| Absolute | `31-12-2025`, `31/12/25`, `1.3.25` | day-month-year with `-`, `/` or `.` between the parts. Leading zeros are optional; a two-digit year is 20xx |
+| Absolute | `31-12-2025`, `31/12/25`, `1.3.25` | day-month-year, with `-`, `/` or `.` between the parts. Leading zeros are optional. A two-digit year is 20xx |
 | Month name | `30-apr-26`, `1-September-2027` | English, short or long |
 | Words | `today`, `tomorrow` | |
 | Relative | `2w`, `3q`, `10d5w` | an offset from today: `d` days, `w` weeks, `m` months, `q` quarters (3 months), `y` years. Chain segments with no spaces |
 | From the task's date | `+2w` | `edit` only: an offset from the task's current due date (today if it has none) |
 | Clear | `_` | removes the date of a task being edited |
 
-A relative offset adds the months first, then the days, so from the 31st a
-shorter month ends the date at its last day (`31-01 + 1m = 28-02`). Years run
+A relative offset adds the months first and the days after. From the 31st, a
+shorter month ends the date on its last day: `31-01 + 1m = 28-02`. Years run
 from 1000 to 9999.
 
 ```bash
@@ -147,12 +147,15 @@ rusk s --id omega        # only the ids, one per line (script-friendly)
 ```
 
 The compact view trims trailing punctuation and never wraps. A new task that
-gets the id of a deleted one is listed in its place (in a hand-edited file
-with an order of your own: at the end).
+takes the id of a deleted one is listed in that place. In a hand-edited file
+with an order of its own it goes at the end.
 
-Search ignores case (`ΟΔΟΣ` finds `οδος`, `STRASSE` finds `Straße`) and the
-amount of whitespace between the words (the list shows a run of spaces as
-one), but not accents (`cafe` does not find `café`).
+Search is forgiving in two ways and strict in one:
+
+- Case is ignored: `ΟΔΟΣ` finds `οδος`, `STRASSE` finds `Straße`.
+- The amount of whitespace between the words is ignored. The list shows a
+  run of spaces as one.
+- Accents are not ignored: `cafe` does not find `café`.
 
 ### Marking
 
@@ -190,8 +193,8 @@ done no earlier than the tasks it depends on. `rusk mark` is never blocked by
 it.
 
 A task text that starts with `TEMP`, `INFO`, `FIXME` or `WIP` gets that word
-highlighted in the list. The set is configurable (`keywords` in the config; an
-empty value disables it), and so is the color (the `keyword` theme key).
+highlighted in the list. The set is configurable (`keywords` in the config;
+an empty value disables it), and so is the color (the `keyword` theme key).
 
 ```bash
 rusk add TEMP debug flag until the release
@@ -207,10 +210,11 @@ rusk del 1 --yes    # no question asked: for scripts and pipes
 rusk del --done -y
 ```
 
-The question names the tasks that depend on the one being deleted, and the
-deletion says which of them no longer do (`Task 3 no longer depends on 1.`).
-Without a terminal to ask on (a script, a pipe) `rusk del` refuses instead of
-guessing: `--yes` is how to delete there.
+The question names the tasks that depend on the one being deleted. The
+deletion then says which of them no longer do
+(`Task 3 no longer depends on 1.`). Without a terminal to ask on (a script,
+a pipe) `rusk del` refuses instead of guessing: `--yes` is how to delete
+there.
 
 ### Several tasks at once
 
@@ -223,12 +227,12 @@ rusk edit 1,2,3 Update status to completed
 rusk del 1,2,3
 ```
 
-- Anything in the list that is not an id is an error; a repeated id counts once.
+- Anything in the list that is not an id is an error. A repeated id counts once.
 - For `mark` and `del` a second word after the list is an error (`rusk mark 1 2`).
 - For `edit` the first word that is not glued to the list by a comma starts
-  the new text: `rusk edit 3 1,000 units` edits task 3 only. When everything
-  after the list is numbers (`rusk edit 1,2 3 -d 2w`) nothing changes, and
-  rusk says so: a text of numbers goes after `--`.
+  the new text: `rusk edit 3 1,000 units` edits task 3 only.
+- When everything after the list is numbers (`rusk edit 1,2 3 -d 2w`)
+  nothing changes, and rusk says so: a text of numbers goes after `--`.
 
 ### Interactive editor
 
@@ -283,12 +287,17 @@ rusk serve --host 0.0.0.0   # requires web_token in the config
 
 `rusk gen` never writes over the database or a file rusk keeps beside it.
 
-`rusk serve` stays up whatever clients do: a connection may wait a minute
-(`web_timeout` in the config, seconds), a request body or an answer has to
-keep moving, and up to 256 connections are open at once. A connection that
-waits longer is closed, with `408 Request Timeout` once part of a request had
-come. `web_timeout = 0` turns these limits off. They keep the server up, not
-fair: exposed beyond loopback or a VPN, put a reverse proxy in front (see
+`rusk serve` stays up whatever clients do:
+
+- A connection may wait a minute (`web_timeout` in the config, in seconds).
+  A request body or an answer has to keep moving.
+- Up to 256 connections are open at once.
+- A connection that waits longer is closed, with `408 Request Timeout` once
+  part of a request had come.
+- `web_timeout = 0` turns these limits off.
+
+The limits keep the server up. They do not make it fair: exposed beyond
+loopback or a VPN, put a reverse proxy in front (see
 [WEB.md](WEB.md#rusk-serve)).
 
 Sync works over SSH, or over HTTP(S) with a running `rusk serve`:
@@ -300,10 +309,10 @@ rusk sync push         # upload local tasks
 rusk sync pull --force # discard local changes in favor of the remote
 ```
 
-Conflicts are detected against what each side held after the last sync:
-nothing is silently overwritten, a change made on either side right after a
-sync is a change for the next one, and a first sync into an empty database
-simply fills it. Details in [WEB.md](WEB.md#rusk-sync).
+Conflicts are detected against what each side held after the last sync, so
+nothing is silently overwritten. A change made on either side right after a
+sync is a change for the next one. A first sync into an empty database simply
+fills it. Details in [WEB.md](WEB.md#rusk-sync).
 
 ## Storage
 
@@ -351,9 +360,9 @@ export RUSK_DB="$HOME/tasks/tasks.csv"    # or rusk_db = ~/tasks/tasks.csv in th
 | `.db` / `.sqlite` / `.sqlite3` | SQLite | concurrent writers, SQL tooling | `backend-sqlite` |
 
 All features except `backend-sqlite` (which bundles a C library) are enabled
-by default; distro builds can trim them (`--no-default-features --features …`).
+by default. Distro builds can trim them (`--no-default-features --features …`).
 
-Every format can be edited by hand or by another tool, and backups and atomic
+Every format can be edited by hand or by another tool. Backups and atomic
 writes work the same in each. What each format stores, and the rules every
 file is held to when it is read, are in
 [STORAGE.md](STORAGE.md#database-formats).
@@ -372,14 +381,14 @@ git_backend = true                      # commit every save of a local file data
                                         # to a git repo in its directory (feature backend-git)
 ```
 
-- **http(s)** is a thin client: there is no local copy, every command reads
+- **http(s)** is a thin client. There is no local copy: every command reads
   and writes through the server, and never overwrites what another client
-  stored in the meantime. It needs the network and the server up; for
+  stored in the meantime. It needs the network and the server up. For
   offline-first use `rusk sync` instead.
 - **ssh** loads and saves the remote file per command over the system `ssh`
   (keys, agent and `~/.ssh/config` apply). On flaky links prefer `rusk sync`.
 - **git_backend** gives full history (`git log`, `git revert`) beyond the
-  single `.backup` copy. Local file databases only; uses the system `git`,
+  single `.backup` copy. Local file databases only. Uses the system `git`,
   2.9 or newer.
 
 Details in [STORAGE.md](STORAGE.md#remote-and-git-backed-databases).
@@ -392,10 +401,10 @@ Details in [STORAGE.md](STORAGE.md#remote-and-git-backed-databases).
 - Every file is replaced atomically: temp file, fsync, rename. A crash, a
   full disk or a parallel `rusk` leaves the old content or the new one,
   never a truncated file.
-- A database that cannot be read is never taken for an empty one: the
+- A database that cannot be read is never taken for an empty one. The
   command stops instead of saving zero tasks over your data.
 - Commands running at the same time (two terminals, a cron job, `rusk serve`)
-  all take effect: saves take turns on a lock, and every change is applied to
+  all take effect. Saves take turns on a lock, and every change is applied to
   the database as it is at the moment of the save.
 - A command that changes nothing writes nothing.
 
@@ -446,28 +455,29 @@ per shell, what exactly is completed and the Windows notes are in
 
 ### Colors
 
-`RUSK_NO_COLOR` set to any non-empty value disables ANSI colors in all output:
-the task list, dialogs, errors, `--help` and argument errors.
-
 ```bash
 export RUSK_NO_COLOR=1
 ```
 
-The standard `NO_COLOR` (see [no-color.org](https://no-color.org)) and
-`no_color = true` in the config do the same; an empty variable counts as not
-set. Once colors are off this way, nothing turns them back on for the run, not
-even `CLICOLOR_FORCE`, which otherwise forces colors into a pipe. `CLICOLOR=0`
-turns them off as well, and so does `TERM=dumb` unless `CLICOLOR_FORCE` is set.
+- `RUSK_NO_COLOR` set to any non-empty value disables ANSI colors in all
+  output: the task list, dialogs, errors, `--help` and argument errors.
+- The standard `NO_COLOR` (see [no-color.org](https://no-color.org)) and
+  `no_color = true` in the config do the same. An empty variable counts as
+  not set.
+- Once colors are off this way, nothing turns them back on for the run, not
+  even `CLICOLOR_FORCE`, which otherwise forces colors into a pipe.
+- `CLICOLOR=0` turns colors off as well, and so does `TERM=dumb` unless
+  `CLICOLOR_FORCE` is set.
 
 ### Scripts and pipes
 
 - What `rusk` prints goes to a pipe as well as to a terminal.
 - A reader that stops reading (`rusk list | head -2`) ends the command quietly
-  with exit code 0; whatever the command changed is saved before anything is
+  with exit code 0. Whatever the command changed is saved before anything is
   printed. An output that cannot be written (a full disk) is an error, exit
   code 1.
 - Questions are asked only on a terminal (standard input and output both).
-  `rusk del` without one refuses and asks for `--yes`; the editors (`rusk add`,
+  `rusk del` without one refuses and asks for `--yes`. The editors (`rusk add`,
   `rusk edit <id>`) need a terminal too.
 - `rusk search --id` prints the matching ids only, one per line, no colors.
 

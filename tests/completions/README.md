@@ -1,18 +1,22 @@
 <h1 align="center" id="rusk-shell-completions-tests">Rusk Shell Completion Tests</h1>
 <br />
 
-This directory contains tests for shell completion scripts. These tests are separate from the main application tests in `tests/` and focus specifically on validating completion behavior.
+Tests for the shell completion scripts. They are separate from the
+application tests in `tests/` and focus on completion behavior alone.
 
 What the scripts offer is one table for all five shells: `cases.txt` holds
 command lines and the candidates for them (a case may name the shells it is
-for, where they differ on purpose), and `rust/table_tests.rs` runs every case
-in bash, zsh, fish, nu and PowerShell — whichever are installed — as part of
+for, where they differ on purpose). `rust/table_tests.rs` runs every case in
+bash, zsh, fish, nu and PowerShell, whichever are installed, as part of
 `cargo test`, with a home, a config and a one-task database of their own and
 this build's `rusk` first in PATH. A behavior of the scripts is a line of the
-table; the shell suites below keep what the table cannot hold (syntax,
-stubs for the task text next to an id).
+table. The shell suites below keep what the table cannot hold: syntax, and
+stubs for the task text next to an id.
 
-Zsh tests source `completions/rusk.zsh` with `_RUSK_ZSH_SKIP_ENTRY=1` so the file only defines functions and does not run the completer once on load (avoids invoking the real `rusk` binary before stubs override helpers).
+Zsh tests source `completions/rusk.zsh` with `_RUSK_ZSH_SKIP_ENTRY=1`, so
+the file only defines functions and does not run the completer once on load.
+That avoids invoking the real `rusk` binary before the stubs override the
+helpers.
 
 ## Structure
 
@@ -51,100 +55,81 @@ tests/completions/
     └── test_edit_after_id.nu         # Edit after ID tests
 ```
 
-**Note**: Rust tests are included via `tests/completions.rs` which references the files in `rust/` subdirectory.
+The Rust tests are included through `tests/completions.rs`, which references
+the files in the `rust/` subdirectory.
 
-## Running Tests
+## Running the tests
 
-### Rust Tests
-Run Rust unit tests for completion functionality:
 ```bash
-cargo test --test completions
+cargo test --test completions         # the Rust tests, the table included
+./tests/completions/run_all.sh        # the shell suites, every installed shell
 ```
 
-### All Shell Tests (Recommended)
-Run tests for all available shells:
+One shell at a time:
+
 ```bash
-./tests/completions/run_all.sh
-```
-
-### Individual Shell Tests
-
-#### PowerShell
-```powershell
 pwsh -File tests/completions/powershell/run_all.ps1
-```
-
-#### Bash
-```bash
 bash tests/completions/bash/run_all.sh
-```
-
-#### Zsh
-```zsh
 zsh tests/completions/zsh/run_all.sh
-```
-
-#### Fish
-```fish
 fish tests/completions/fish/run_all.fish
-```
-
-#### Nu Shell
-```nu
 nu tests/completions/nu/run_all.nu
 ```
 
-## Test Structure
+## Test structure
 
-Each shell's test directory contains:
-- `run_all.{ext}` - Main test runner that executes all test files
-- `test_*.{ext}` - Individual test files for specific scenarios:
-  - `test_basic.{ext}` - Basic completion functionality tests
-  - `test_all_commands.ps1` - PowerShell's scenarios (the other shells' went into `cases.txt`)
-  - `test_edit_after_id.{ext}` - Critical tests ensuring task text (not dates) after task ID
-- `helpers.{ext}` - Helper functions for tests (if applicable)
+Each shell's directory contains:
 
-## Test Scenarios
+- `run_all.{ext}`: the runner that executes all test files of that shell.
+- `test_*.{ext}`: the test files, one per scenario:
+  - `test_basic.{ext}`: basic completion functionality;
+  - `test_all_commands.ps1`: PowerShell's scenarios (the other shells' went
+    into `cases.txt`);
+  - `test_edit_after_id.{ext}`: the critical tests ensuring that task text
+    (not dates) follows a task id.
+- `helpers.{ext}`: helper functions, where applicable.
+
+## Test scenarios
 
 What each shell offers is `cases.txt`: every line there is a scenario, the
 same in all five shells unless the line names the shells it is for. In short:
 
-- `rusk <tab>` — the commands and their aliases (a, e, m, d, l, s, r, g, c),
-  and `help`; fish and nu also list `-h`, `--help`, `-V`, `--version`, which
+- `rusk <tab>`: the commands and their aliases (a, e, m, d, l, s, r, g, c),
+  and `help`. fish and nu also list `-h`, `--help`, `-V`, `--version`, which
   every shell offers for `rusk -<tab>`. A command typed in full is completed
   as the command (`rusk add<tab>` → `rusk add `).
-- `rusk help <tab>` — the commands; `rusk help sync <tab>` → push, pull;
+- `rusk help <tab>`: the commands. `rusk help sync <tab>` → push, pull;
   `rusk help completions <tab>` → install, show; nothing after that.
-- Task ids are never offered: `rusk edit <tab>`, `rusk mark <tab>`, `rusk del <tab>`
-  give the flags of the command.
-- `rusk edit 1<TAB>` puts the text of task 1 next to its id (fish completes the
-  id first and gives the text on the next `<TAB>`, `rusk edit 1 <TAB>`).
-- add/edit offer `-d`/`--date` and `-a`/`--after` while they are not on the
-  line — given alone or with their value (`--date=X`, `-dX`) — and after
-  task text (add) or an id (edit); after `-d`/`--date` + space, help only.
+- Task ids are never offered: `rusk edit <tab>`, `rusk mark <tab>`,
+  `rusk del <tab>` give the flags of the command.
+- `rusk edit 1<TAB>` puts the text of task 1 next to its id. fish completes
+  the id first and gives the text on the next `<TAB>`, `rusk edit 1 <TAB>`.
+- `add` and `edit` offer `-d`/`--date` and `-a`/`--after` while they are not
+  on the line, given alone or with their value (`--date=X`, `-dX`), and
+  after task text (`add`) or an id (`edit`). After `-d`/`--date` + space,
+  help only.
 - After `--` everything is text: nothing is offered.
-- `rusk completions install <tab>`, `rusk completions show <tab>` — the
+- `rusk completions install <tab>`, `rusk completions show <tab>`: the
   shells not chosen yet.
 - Where a script offers nothing, PowerShell falls back to file names; the
   table leaves those out.
 
-**Edit-after-ID (test_edit_after_id):**
-- `rusk e 1<TAB>` → task text only (no date *values* in completions).
-- `rusk e 1 <tab>` / `rusk e 1 foo <tab>` → `-d`, `--date`, `-h`, `--help` (CLI date is optional; TUI uses the first line).
-- `rusk e 1,2 <tab>` → empty (IDs are not suggested).
+**Edit after an id** (`test_edit_after_id`):
 
-## Adding New Tests
+- `rusk e 1<TAB>` → the task text only (no date *values* in completions).
+- `rusk e 1 <tab>` / `rusk e 1 foo <tab>` → `-d`, `--date`, `-h`, `--help`
+  (the CLI date is optional; the TUI uses the first line).
+- `rusk e 1,2 <tab>` → empty (ids are not suggested).
 
-To add a new test:
+## Adding new tests
 
-1. Create a new test file following the naming pattern `test_*.{ext}`
-2. Use the appropriate helper functions if available
-3. Follow the test structure used in existing tests
-4. Ensure the test file is executable (for shell scripts)
+1. Create a new test file following the naming pattern `test_*.{ext}`.
+2. Use the helper functions of that shell, if available.
+3. Follow the structure of the existing tests.
+4. Make the file executable (for shell scripts).
 
-## Integration with CI/CD
+## CI
 
-`cargo test` runs the table (`cargo test --test completions`); CI installs
+`cargo test` runs the table (`cargo test --test completions`). CI installs
 zsh and fish for it, and the image has bash and PowerShell. Nushell is not
 installed there, so its table is skipped in CI (the test says so on stderr,
 which `cargo test -- --nocapture` shows). The shell suites run with
@@ -154,12 +139,15 @@ which `cargo test -- --nocapture` shows). The shell suites run with
 
 - The table runs the scripts in a sandbox: a home, a config and a one-task
   database of their own, the same in a debug and a release build, with this
-  build's `rusk` first in PATH; each shell has two minutes for the whole table.
-- A script that prints anything while completing — on stdout or stderr — fails
-  the table: in a real shell that text lands on the user's terminal.
-- The `run_all.sh` script will automatically skip shells that are not installed on the system
-- Each shell's test runner can be executed individually for debugging specific shell issues
-- Zsh: the `completions|c)` branch must not declare `local i` again (duplicate `local i` in `_rusk_main` prints `i=…` during completion; the table catches it)
+  build's `rusk` first in PATH. Each shell has two minutes for the whole
+  table.
+- A script that prints anything while completing, on stdout or stderr,
+  fails the table: in a real shell that text lands on the user's terminal.
+- `run_all.sh` skips the shells that are not installed on the system.
+- Each shell's runner can be executed on its own to debug that shell.
+- Zsh: the `completions|c)` branch must not declare `local i` again. A
+  duplicate `local i` in `_rusk_main` prints `i=…` during completion, and
+  the table catches it.
 
 <br />
 <p align="center"><a href="#rusk-shell-completions-tests">Back to top</a></p>

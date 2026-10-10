@@ -2,61 +2,91 @@
 
 <br />
 
-## Quick Install (Recommended)
+- [Quick install](#quick-install-recommended)
+- [What is completed](#what-is-completed)
+- [Windows](#windows)
+- [Manual installation](#manual-installation)
+  - [Bash](#bash)
+  - [Zsh](#zsh)
+  - [Fish](#fish)
+  - [Nu Shell](#nu-shell)
+  - [PowerShell](#powershell)
+
+## Quick install (recommended)
 
 Use the built-in command to install completions automatically:
 
 ```bash
-# Install for a single shell (auto-detects path)
+# Install for a single shell (auto-detects the path)
 rusk completions install bash
 rusk completions install zsh
 rusk completions install fish
 rusk completions install nu
 rusk completions install powershell
 
-# Install for multiple shells at once
+# Install for several shells at once
 rusk completions install bash zsh
 rusk completions install fish nu powershell
 
-# Dump script for manual install
+# Dump the script for a manual install
 rusk completions show zsh > ~/.zsh/completions/_rusk
 ```
 
 ## What is completed
 
-- Commands: `add`, `edit`, `mark`, `del`, `completions`, etc. and their aliases
-- Task text: `rusk edit <id><tab>` appends the task text for that ID, quoted so that running the line stores exactly that text: when it contains shell-special characters (``| ; & > < ( ) [ ] { } $ " ' \` * ? ~ # @ ! % ^ = + - / : ,``), line breaks, tabs, runs of spaces or spaces at either end, it is wrapped in single quotes (in nu a raw string `r#'…'#` if the text has `'`); a text that starts with `-` is put after `--`, so it is not read as options. In fish the id completes first and the next `<tab>` inserts the text, escaped by fish itself (see [Fish](#fish))
-- Flags: `--date` / `--after` (add, edit after an id), `--done`, etc.
+- **Commands**: `add`, `edit`, `mark`, `del`, `completions`, etc. and their
+  aliases.
+- **Flags**: `--date` / `--after` (`add`, and `edit` after an id), `--done`,
+  etc.
+- **Task text**: `rusk edit <id><tab>` appends the text of that task, quoted
+  so that running the line stores exactly that text.
+  - The text is wrapped in single quotes when it contains shell-special
+    characters (``| ; & > < ( ) [ ] { } $ " ' \` * ? ~ # @ ! % ^ = + - / : ,``),
+    line breaks, tabs, runs of spaces or spaces at either end. In nu a raw
+    string `r#'…'#` is used if the text has a `'`.
+  - A text that starts with `-` is put after `--`, so it is not read as
+    options.
+  - In fish the id completes first and the next `<tab>` inserts the text,
+    escaped by fish itself (see [Fish](#fish)).
 
 ## Windows
 
-- Git Bash: Works with `bash` completions (uses Unix-style paths)
-- WSL: Works with `bash`, `zsh`, `fish`, and `nu` completions
-- Nu Shell: Works natively on Windows (uses `%APPDATA%\nushell\completions\`)
-- PowerShell: Works natively on Windows (uses `Documents\PowerShell\rusk-completions.ps1`)
-- CMD: Basic commands work (add, list, mark, del, edit with text). Due dates: interactive editor (`rusk edit` without argv text) on the first line, or `rusk edit <id> -d <date>`. Interactive editing requires Windows 10+ and may have limited functionality. Tab completion is not supported. Colors work on Windows 10+ (build 1511 and later)
+- **Git Bash**: works with the `bash` completions (Unix-style paths).
+- **WSL**: works with the `bash`, `zsh`, `fish` and `nu` completions.
+- **Nu Shell**: works natively (`%APPDATA%\nushell\completions\`).
+- **PowerShell**: works natively (`Documents\PowerShell\rusk-completions.ps1`).
+- **CMD**: the basic commands work (add, list, mark, del, edit with text).
+  Due dates go on the first line of the interactive editor (`rusk edit`
+  without text) or in `rusk edit <id> -d <date>`. Interactive editing
+  requires Windows 10+ and may have limited functionality. Tab completion
+  is not supported. Colors work on Windows 10+ (build 1511 and later).
 
-## Manual Installation
+## Manual installation
 
 If you prefer manual installation or need to customize the setup:
 
 ### Bash
+
 ```bash
-# Get script from rusk and save it
+# Get the script from rusk and save it
 rusk completions show bash > ~/.bash_completion.d/rusk
 
-# Or install system-wide (requires root)
+# Or install it system-wide (requires root)
 rusk completions show bash | sudo tee /etc/bash_completion.d/rusk > /dev/null
 
-source ~/.bash_completion.d/rusk ## Or
-source /etc/bash_completion.d/rusk ## In your .bashrc
+# Then, in your .bashrc, one of:
+source ~/.bash_completion.d/rusk
+source /etc/bash_completion.d/rusk
 ```
 
 ### Zsh
-The completion file **must** be named `_rusk` (leading underscore). Put it on `fpath` **before** `compinit` runs, otherwise custom completions are ignored.
+
+The completion file **must** be named `_rusk` (leading underscore). Put it
+on `fpath` **before** `compinit` runs, otherwise custom completions are
+ignored.
 
 ```bash
-# Get script from rusk and save it
+# Get the script from rusk and save it
 mkdir -p ~/.zsh/completions
 rusk completions show zsh > ~/.zsh/completions/_rusk
 
@@ -65,45 +95,50 @@ echo 'fpath=(~/.zsh/completions $fpath)' >> ~/.zshrc
 echo 'autoload -Uz compinit && compinit' >> ~/.zshrc
 ```
 
-If you use **Powerlevel10k instant prompt** (or similar), define `fpath=(~/.zsh/completions $fpath)` *above* the instant-prompt block so `rusk` completion is available on the first Tab in a new session.
+If you use **Powerlevel10k instant prompt** (or similar), define
+`fpath=(~/.zsh/completions $fpath)` *above* the instant-prompt block, so
+that `rusk` completion is available on the first Tab in a new session.
 
 ### Fish
+
 ```bash
-# Get script from rusk and save it ($XDG_CONFIG_HOME/fish/completions when
-# XDG_CONFIG_HOME is set: that is where fish looks then)
+# Get the script from rusk and save it. When XDG_CONFIG_HOME is set, use
+# $XDG_CONFIG_HOME/fish/completions instead: that is where fish looks then.
 mkdir -p ~/.config/fish/completions
 rusk completions show fish > ~/.config/fish/completions/rusk.fish
 ```
 
-fish escapes what it completes itself and inserts one word per Tab, so
-`rusk edit 3<TAB>` completes the id and the next `<TAB>` puts the task text
-after it, exactly as it is. A text that starts with `-` gets `--` first
-(fish adds no space after a `-`: the next `<TAB>` does, the one after it
-gives the text). A
-text with a tab character or one that starts with `~` is not offered: fish
-cannot insert it unchanged. The script adds completions only; it binds no
-keys.
+- fish escapes what it completes itself and inserts one word per Tab, so
+  `rusk edit 3<TAB>` completes the id and the next `<TAB>` puts the task
+  text after it, exactly as it is.
+- A text that starts with `-` gets `--` first. fish adds no space after a
+  `-`: the next `<TAB>` does, and the one after it gives the text.
+- A text with a tab character or one that starts with `~` is not offered:
+  fish cannot insert it unchanged.
+- The script adds completions only; it binds no keys.
 
 ### Nu Shell
+
 ```bash
-# Get script from rusk and save it
+# Get the script from rusk and save it.
 # On Windows:
 New-Item -ItemType Directory -Force -Path "$env:APPDATA\nushell\completions"
 rusk completions show nu | Out-File -FilePath "$env:APPDATA\nushell\completions\rusk.nu" -Encoding utf8
 
-# On Linux/macOS (nu's own config directory: `$nu.default-config-dir` says
-# which — ~/.config/nushell on Linux, ~/Library/Application Support/nushell
+# On Linux/macOS, into nu's own config directory (`$nu.default-config-dir`
+# says which: ~/.config/nushell on Linux, ~/Library/Application Support/nushell
 # on macOS, $XDG_CONFIG_HOME/nushell when that is set; `rusk completions
 # install nu` puts it there):
 mkdir -p ~/.config/nushell/completions
 rusk completions show nu > ~/.config/nushell/completions/rusk.nu
+```
 
-# Add to your config.nu (next to that `completions` directory):
-# Windows: %APPDATA%\nushell\config.nu
-# Linux: ~/.config/nushell/config.nu
-# Add this to enable external completions:
+Then add this to your `config.nu`, next to that `completions` directory
+(`%APPDATA%\nushell\config.nu` on Windows, `~/.config/nushell/config.nu` on
+Linux), to enable external completions:
 
-# Load rusk completions module
+```nu
+# Load the rusk completions module
 use ($nu.config-path | path dirname | path join "completions" "rusk.nu") *
 
 $env.config.completions.external = {
@@ -123,18 +158,18 @@ $env.config.completions.external = {
 ```
 
 ### PowerShell
+
 ```powershell
-# Save completion script to file
+# Save the completion script to a file.
 # On Windows (PowerShell 7+):
 New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\Documents\PowerShell"
 rusk completions show powershell | Out-File -FilePath "$env:USERPROFILE\Documents\PowerShell\rusk-completions.ps1" -Encoding utf8
 
-# On Windows (PowerShell 5.1 / Windows PowerShell):
-# Use WindowsPowerShell directory instead:
+# On Windows (PowerShell 5.1 / Windows PowerShell), use the WindowsPowerShell directory instead:
 New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\Documents\WindowsPowerShell"
 rusk completions show powershell | Out-File -FilePath "$env:USERPROFILE\Documents\WindowsPowerShell\rusk-completions.ps1" -Encoding utf8
 
-# Add to your PowerShell profile
+# Add it to your PowerShell profile
 Add-Content $PROFILE ". `"$env:USERPROFILE\Documents\PowerShell\rusk-completions.ps1`""
 
 # On Linux/macOS with PowerShell Core ($XDG_CONFIG_HOME/powershell when
@@ -143,5 +178,6 @@ mkdir -p ~/.config/powershell
 rusk completions show powershell > ~/.config/powershell/rusk-completions.ps1
 Add-Content $PROFILE ". ~/.config/powershell/rusk-completions.ps1"
 ```
+
 <br />
 <p align="center"><a href="#rusk-shell-completions">Back to top</a></p>

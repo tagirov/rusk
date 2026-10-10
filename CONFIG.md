@@ -12,17 +12,27 @@ The file is **auto-created** on first run with every setting listed as a
 commented-out default, so it doubles as documentation. It is safe to edit or
 delete at any time.
 
-- `RUSK_CONFIG=<path>` overrides the location (the file is auto-created there
-  if missing).
+- `RUSK_CONFIG=<path>` overrides the location. The file is auto-created there
+  if missing.
 - `RUSK_CONFIG=` (empty) disables the config system entirely.
 - Debug builds and test runs never touch the default config file; only an
   explicit `RUSK_CONFIG` is honored there. A release binary always reads
   it, whatever it is called and whatever is in its environment.
 
-Problems in the file are **never fatal**: every unparseable line produces a
+Problems in the file are **never fatal**. Every unparseable line produces a
 yellow warning with its line number (`cfg:12: ...`) and the built-in default
-is kept — a broken theme cannot lock you out of your tasks. The warnings come
-in the order of the lines.
+is kept, so a broken theme cannot lock you out of your tasks. The warnings
+come in the order of the lines.
+
+- [Syntax](#syntax)
+  - [Variables](#variables)
+- [Settings](#settings)
+  - [Database location (`rusk_db`)](#database-location-rusk_db)
+  - [`git_backend`](#git_backend)
+  - [`web_timeout`](#web_timeout)
+- [Theme](#theme)
+  - [Web mapping](#web-mapping)
+- [Example](#example)
 
 ## Syntax
 
@@ -33,64 +43,114 @@ key =                    # an empty value; the comment is a comment
 title = "quoted value"   # quotes make the value literal (no variable resolution)
 ```
 
-- One `key = value` per line. Keys are lowercase `a-z`, digits, `_`.
-- Inside a value, a `#` after whitespace starts a comment. At the start of
-  a value, `#` starts one only when whitespace or the end of the line follows
-  it (`key = # note` and `key = ## note` are empty values); `#ffa500`, `#abc`
-  and `a#b` are values. A quoted value runs to the next `"` and has no
-  escapes: a quote that is never closed, or anything but a comment after the
-  closing one, is an error, and the line is skipped with a warning.
+- One `key = value` per line. Keys are lowercase `a-z`, digits and `_`.
+- Duplicate keys: the last one wins.
 - The file is UTF-8. A byte order mark in front of a key is ignored. Bytes
   that are not UTF-8 cost the line they are in, with a warning, when they
   are in its key or value; in a comment they are harmless. The rest of the
   file is read either way.
-- **Variables**: any key that is not a recognized setting defines a variable.
-  A later bare value that matches a variable name resolves to it:
 
-  ```
-  my_accent = #d75f00
-  priority_marker = my_accent
-  ```
+**Comments inside a value.** A `#` after whitespace starts a comment. At the
+start of a value, `#` starts a comment only when whitespace or the end of the
+line follows it: `key = # note` and `key = ## note` are empty values, while
+`#ffa500`, `#abc` and `a#b` are values.
 
-- A **theme key can reference another theme key** — `priority_marker = accent`
+**Quoted values.** A quoted value runs to the next `"` and has no escapes. A
+quote that is never closed, or anything but a comment after the closing one,
+is an error: the line is skipped with a warning.
+
+### Variables
+
+Any key that is not a recognized setting defines a variable. A later bare
+value that matches a variable name resolves to it:
+
+```
+my_accent = #d75f00
+priority_marker = my_accent
+```
+
+- A theme key can reference another theme key: `priority_marker = accent`
   copies accent's current value.
-- The bare value `default` is the built-in default: it also undoes what an
-  earlier line set for the same key. (A variable you name `default` takes
-  its place, as any variable does for its name; `"default"` in quotes is
-  the word itself.)
-- Duplicate keys: the last one wins.
-- A variable that is never referenced produces a warning (this catches typos
-  in setting names).
+- The bare value `default` is the built-in default. It also undoes what an
+  earlier line set for the same key. A variable you name `default` takes its
+  place, as any variable does for its name; `"default"` in quotes is the
+  word itself.
+- A variable that is never referenced produces a warning. This catches typos
+  in setting names.
 
 ## Settings
 
 Environment variables always win over config values. One set to an empty
 value counts as not set, so the config value applies (`RUSK_DB_TOKEN=` does
-not take away a `db_token`); `RUSK_CONFIG=` is the exception, see above.
+not take away a `db_token`). `RUSK_CONFIG=` is the exception, see above.
 
 | Key | Type | Default | Env override | Meaning |
 |---|---|---|---|---|
-| `rusk_db` | location | — | `RUSK_DB` | Database location. A file or directory path (`~` and `~/` expand to the home directory, here and in `RUSK_DB`; a relative path is taken from the current directory, like the default `.rusk/tasks.json`) — the last extension picks the format: `.csv`, `.md`, `.txt` (todo.txt), `.ndjson`/`.jsonl`, `.ics`, `.db`/`.sqlite`/`.sqlite3` (SQLite), anything else is JSON (`notes.txt.json` is JSON). Or a remote: `https://host` (the API of a running `rusk serve`; scheme in any case, a trailing `/api/tasks` is dropped, a query or fragment is refused — the token goes in `db_token`; a `user:password@` is basic authentication, never shown) or `[user@]host:path` as `scp` reads it (a file over ssh; `user@[::1]:/path` for IPv6, `~/` is the remote home directory, SQLite is local only). A local file whose name has a `:` in it is written with `./` in front. Other `scheme://` values are refused. See [STORAGE.md](STORAGE.md#database-formats); non-JSON/CSV variants need their build feature |
-| `db_token` | string | — | `RUSK_DB_TOKEN` | Bearer token when `rusk_db` is an http(s) location (the serve's `web_token`) |
-| `git_backend` | bool | `false` | — | Commit every save of a local file database to a git repository in the database directory (needs `git` 2.9+ and the `backend-git` feature; a build without it says so, and so does a SQLite or remote database). Not in a repository other users can change; no hook of the repository runs. See [STORAGE.md](STORAGE.md#remote-and-git-backed-databases) |
-| `no_color` | bool | `false` | `RUSK_NO_COLOR` / `NO_COLOR` | Disable ANSI colors, in `--help` and argument errors too. The config can only disable colors, never re-enable them over the environment; an empty `RUSK_NO_COLOR` / `NO_COLOR` means nothing |
-| `compact` | bool | `false` | — | Compact `rusk list` view by default (`-c` still forces it per run, `--no-compact` turns it off for one run) |
-| `backup` | bool | `true` | — | Write a `.backup` copy next to the database on every save — locally, and on the remote for an ssh database. With `false` an existing `.backup` is neither refreshed nor removed: `rusk restore` still uses it and warns how old it is |
-| `web_host` | string | `127.0.0.1` | — | Bind address for `rusk serve` (see [WEB.md](WEB.md)); `localhost` binds 127.0.0.1 |
+| `rusk_db` | location | — | `RUSK_DB` | Where the database is: a local path, an http(s) URL or an ssh location. See [Database location](#database-location-rusk_db) |
+| `db_token` | string | — | `RUSK_DB_TOKEN` | Bearer token when `rusk_db` is an http(s) location (the server's `web_token`) |
+| `git_backend` | bool | `false` | — | Commit every save of a local file database to a git repository in the database directory. See [`git_backend`](#git_backend) |
+| `no_color` | bool | `false` | `RUSK_NO_COLOR` / `NO_COLOR` | Disable ANSI colors, in `--help` and argument errors too. The config can only disable colors, never re-enable them over the environment. An empty `RUSK_NO_COLOR` / `NO_COLOR` means nothing |
+| `compact` | bool | `false` | — | Compact `rusk list` view by default. `-c` still forces it per run; `--no-compact` turns it off for one run |
+| `backup` | bool | `true` | — | Write a `.backup` copy next to the database on every save: locally, and on the remote for an ssh database. With `false` an existing `.backup` is neither refreshed nor removed: `rusk restore` still uses it and warns how old it is |
+| `web_host` | string | `127.0.0.1` | — | Bind address for `rusk serve` (see [WEB.md](WEB.md)). `localhost` binds 127.0.0.1 |
 | `web_port` | u16 | `7272` | — | Port for `rusk serve` |
-| `web_token` | string | — | — | Access token for `rusk serve`; required for non-loopback hosts. Printable ASCII (spaces inside are fine) without `;` and without spaces at its ends (it travels in a cookie and a header as it is) |
-| `web_timeout` | u64 | `60` | — | Seconds a connection of `rusk serve` may wait: idle, for the rest of a request's head after its first byte, for a stalled body or answer to move; past that, a body or answer has to keep up 1 KiB/s. One that waits longer is closed, with 408 when part of a request had come. At most 256 connections are open at once. `0`: none of these limits (see [WEB.md](WEB.md#rusk-serve)) |
-| `sync_remote` | string | — | `RUSK_SYNC_REMOTE` | Remote for `rusk sync`: `[user@]host:/path/tasks.json` (ssh) or `https://host` (serve API), read exactly like a remote `rusk_db` |
+| `web_token` | string | — | — | Access token for `rusk serve`; required for non-loopback hosts. Printable ASCII without `;`; spaces inside are fine, spaces at the ends are not (it travels in a cookie and a header as it is) |
+| `web_timeout` | u64 | `60` | — | Seconds a connection of `rusk serve` may wait; `0` turns the limits off. See [`web_timeout`](#web_timeout) |
+| `sync_remote` | string | — | `RUSK_SYNC_REMOTE` | Remote for `rusk sync`: `[user@]host:/path/tasks.json` (ssh) or `https://host` (the API of a `rusk serve`), read exactly like a remote `rusk_db` |
 | `sync_token` | string | — | `RUSK_SYNC_TOKEN` | Bearer token for http(s) sync remotes |
-| `keywords` | list | `TEMP INFO FIXME WIP` | — | Keywords highlighted when a task text starts with one (only the first word is matched; space- or comma-separated, case-sensitive; `keywords =` with no value disables). Color comes from the `keyword` theme key |
+| `keywords` | list | `TEMP INFO FIXME WIP` | — | Keywords highlighted when a task text starts with one. Only the first word is matched; space- or comma-separated; case-sensitive. `keywords =` with no value disables. The color comes from the `keyword` theme key |
+
+### Database location (`rusk_db`)
+
+The value is read the same way in the config and in `RUSK_DB`. Its shape
+picks the backend (see
+[STORAGE.md](STORAGE.md#remote-and-git-backed-databases)):
+
+- **A local path**, file or directory. `~` and `~/` expand to the home
+  directory. A relative path is taken from the current directory, like the
+  default `.rusk/tasks.json`. A local file whose name has a `:` in it is
+  written with `./` in front.
+- The **last extension** picks the format: `.csv`, `.md`, `.txt` (todo.txt),
+  `.ndjson`/`.jsonl`, `.ics`, `.db`/`.sqlite`/`.sqlite3` (SQLite). Anything
+  else is JSON (`notes.txt.json` is JSON). Formats other than JSON and CSV
+  need their build feature. See [STORAGE.md](STORAGE.md#database-formats).
+- **`https://host`**: the API of a running `rusk serve`. The scheme may be in
+  any case; a trailing `/api/tasks` is dropped; a query or fragment is
+  refused. The token goes in `db_token`. A `user:password@` in the URL is
+  basic authentication (for a reverse proxy) and is never shown.
+- **`[user@]host:path`**, as `scp` reads it: a file over ssh. IPv6 goes in
+  brackets (`user@[::1]:/path`); `~/` is the remote home directory. SQLite
+  is local only.
+- Any other `scheme://` value is refused.
+
+### `git_backend`
+
+- Needs the system `git`, 2.9 or newer, and the `backend-git` feature. A
+  build without it says so, and so does a SQLite or remote database.
+- rusk does not run git in a repository other users can change, and no hook
+  of the repository runs.
+- Details in [STORAGE.md](STORAGE.md#remote-and-git-backed-databases).
+
+### `web_timeout`
+
+Seconds a connection of `rusk serve` may wait:
+
+- idle, for its next request;
+- for the rest of a request's head after its first byte;
+- for a stalled body or answer to move.
+
+Past that, a body or an answer has to keep up 1 KiB/s. A connection that
+waits longer is closed, with `408` when part of a request had come. At most
+256 connections are open at once. `0` turns all of these limits off. Details
+in [WEB.md](WEB.md#rusk-serve).
 
 ## Theme
 
 Each key colors one semantic group of elements. Values are either one of the
-16 ANSI color names — `black`, `red`, `green`, `yellow`, `blue`, `magenta`
-(alias `purple`), `cyan`, `white` and their `bright_*` variants — or a hex
-value like `#ffa500`. ANSI names follow your terminal palette; hex values
-render as truecolor.
+16 ANSI color names or a hex value like `#ffa500`. The names are `black`,
+`red`, `green`, `yellow`, `blue`, `magenta` (alias `purple`), `cyan`, `white`
+and their `bright_*` variants. ANSI names follow your terminal palette; hex
+values render as truecolor.
 
 | Key | Default | Used for |
 |---|---|---|
@@ -121,7 +181,7 @@ Out of the box the theme reproduces the previous hardcoded colors exactly.
 
 `rusk gen` and `rusk serve` expose the theme to the web page as CSS custom
 properties (`--rusk-date-overdue`, `--rusk-priority-marker`, ...). Hex values
-pass through unchanged; ANSI names map through the canonical xterm palette:
+pass through unchanged. ANSI names map through the canonical xterm palette:
 
 | Name | CSS | Name | CSS |
 |---|---|---|---|
@@ -134,8 +194,8 @@ pass through unchanged; ANSI names map through the canonical xterm palette:
 | cyan | `#00cdcd` | bright_cyan | `#00ffff` |
 | white | `#e5e5e5` | bright_white | `#ffffff` |
 
-Note that terminal rendering of named colors follows *your* terminal palette,
-while the web export uses this fixed table.
+Terminal rendering of named colors follows *your* terminal palette, while
+the web export uses this fixed table.
 
 ## Example
 

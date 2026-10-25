@@ -39,12 +39,13 @@ rusk edit 1 -|-h --help -d --date -a --after
 rusk mark |-h --help -p --priority
 rusk m |-h --help -p --priority
 rusk mark 1 |-h --help -p --priority
-# `rm` takes ids, never offered, or the word `done`, offered
-# until it or an id is on the line; `--older` and `--newer` go with `done`
-# and take an age or a date, a free value; `--yes` goes with both.
-rusk rm |-h --help --older --newer -y --yes done
+# `rm` takes ids, never offered, or a word, `done` or `all`, offered
+# until one of them or an id is on the line; `--older` and `--newer` go
+# with a word and take an age or a date, a free value; `--yes` goes with all.
+rusk rm |-h --help --older --newer -y --yes done all
 rusk rm -|-h --help --older --newer -y --yes
 rusk rm d|done
+rusk rm a|all
 rusk rm 1 |-h --help -y --yes
 rusk rm 1 2 |-h --help -y --yes
 rusk rm 1,2 -|-h --help -y --yes
@@ -54,6 +55,10 @@ rusk rm done --newer |
 rusk rm done --older 7d |-h --help --older --newer -y --yes
 rusk rm done --newer 1m --older |
 rusk rm done --newer 01-09-2026 --older 30-09-2026 |-h --help --older --newer -y --yes
+rusk rm all |-h --help --older --newer -y --yes
+rusk rm all --older |
+rusk rm all --newer 1y --older |
+rusk rm all --older 1y |-h --help --older --newer -y --yes
 rusk list |-h --help -c --compact --no-compact
 rusk l |-h --help -c --compact --no-compact
 rusk list -|-h --help -c --compact --no-compact

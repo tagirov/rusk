@@ -354,25 +354,25 @@ _rusk_main() {
             ;;
 
         rm)
-            # Ids (never offered) or the word `done`; `--older`/`--newer` go
-            # with `done`, `--yes` with both. The word is offered until it,
-            # or an id, is on the line (the words before the one being
-            # completed, as above).
+            # Ids (never offered) or a word, `done` or `all`; `--older`/`--newer`
+            # go with a word, `--yes` with both. The words are offered until
+            # one of them, or an id, is on the line (the words before the one
+            # being completed, as above).
             if [[ "$prev" == "--older" || "$prev" == "--newer" ]]; then
                 # Free-form value (an age or a date): no candidates
                 :
-            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]] || [[ "done" == "$cur"* ]]; then
-                local has_done=0 rm_i
+            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]] || [[ "done" == "$cur"* ]] || [[ "all" == "$cur"* ]]; then
+                local has_word=0 rm_i
                 local rm_end=${CURRENT:-${#words[@]}}
                 for ((rm_i=1; rm_i<rm_end; rm_i++)); do
-                    [[ "${words[rm_i]}" == "done" ]] && has_done=1
+                    [[ "${words[rm_i]}" == "done" || "${words[rm_i]}" == "all" ]] && has_word=1
                 done
-                if (( has_done )); then
+                if (( has_word )); then
                     compadd -- --older --newer --yes -y --help -h
                 elif [[ "$(_rusk_count_ids)" -gt 0 ]]; then
                     compadd -- --yes -y --help -h
                 else
-                    compadd -- done --older --newer --yes -y --help -h
+                    compadd -- done all --older --newer --yes -y --help -h
                 fi
             fi
             ;;

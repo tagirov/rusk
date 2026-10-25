@@ -183,16 +183,16 @@ if (-not $test_mark3) { $allTestsPassed = $false }
 # ============================================================================
 Write-Host "`n=== RM Command Tests ===" -ForegroundColor Yellow
 
-# Test: rusk rm <tab> (the word done and the flags, never ids)
+# Test: rusk rm <tab> (the words done and all, the flags, never ids)
 $test_del1 = Test-CompletionScenario `
-    -Description "rusk rm <tab> (done and flags)" `
+    -Description "rusk rm <tab> (done, all and flags)" `
     -Tokens @("rusk", "rm", "") `
     -WordToComplete "" `
     -ExpectedBehavior "Should suggest task IDs" `
     -Validation {
         param($Tokens, $WordToComplete, $Prev, $Cur)
         if ($Prev -eq "rm") {
-            Assert-True $true "Should offer done and the flags for rm"
+            Assert-True $true "Should offer done, all and the flags for rm"
             return $true
         }
         return $false

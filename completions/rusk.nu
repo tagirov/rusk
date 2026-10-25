@@ -43,7 +43,7 @@ def get-commands [] {
     {value: "add", aliases: ["a"], description: "Add a new task"}
     {value: "edit", aliases: ["e"], description: "Edit tasks by id(s)"}
     {value: "mark", aliases: ["m"], description: "Mark tasks as done/undone"}
-    {value: "rm", aliases: [], description: "Delete tasks by id, or the completed ones (rm done)"}
+    {value: "rm", aliases: [], description: "Delete tasks by id, the completed ones (rm done) or every task (rm all)"}
     {value: "list", aliases: ["l"], description: "List all tasks"}
     {value: "search", aliases: ["s"], description: "Search tasks by text"}
     {value: "restore", aliases: ["r"], description: "Restore from backup"}
@@ -100,11 +100,11 @@ def get-yes-flags [] {
   ]
 }
 
-# rm subcommand: the age of the completed tasks to delete (value is free-form)
+# rm subcommand: the age of the tasks to delete (value is free-form)
 def get-older-flags [] {
   [
-    {value: "--older", description: "Only the tasks completed this long ago or earlier (7d, 2w, 1m), or on this date or earlier"}
-    {value: "--newer", description: "Only the tasks completed this long ago or later, or on this date or later; with --older, a range"}
+    {value: "--older", description: "Only the tasks completed (with `all`: due) this long ago or earlier (7d, 2w, 1m), or on this date or earlier"}
+    {value: "--newer", description: "Only the tasks completed (with `all`: due) this long ago or later, or on this date or later; with --older, a range"}
   ]
 }
 
@@ -557,24 +557,27 @@ def complete-mark [cur: string, command: string] {
   []
 }
 
-# Complete rm: ids, never offered, or the word `done`;
-# `--older`/`--newer` go with `done`, `--yes` with both. The word is offered
-# until it, or an id, is on the line (the --older/--newer value is a
-# free-form age or date: no candidates after it)
+# Complete rm: ids, never offered, or a word, `done` or `all`;
+# `--older`/`--newer` go with a word, `--yes` with both. The words are
+# offered until one of them, or an id, is on the line (the --older/--newer
+# value is a free-form age or date: no candidates after it)
 def complete-rm [spans: list<string>, cur: string, prev: string] {
   if $prev in ["--older", "--newer"] {
     return []
   }
   let before = (add-completed-args-after $spans)
-  let has_done = ("done" in $before)
+  let has_word = ("done" in $before) or ("all" in $before)
   let has_id = (($before | where {|w| $w =~ '^[0-9,]+$' } | length) > 0)
-  if ($cur == "") or ($cur | str starts-with "-") or ("done" | str starts-with $cur) {
-    let candidates = if $has_done {
+  if ($cur == "") or ($cur | str starts-with "-") or ("done" | str starts-with $cur) or ("all" | str starts-with $cur) {
+    let candidates = if $has_word {
       (get-older-flags) | append (get-yes-flags) | append (get-common-flags)
     } else if $has_id {
       (get-yes-flags) | append (get-common-flags)
     } else {
-      [{value: "done", description: "The completed tasks"}] | append (get-older-flags) | append (get-yes-flags) | append (get-common-flags)
+      [
+        {value: "done", description: "The completed tasks"}
+        {value: "all", description: "Every task, open or done"}
+      ] | append (get-older-flags) | append (get-yes-flags) | append (get-common-flags)
     }
     return (complete-flags $candidates $cur)
   }

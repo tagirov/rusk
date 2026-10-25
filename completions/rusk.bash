@@ -253,7 +253,7 @@ _rusk_complete_edit_flags() {
     return 0
 }
 
-# Flags for rm done (--older/--newer take an age or a date: free-form values)
+# Flags for rm done / rm all (--older/--newer take an age or a date: free-form values)
 _rusk_complete_rm_flags() {
     local gcur="$cur"
     COMPREPLY=($(compgen -W "--older --newer --yes -y --help -h" -- "$gcur"))
@@ -429,23 +429,23 @@ _rusk_completion() {
             ;;
 
         rm)
-            # Ids (never offered) or the word `done`; `--older`/`--newer` go
-            # with `done`, `--yes` with both. The word is offered until it,
-            # or an id, is on the line.
+            # Ids (never offered) or a word, `done` or `all`; `--older`/`--newer`
+            # go with a word, `--yes` with both. The words are offered until
+            # one of them, or an id, is on the line.
             if [[ "$prev" == "--older" || "$prev" == "--newer" ]]; then
                 # Free-form value (an age or a date): no candidates
                 :
-            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]] || [[ "done" == "$cur"* ]]; then
-                local has_done=0 w
+            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]] || [[ "done" == "$cur"* ]] || [[ "all" == "$cur"* ]]; then
+                local has_word=0 w
                 for w in "${COMP_WORDS[@]:0:COMP_CWORD}"; do
-                    [[ "$w" == "done" ]] && has_done=1
+                    [[ "$w" == "done" || "$w" == "all" ]] && has_word=1
                 done
-                if [[ $has_done -eq 1 ]]; then
+                if [[ $has_word -eq 1 ]]; then
                     _rusk_complete_rm_flags
                 elif [[ "$(_rusk_count_ids)" -gt 0 ]]; then
                     COMPREPLY=($(compgen -W "--yes -y --help -h" -- "$cur"))
                 else
-                    COMPREPLY=($(compgen -W "done --older --newer --yes -y --help -h" -- "$cur"))
+                    COMPREPLY=($(compgen -W "done all --older --newer --yes -y --help -h" -- "$cur"))
                 fi
             fi
             ;;

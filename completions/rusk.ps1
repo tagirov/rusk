@@ -467,26 +467,31 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
         }
 
         { $_ -in 'rm' } {
-            # Ids (never offered) or the word `done`; `--older`/`--newer` go
-            # with `done`, `--yes` with both. The word is offered until it,
-            # or an id, is on the line.
+            # Ids (never offered) or a word, `done` or `all`; `--older`/`--newer`
+            # go with a word, `--yes` with both. The words are offered until
+            # one of them, or an id, is on the line.
             if ($prev -in @('--older', '--newer')) {
                 # Free-form value (an age or a date): no candidates
                 return @()
             }
-            $hasDone = $false
+            $hasWord = $false
             $hasId = $false
             for ($i = 2; $i -lt $tokens.Count; $i++) {
                 $v = _rusk_token_text $tokens[$i]
-                if ($v -eq 'done') { $hasDone = $true }
+                if ($v -in @('done', 'all')) { $hasWord = $true }
                 if ($v -match '^[0-9,]+$') { $hasId = $true }
             }
             $results = @()
-            if (-not $hasDone -and -not $hasId -and -not ($wordToComplete -like '-*') -and ('done' -like "$wordToComplete*")) {
-                $results += [System.Management.Automation.CompletionResult]::new('done', 'done', [System.Management.Automation.CompletionResultType]::ParameterValue, 'The completed tasks')
+            if (-not $hasWord -and -not $hasId -and -not ($wordToComplete -like '-*')) {
+                if ('done' -like "$wordToComplete*") {
+                    $results += [System.Management.Automation.CompletionResult]::new('done', 'done', [System.Management.Automation.CompletionResultType]::ParameterValue, 'The completed tasks')
+                }
+                if ('all' -like "$wordToComplete*") {
+                    $results += [System.Management.Automation.CompletionResult]::new('all', 'all', [System.Management.Automation.CompletionResultType]::ParameterValue, 'Every task, open or done')
+                }
             }
             if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur)) {
-                $flags = if ($hasDone) { @('--older', '--newer', '--yes', '-y', '--help', '-h') }
+                $flags = if ($hasWord) { @('--older', '--newer', '--yes', '-y', '--help', '-h') }
                          elseif ($hasId) { @('--yes', '-y', '--help', '-h') }
                          else { @('--older', '--newer', '--yes', '-y', '--help', '-h') }
                 $results += _rusk_emit_flag_completions $flags $wordToComplete $tokens $command $cur

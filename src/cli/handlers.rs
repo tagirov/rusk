@@ -64,7 +64,7 @@ impl HandlerCLI {
             heading = format!("{heading} ({})", Self::colored_short_date(date, task.done));
         }
         let suffix = Self::after_suffix(task).map(|s| format!(" {s}"));
-        Self::print_task_text_with_wrapping_suffixed(&heading, &task.text, suffix.as_deref())
+        Self::print_task_text_with_wrapping_suffixed(&heading, &task.text, suffix.as_deref(), task.done)
     }
 
     /// The draft slot of one task, in the directory the drafts of this
@@ -513,7 +513,8 @@ impl HandlerCLI {
         let mut confirmed = Vec::new();
         for task in tasks {
             let dependents = crate::storage::dependents_of(all, task.id);
-            let prompt = Self::print_delete_confirmation_dialog(&task.text, task.id, &dependents)?;
+            let prompt =
+                Self::print_delete_confirmation_dialog(&task.text, task.done, task.id, &dependents)?;
             if Self::read_confirmation(&prompt)? {
                 confirmed.push(task);
             } else {
@@ -675,7 +676,7 @@ impl HandlerCLI {
             };
             let heading = Self::task_heading(theme().success.paint(what), id);
             let suffix = Self::after_suffix(task).map(|s| format!(" {s}"));
-            Self::print_task_text_with_wrapping_suffixed(&heading, &task.text, suffix.as_deref())?;
+            Self::print_task_text_with_wrapping_suffixed(&heading, &task.text, suffix.as_deref(), task.done)?;
         }
 
         Self::print_not_found_ids(&not_found)
@@ -769,7 +770,7 @@ impl HandlerCLI {
                     &Self::format_after_for_display(&task.after),
                 ));
             }
-            Self::print_task_text_with_wrapping(&Self::task_heading(what, id), &task.text)?;
+            Self::print_task_text_with_wrapping(&Self::task_heading(what, id), &task.text, task.done)?;
             for line in lines {
                 outln!("{line}")?;
             }

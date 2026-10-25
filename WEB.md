@@ -10,7 +10,8 @@ template: no node toolchain, no build step. Two commands share it:
 
 Theme colors come from the configuration file ([CONFIG.md](CONFIG.md)) as CSS
 variables, so the page matches your terminal theme. Light/dark surfaces follow
-the system `prefers-color-scheme`.
+the system `prefers-color-scheme`, unless the `web_*` theme keys set them
+(see [CONFIG.md](CONFIG.md#web-mapping)).
 
 - [rusk gen](#rusk-gen)
 - [rusk serve](#rusk-serve)

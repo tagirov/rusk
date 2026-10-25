@@ -695,7 +695,9 @@ looking at a snapshot:
   stream by rules of its own). `RUSK_NO_COLOR`, a non-empty `NO_COLOR` or
   `no_color = true` turn them off, and nothing turns them back on for the
   run. Otherwise `CLICOLOR_FORCE` (not empty, not `0`) turns them on,
-  `CLICOLOR=0` or `TERM=dumb` off, and a terminal on stdout decides.
+  `CLICOLOR=0` or `TERM=dumb` off, and a terminal on stdout decides. clap
+  paints in the theme's colors (`Theme::clap_styles`: `error`, `success`
+  for a valid value, `warning` for an invalid one).
 - The list is laid out by `HandlerCLI::format_task_list`, a pure function
   of the tasks and the width. Wrapping (`wrap_rows`) yields rows as byte
   ranges of the escaped text, so a search match (a byte range from

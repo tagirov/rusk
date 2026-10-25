@@ -45,10 +45,14 @@ fn tasks_json(tasks: &[Task]) -> Result<String> {
         .replace('\u{2029}', "\\u2029"))
 }
 
+/// The browser chrome's color (`theme-color`): the page background of the
+/// dark scheme, `web_bg` when set.
+const DEFAULT_THEME_COLOR: &str = "#111114";
+
 /// `signed_in`: the page is served behind a token, and offers to sign out.
 pub fn render_template(
     mode: Mode,
-    theme_css: &str,
+    theme: &Theme,
     tasks: &[Task],
     generated: &str,
     signed_in: bool,
@@ -67,13 +71,19 @@ pub fn render_template(
     let html = TEMPLATE
         .replacen("<!--__ICON__-->", icon, 1)
         .replacen("__MODE__", mode_str, 1)
-        .replacen("/*__THEME__*/", theme_css, 1)
+        .replacen("/*__THEME__*/", &theme_css(theme), 1)
+        .replacen(
+            "__THEME_COLOR__",
+            &theme.web_bg.to_css_hex().unwrap_or_else(|| DEFAULT_THEME_COLOR.to_string()),
+            1,
+        )
         .replacen("__GENERATED__", generated, 1)
         .replacen("__SIGNED_IN__", if signed_in { "true" } else { "false" }, 1);
     // Validate before injecting task data, which may legitimately contain
     // marker-looking text.
     ensure!(
         !html.contains("__MODE__")
+            && !html.contains("__THEME_COLOR__")
             && !html.contains("__GENERATED__")
             && !html.contains("__SIGNED_IN__")
             && !html.contains("__ICON__"),
@@ -91,7 +101,7 @@ pub fn render_static_page(tasks: &[Task]) -> Result<String> {
     let generated = chrono::Local::now().format("%d-%m-%Y %H:%M").to_string();
     render_template(
         Mode::Static,
-        &theme_css(&crate::config::config().theme),
+        &crate::config::config().theme,
         tasks,
         &generated,
         false,
@@ -101,13 +111,7 @@ pub fn render_static_page(tasks: &[Task]) -> Result<String> {
 /// Live page for `rusk serve`: tasks inlined for instant first paint,
 /// then the client re-fetches from the API.
 pub fn render_live_page(tasks: &[Task], signed_in: bool) -> Result<String> {
-    render_template(
-        Mode::Live,
-        &theme_css(&crate::config::config().theme),
-        tasks,
-        "",
-        signed_in,
-    )
+    render_template(Mode::Live, &crate::config::config().theme, tasks, "", signed_in)
 }
 
 #[cfg(test)]
@@ -128,20 +132,20 @@ mod tests {
     #[test]
     fn all_markers_are_replaced() {
         let html =
-            render_template(Mode::Static, "--rusk-accent: #ffa500;", &[task("hello")], "now", false)
-                .unwrap();
-        for marker in ["__MODE__", "__THEME__", "__DATA__", "__GENERATED__"] {
+            render_template(Mode::Static, &Theme::default(), &[task("hello")], "now", false).unwrap();
+        for marker in ["__MODE__", "__THEME__", "__THEME_COLOR__", "__DATA__", "__GENERATED__"] {
             assert!(!html.contains(marker), "marker {marker} left in output");
         }
         assert!(html.contains(r#"mode: "static""#));
         assert!(html.contains("--rusk-accent: #ffa500;"));
+        assert!(html.contains(r##"<meta name="theme-color" content="#111114">"##));
         assert!(html.contains("hello"));
         assert!(html.contains(r#"generated: "now""#));
     }
 
     #[test]
     fn live_mode_marker() {
-        let html = render_template(Mode::Live, "", &[], "", true).unwrap();
+        let html = render_template(Mode::Live, &Theme::default(), &[], "", true).unwrap();
         assert!(html.contains(r#"mode: "live""#));
         assert!(html.contains("tasks: []"));
     }
@@ -149,13 +153,14 @@ mod tests {
     #[test]
     fn script_injection_is_neutralized() {
         let evil = "</script><script>alert(1)</script>";
-        let html = render_template(Mode::Static, "", &[task(evil)], "", false).unwrap();
+        let html = render_template(Mode::Static, &Theme::default(), &[task(evil)], "", false).unwrap();
         assert!(!html.contains(evil), "raw </script> from task text must not appear");
         assert!(html.contains("\\u003c/script>\\u003cscript>"));
 
         // SECURITY.md L2: a line separator is a character of the text,
         // not the end of the string literal — in old engines too.
-        let html = render_template(Mode::Static, "", &[task("a\u{2028}b\u{2029}c")], "", false).unwrap();
+        let html =
+            render_template(Mode::Static, &Theme::default(), &[task("a\u{2028}b\u{2029}c")], "", false).unwrap();
         assert!(!html.contains('\u{2028}') && !html.contains('\u{2029}'));
         assert!(html.contains("a\\u2028b\\u2029c"), "{html}");
     }
@@ -170,5 +175,32 @@ mod tests {
         assert!(css.contains("--rusk-priority-marker: #ffa500;"));
         assert!(css.contains("--rusk-date-overdue: #cd0000;"));
         assert!(!css.contains("--rusk-task-id"), "Default colors are skipped");
+    }
+
+    /// The page's own surfaces follow the `web_*` keys: a set one reaches
+    /// the page as a CSS variable the stylesheet falls back from, and the
+    /// browser chrome takes the background.
+    #[test]
+    fn web_keys_reach_the_page() {
+        let plain = render_template(Mode::Live, &Theme::default(), &[], "", false).unwrap();
+        assert!(!plain.contains("--rusk-web-bg:"), "unset web keys leave the page its own colors");
+        assert!(plain.contains("--bg: var(--rusk-web-bg, #111114);"));
+        assert!(plain.contains("--bg: var(--rusk-web-bg-light, var(--rusk-web-bg, #f5f5f7));"));
+        assert!(plain.contains("color: var(--rusk-web-accent-text, #14140a);"));
+        assert!(plain.contains("color: var(--rusk-web-error-text, #fff);"));
+        assert!(plain.contains(".text { color: var(--rusk-task-text, inherit);"));
+        assert!(plain.contains("color: var(--rusk-task-done-text, var(--rusk-task-text, inherit));"));
+        assert!(plain.contains("color-mix(in srgb, var(--rusk-web-backdrop, #000) 55%, transparent)"));
+        assert!(plain.contains("color-mix(in srgb, var(--rusk-web-error-text, #fff) 20%, transparent)"));
+
+        let theme = Theme {
+            web_bg: ColorValue::Rgb(0, 0, 0),
+            web_text_light: ColorValue::Named(0),
+            ..Theme::default()
+        };
+        let themed = render_template(Mode::Live, &theme, &[], "", false).unwrap();
+        assert!(themed.contains("--rusk-web-bg: #000000;"));
+        assert!(themed.contains("--rusk-web-text-light: #000000;"));
+        assert!(themed.contains(r##"<meta name="theme-color" content="#000000">"##));
     }
 }

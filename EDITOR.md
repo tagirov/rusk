@@ -133,8 +133,10 @@ third line …
 | `Shift+Ctrl+Home` / `Shift+Ctrl+End` | Extend to buffer start / end. |
 | `Ctrl+A` | Select the whole buffer. |
 
-The selection is drawn in reverse video, with colors off (`NO_COLOR`) as
-well. An empty line inside it shows one selected cell.
+The selection is drawn in reverse video, or on the background color the
+`editor_selection` theme key sets ([CONFIG.md](CONFIG.md#theme)); with
+colors off (`NO_COLOR`) in reverse video as well. An empty line inside it
+shows one selected cell.
 
 ### Editing
 

@@ -152,11 +152,15 @@ Each key colors one semantic group of elements. Values are either one of the
 and their `bright_*` variants. ANSI names follow your terminal palette; hex
 values render as truecolor.
 
+A key whose default is the terminal default (`task_id`, `hint`, ...) leaves
+its elements in the terminal's own foreground color until set; their style
+(bold, dim) stays either way.
+
 | Key | Default | Used for |
 |---|---|---|
-| `error` | `red` | Error messages |
-| `success` | `green` | "Added task", "Edited task", confirmation checkmarks |
-| `warning` | `yellow` | Warnings, "No tasks", skipped/not-found notices |
+| `error` | `red` | Error messages, the argument errors of the command line included |
+| `success` | `green` | "Added task", "Edited task", confirmation checkmarks; a valid value in an argument error |
+| `warning` | `yellow` | Warnings, "No tasks", skipped/not-found notices; the invalid value in an argument error |
 | `notice` | `magenta` | "Task unchanged", "Canceled ..." |
 | `info` | `cyan` | Date-change details, completions instructions |
 | `emphasis` | `white` | IDs and counts inside prompts |
@@ -174,6 +178,17 @@ values render as truecolor.
 | `editor_footer` | `#808080` | Editor footer and scroll arrows |
 | `editor_dirty` | `#b9b9be` | Editor unsaved-changes dot `●` |
 | `editor_clean` | `#646464` | Editor saved dot `○` |
+| `hint` | terminal default | `[y/N]` prompt hints; the editor help's notes, rule and hint line (always dim) |
+| `editor_help` | terminal default | The editor help's title and key names (always bold) |
+| `editor_selection` | terminal default | The editor's selection: reverse video by default; a set color is its background |
+| `task_text` | terminal default | Task text in the list, the delete dialog and the reports of `add`, `edit` and `mark` (bold where it was); the text of the web page's tasks |
+| `task_done_text` | same as `task_text` | The text of done tasks, when it should differ (the web page fades it as before) |
+| `editor_text` | terminal default | The text in the editor |
+| `web_bg`, `web_card`, `web_text`, `web_muted`, `web_border` | the page's own | The web page's surfaces: background, cards and inputs, text, secondary text, borders. Unset, the page keeps its own dark and light colors; set, a key colors both schemes. See [Web mapping](#web-mapping) |
+| `web_bg_light`, `web_card_light`, `web_text_light`, `web_muted_light`, `web_border_light` | the page's own | The same for the light scheme alone, over the key without `_light` |
+| `web_accent_text` | `#14140a` | Text on the web page's accent buttons |
+| `web_error_text` | `#ffffff` | Text on the web page's error banner |
+| `web_backdrop` | `#000000` | The backdrop behind the web page's dialogs, shown at 55% |
 
 Out of the box the theme reproduces the previous hardcoded colors exactly.
 
@@ -196,6 +211,14 @@ pass through unchanged. ANSI names map through the canonical xterm palette:
 
 Terminal rendering of named colors follows *your* terminal palette, while
 the web export uses this fixed table.
+
+The `web_*` keys color the page itself — its surfaces, text and borders, on
+the sign-in page of `rusk serve` too — and nothing in the terminal. One left
+at `default` is not exported: the page keeps its own dark and light values
+for that surface, following the system `prefers-color-scheme`. `web_bg`
+also sets the browser chrome's `theme-color`. Translucent surfaces keep
+their opacity over the theme color: the dialog backdrop is `web_backdrop`
+at 55%, the button on the error banner `web_error_text` at 20%.
 
 ## Example
 

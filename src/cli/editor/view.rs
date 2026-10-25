@@ -6,7 +6,7 @@ use colored::*;
 use crossterm::{
     QueueableCommand,
     cursor::{Hide, MoveTo, Show},
-    style::{Attribute, Print, SetAttribute},
+    style::{Attribute, Color, Print, SetAttribute, SetBackgroundColor},
     terminal::{Clear, ClearType, size},
 };
 use std::io::{self, Write};
@@ -301,13 +301,29 @@ pub(super) fn soft_vertical_move(
     (*buf_idx, range.start + in_chunk)
 }
 
-/// Selected text, in reverse video. Not through `colored`: with colors
-/// off (`NO_COLOR`) it prints no attribute at all, and the selection was
-/// not to be seen (found in passing in R30). Reverse video is no color.
+/// Selected text: on the `editor_selection` background when the theme
+/// names one and colors are on, in reverse video otherwise. Not through
+/// `colored`: with colors off (`NO_COLOR`) it prints no attribute at all,
+/// and the selection was not to be seen (found in passing in R30). Reverse
+/// video is no color.
 fn print_selected(stdout: &mut io::Stdout, text: &str) -> Result<()> {
-    stdout.queue(SetAttribute(Attribute::Reverse))?;
-    stdout.queue(Print(text))?;
-    stdout.queue(SetAttribute(Attribute::NoReverse))?;
+    let background = if crate::output::colors().on {
+        theme().editor_selection.to_crossterm()
+    } else {
+        None
+    };
+    match background {
+        Some(color) => {
+            stdout.queue(SetBackgroundColor(color))?;
+            stdout.queue(Print(text))?;
+            stdout.queue(SetBackgroundColor(Color::Reset))?;
+        }
+        None => {
+            stdout.queue(SetAttribute(Attribute::Reverse))?;
+            stdout.queue(Print(text))?;
+            stdout.queue(SetAttribute(Attribute::NoReverse))?;
+        }
+    }
     Ok(())
 }
 
@@ -383,7 +399,7 @@ fn print_visual_chunk(
                 stdout.queue(Print(theme().editor_date.paint(text).bold()))?;
             }
         } else {
-            stdout.queue(Print(text))?;
+            stdout.queue(Print(theme().editor_text.paint(text)))?;
         }
         Ok(())
     };

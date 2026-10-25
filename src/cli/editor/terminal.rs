@@ -20,6 +20,8 @@ use crossterm::{
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::config::theme;
+
 struct ShowCursorOnDrop;
 impl Drop for ShowCursorOnDrop {
     fn drop(&mut self) {
@@ -377,14 +379,14 @@ pub(super) fn show_help(stdout: &mut io::Stdout) -> Result<()> {
 
         let title_col = term_cols.saturating_sub(HELP_TITLE.chars().count()) / 2;
         stdout.queue(MoveTo(title_col as u16, start_row as u16))?;
-        stdout.queue(Print(HELP_TITLE.bold()))?;
+        stdout.queue(Print(theme().editor_help.paint(HELP_TITLE).bold()))?;
 
         // Thin underline beneath the title, as wide as the body block.
         let rule_width = body_width.max(HELP_TITLE.chars().count());
         let rule: String = "─".repeat(rule_width);
         let rule_col = term_cols.saturating_sub(rule_width) / 2;
         stdout.queue(MoveTo(rule_col as u16, (start_row + 1) as u16))?;
-        stdout.queue(Print(rule.dimmed()))?;
+        stdout.queue(Print(theme().hint.paint(&rule).dimmed()))?;
 
         let first = if overflow { *body_scroll } else { 0 };
         let n = if overflow {
@@ -398,20 +400,20 @@ pub(super) fn show_help(stdout: &mut io::Stdout) -> Result<()> {
             match row {
                 HelpRow::Section(s) => {
                     stdout.queue(MoveTo(body_start_col as u16, y))?;
-                    stdout.queue(Print(crate::config::theme().info.paint(s).bold()))?;
+                    stdout.queue(Print(theme().info.paint(s).bold()))?;
                 }
                 HelpRow::Pair(k, d) => {
                     stdout.queue(MoveTo(body_start_col as u16, y))?;
                     stdout.queue(Print(" ".repeat(BODY_INDENT)))?;
                     let padded = pad_right_chars(k, key_col);
-                    stdout.queue(Print(padded.bold()))?;
+                    stdout.queue(Print(theme().editor_help.paint(&padded).bold()))?;
                     stdout.queue(Print("  "))?;
                     stdout.queue(Print(d.normal()))?;
                 }
                 HelpRow::Note(text) => {
                     stdout.queue(MoveTo(body_start_col as u16, y))?;
                     stdout.queue(Print(" ".repeat(BODY_INDENT)))?;
-                    stdout.queue(Print(text.dimmed().italic()))?;
+                    stdout.queue(Print(theme().hint.paint(text).dimmed().italic()))?;
                 }
                 HelpRow::Blank => {}
             }
@@ -426,7 +428,7 @@ pub(super) fn show_help(stdout: &mut io::Stdout) -> Result<()> {
         let hint_row = last_body_row + 2;
         let hint_col = term_cols.saturating_sub(HELP_HINT.chars().count()) / 2;
         stdout.queue(MoveTo(hint_col as u16, hint_row as u16))?;
-        stdout.queue(Print(HELP_HINT.dimmed().italic()))?;
+        stdout.queue(Print(theme().hint.paint(HELP_HINT).dimmed().italic()))?;
         stdout.flush().ok();
         Ok(())
     };
@@ -532,8 +534,8 @@ pub(super) fn confirm_discard(stdout: &mut io::Stdout, dialog_row: Option<u16>) 
     stdout.queue(MoveTo(0, row))?;
     stdout.queue(Clear(ClearType::CurrentLine))?;
     stdout.queue(MoveTo(col as u16, row))?;
-    stdout.queue(Print(crate::config::theme().accent.paint(" Discard changes? ")))?;
-    stdout.queue(Print("[y/N] ".dimmed()))?;
+    stdout.queue(Print(theme().accent.paint(" Discard changes? ")))?;
+    stdout.queue(Print(theme().hint.paint("[y/N] ").dimmed()))?;
     stdout.flush().ok();
     loop {
         let Some(event) = read_event()? else {

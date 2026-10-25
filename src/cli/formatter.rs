@@ -4,7 +4,7 @@ use anyhow::Result;
 use colored::*;
 
 use super::HandlerCLI;
-use crate::config::theme;
+use crate::config::{ColorValue, theme};
 use crate::model::Task;
 use crate::search::Query;
 
@@ -24,6 +24,15 @@ const SHORTENED: &str = "…";
 /// A row of wrapped text: the byte ranges of the words (or of the pieces of
 /// a word too long for a row) it shows, printed with one space between them.
 type Row = Vec<Range<usize>>;
+
+/// What a span of a task's text is painted as, apart from the text color.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Highlight {
+    /// A keyword at the head of the text (`keyword`).
+    Keyword,
+    /// What the search found (`search_match`, bold).
+    Match,
+}
 
 impl HandlerCLI {
     #[doc(hidden)]
@@ -88,20 +97,33 @@ impl HandlerCLI {
         color.paint(&Self::short_date(date))
     }
 
-    pub(crate) fn print_task_text_with_wrapping(prefix: &str, text: &str) -> Result<()> {
-        Self::print_task_text_with_wrapping_suffixed(prefix, text, None)
+    /// The theme color of a task's text: `task_done_text` for a done task
+    /// when that is set, else `task_text`.
+    pub(crate) fn task_text_color(done: bool) -> ColorValue {
+        let theme = theme();
+        if done && theme.task_done_text != ColorValue::Default {
+            theme.task_done_text
+        } else {
+            theme.task_text
+        }
     }
 
-    /// Prints a task's `text` in bold under `prefix`, wrapped to the
-    /// terminal, and appends `suffix` verbatim after the last line. `text` is
-    /// the task's own, unstyled: its control characters are escaped here, so
-    /// a task cannot drive the terminal, and each wrapped line is styled on
-    /// its own. The suffix keeps its ANSI styling; one that would push the
-    /// last line past the terminal width gets a line of its own instead.
+    pub(crate) fn print_task_text_with_wrapping(prefix: &str, text: &str, done: bool) -> Result<()> {
+        Self::print_task_text_with_wrapping_suffixed(prefix, text, None, done)
+    }
+
+    /// Prints a task's `text` in bold, in the task text color (`done` picks
+    /// it), under `prefix`, wrapped to the terminal, and appends `suffix`
+    /// verbatim after the last line. `text` is the task's own, unstyled: its
+    /// control characters are escaped here, so a task cannot drive the
+    /// terminal, and each wrapped line is styled on its own. The suffix
+    /// keeps its ANSI styling; one that would push the last line past the
+    /// terminal width gets a line of its own instead.
     pub(crate) fn print_task_text_with_wrapping_suffixed(
         prefix: &str,
         text: &str,
         suffix: Option<&str>,
+        done: bool,
     ) -> Result<()> {
         let max_line_width = Self::get_max_line_width();
         const LEFT_MARGIN: usize = 4;
@@ -114,6 +136,7 @@ impl HandlerCLI {
 
         let mut out = format!("{prefix}\n");
         let left_indent = " ".repeat(LEFT_MARGIN);
+        let color = Self::task_text_color(done);
         let last = wrapped_lines.len().saturating_sub(1);
         let last_line_width = wrapped_lines.last().map_or(0, |l| crate::width::width(l));
         let suffix_fits =
@@ -123,7 +146,7 @@ impl HandlerCLI {
                 Some(s) if i == last && suffix_fits => s,
                 _ => "",
             };
-            out.push_str(&format!("{}{}{}\n", left_indent, line.bold(), tail));
+            out.push_str(&format!("{}{}{}\n", left_indent, color.paint(line).bold(), tail));
         }
         if let Some(s) = suffix
             && !suffix_fits
@@ -380,50 +403,79 @@ impl HandlerCLI {
     /// [`wrap_text_by_words`]: Self::wrap_text_by_words
     #[doc(hidden)]
     pub fn paint_rows(text: &str, width: usize, query: Option<&Query>) -> Vec<String> {
+        Self::paint_rows_in(text, width, query, ColorValue::Default)
+    }
+
+    /// [`paint_rows`](Self::paint_rows) with the rest of the text in
+    /// `color` (nothing added for the terminal default) and a keyword at
+    /// the head of the text in the `keyword` color — unless a match reaches
+    /// into it: the match wins where they meet.
+    pub(crate) fn paint_rows_in(
+        text: &str,
+        width: usize,
+        query: Option<&Query>,
+        color: ColorValue,
+    ) -> Vec<String> {
         let rows = Self::wrap_rows(text, width);
         let matches = query.map_or_else(Vec::new, |query| query.find_all(text));
+        // In order and disjoint: the keyword is the first word, and it is
+        // left out when a match (they are in order, too) begins inside it.
+        let mut spans: Vec<(Range<usize>, Highlight)> = Vec::new();
+        if let Some(first) = rows.first().and_then(|row| row.first())
+            && Self::is_keyword(&text[first.clone()])
+            && matches.first().is_none_or(|m| m.start >= first.end)
+        {
+            spans.push((first.clone(), Highlight::Keyword));
+        }
+        spans.extend(matches.into_iter().map(|m| (m, Highlight::Match)));
         rows.iter()
             .map(|row| {
-                if matches.is_empty() {
-                    Self::row_text(text, row)
+                if spans.is_empty() {
+                    color.paint(&Self::row_text(text, row)).to_string()
                 } else {
-                    Self::paint_row(text, row, &matches)
+                    Self::paint_row(text, row, &spans, color)
                 }
             })
             .collect()
     }
 
-    fn paint_row(text: &str, row: &[Range<usize>], matches: &[Range<usize>]) -> String {
-        // Runs of the row, each wholly inside a match or wholly outside:
+    fn paint_row(
+        text: &str,
+        row: &[Range<usize>],
+        spans: &[(Range<usize>, Highlight)],
+        color: ColorValue,
+    ) -> String {
+        // Runs of the row, each wholly inside one span or wholly outside:
         // neighbors in the same state are merged, so a phrase is painted as
         // one span.
-        let mut runs: Vec<(String, bool)> = Vec::new();
-        let mut push = |piece: &str, lit: bool| match runs.last_mut() {
+        let mut runs: Vec<(String, Option<Highlight>)> = Vec::new();
+        let mut push = |piece: &str, lit: Option<Highlight>| match runs.last_mut() {
             Some((run, run_lit)) if *run_lit == lit => run.push_str(piece),
             _ => runs.push((piece.to_string(), lit)),
         };
-        // The matches are in order and do not overlap: the first one that
+        // The spans are in order and do not overlap: the first one that
         // ends after `at` is the one `at` is in, or else the next to come.
         // Looked up by bisection, so painting takes time in proportion to
         // the text, however many matches it holds.
-        let from = |at: usize| matches.partition_point(|m| m.end <= at);
+        let from = |at: usize| spans.partition_point(|(m, _)| m.end <= at);
         for (i, range) in row.iter().enumerate() {
             if i > 0 {
                 // The space stands for the whitespace between two words: lit
-                // when a match runs on across it.
+                // when a span runs on across it.
                 let gap = row[i - 1].end..range.start;
-                let lit = matches
+                let lit = spans
                     .get(from(gap.start))
-                    .is_some_and(|m| m.start < gap.start && gap.end < m.end);
+                    .filter(|(m, _)| m.start < gap.start && gap.end < m.end)
+                    .map(|(_, highlight)| *highlight);
                 push(" ", lit);
             }
             let mut at = range.start;
             while at < range.end {
-                // Up to the next boundary of a match, or the end of the piece.
-                let (lit, next) = match matches.get(from(at)) {
-                    Some(m) if m.start <= at => (true, m.end),
-                    Some(m) => (false, m.start),
-                    None => (false, range.end),
+                // Up to the next boundary of a span, or the end of the piece.
+                let (lit, next) = match spans.get(from(at)) {
+                    Some((m, highlight)) if m.start <= at => (Some(*highlight), m.end),
+                    Some((m, _)) => (None, m.start),
+                    None => (None, range.end),
                 };
                 let next = next.min(range.end);
                 push(&text[at..next], lit);
@@ -431,12 +483,10 @@ impl HandlerCLI {
             }
         }
         runs.into_iter()
-            .map(|(run, lit)| {
-                if lit {
-                    theme().search_match.paint(&run).bold().to_string()
-                } else {
-                    run
-                }
+            .map(|(run, lit)| match lit {
+                Some(Highlight::Match) => theme().search_match.paint(&run).bold().to_string(),
+                Some(Highlight::Keyword) => theme().keyword.paint(&run).to_string(),
+                None => color.paint(&run).to_string(),
             })
             .collect()
     }
@@ -556,16 +606,16 @@ impl HandlerCLI {
             } else {
                 available_width
             };
-            // A keyword at the head of the text is colored on the first row,
-            // before the compact row gets its `…`.
+            // The text in its theme color (a done task may have its own),
+            // a keyword at its head in the keyword color; the compact row
+            // gets its `…` after.
+            let color = Self::task_text_color(task.done);
             let rows = if compact {
                 let (row, shortened) = Self::compact_row_parts(&shown, wrap_width);
-                let mark = if shortened { SHORTENED } else { "" };
-                vec![format!("{}{mark}", Self::highlight_keywords(&row))]
+                let mark = if shortened { color.paint(SHORTENED).to_string() } else { String::new() };
+                vec![format!("{}{mark}", Self::highlight_keywords_in(&row, color))]
             } else {
-                let mut rows = Self::paint_rows(&shown, wrap_width, query);
-                rows[0] = Self::highlight_keywords(&rows[0]).into_owned();
-                rows
+                Self::paint_rows_in(&shown, wrap_width, query, color)
             };
 
             // Done tasks get the id in the marker color too, matching the ✔.
@@ -625,19 +675,31 @@ impl HandlerCLI {
     /// `TEMP INFO FIXME WIP`) counts — "TEMPO" stays untouched.
     #[doc(hidden)]
     pub fn highlight_keywords(line: &str) -> std::borrow::Cow<'_, str> {
+        Self::highlight_keywords_in(line, ColorValue::Default)
+    }
+
+    /// [`highlight_keywords`](Self::highlight_keywords) with the rest of
+    /// the line in `color` (nothing added for the terminal default).
+    pub(crate) fn highlight_keywords_in(line: &str, color: ColorValue) -> std::borrow::Cow<'_, str> {
         let end = line
             .find(char::is_whitespace)
             .unwrap_or(line.len());
         let token = &line[..end];
-        let keywords = &crate::config::config().keywords;
-        if token.is_empty() || !keywords.iter().any(|keyword| keyword == token) {
-            return std::borrow::Cow::Borrowed(line);
+        if !Self::is_keyword(token) {
+            return if color == ColorValue::Default || line.is_empty() {
+                std::borrow::Cow::Borrowed(line)
+            } else {
+                std::borrow::Cow::Owned(color.paint(line).to_string())
+            };
         }
-        std::borrow::Cow::Owned(format!(
-            "{}{}",
-            theme().keyword.paint(token),
-            &line[end..]
-        ))
+        let rest = &line[end..];
+        let rest = if rest.is_empty() { String::new() } else { color.paint(rest).to_string() };
+        std::borrow::Cow::Owned(format!("{}{rest}", theme().keyword.paint(token)))
+    }
+
+    /// Whether `token` is one of the config `keywords`.
+    fn is_keyword(token: &str) -> bool {
+        !token.is_empty() && crate::config::config().keywords.iter().any(|keyword| keyword == token)
     }
 
     pub(crate) fn print_not_found_ids(not_found: &[crate::model::TaskId]) -> Result<()> {
@@ -756,6 +818,35 @@ mod tests {
         let painted = HandlerCLI::paint_rows("foo bar Foo", 80, Some(&Query::new("foo")));
         assert_eq!(lit(&painted[0]), "foo|Foo");
         assert_eq!(HandlerCLI::paint_rows("foo bar", 80, Some(&Query::new("baz"))), ["foo bar"]);
+    }
+
+    /// The task text takes its theme color around what is painted on its
+    /// own: a search match and a leading keyword.
+    #[test]
+    fn the_text_color_frames_matches_and_keywords() {
+        let _colors = crate::cli::tests::force_colors();
+        let color = ColorValue::Rgb(1, 2, 3);
+        let plain = |s: &str| color.paint(s).to_string();
+        let keyword = |s: &str| theme().keyword.paint(s).to_string();
+        let lit = |s: &str| theme().search_match.paint(s).bold().to_string();
+        assert_eq!(HandlerCLI::paint_rows_in("foo bar", 80, None, color), [plain("foo bar")]);
+        let painted = HandlerCLI::paint_rows_in("foo bar baz", 80, Some(&Query::new("bar")), color);
+        assert_eq!(painted, [format!("{}{}{}", plain("foo "), lit("bar"), plain(" baz"))]);
+        // A leading keyword keeps its own color; a match reaching into it wins.
+        let painted = HandlerCLI::paint_rows_in("TEMP fix", 80, None, color);
+        assert_eq!(painted, [format!("{}{}", keyword("TEMP"), plain(" fix"))]);
+        let painted = HandlerCLI::paint_rows_in("TEMP fix", 80, Some(&Query::new("TE")), color);
+        assert_eq!(painted, [format!("{}{}", lit("TE"), plain("MP fix"))]);
+        let painted = HandlerCLI::paint_rows_in("TEMP fix", 80, Some(&Query::new("fix")), color);
+        assert_eq!(painted, [format!("{}{}{}", keyword("TEMP"), plain(" "), lit("fix"))]);
+        // The terminal default adds nothing around the text.
+        assert_eq!(HandlerCLI::paint_rows("TEMP fix", 80, None), [format!("{} fix", keyword("TEMP"))]);
+        assert_eq!(HandlerCLI::paint_rows("TEMP", 80, None), [keyword("TEMP")]);
+        // The compact row goes the same way.
+        assert_eq!(HandlerCLI::highlight_keywords_in("TEMP fix", color), format!("{}{}", keyword("TEMP"), plain(" fix")));
+        assert_eq!(HandlerCLI::highlight_keywords_in("TEMP", color), keyword("TEMP"));
+        assert_eq!(HandlerCLI::highlight_keywords_in("fix", color), plain("fix"));
+        assert_eq!(HandlerCLI::highlight_keywords_in("fix", ColorValue::Default), "fix");
     }
 
     /// REVIEW section 4: every piece of a row looked through all the

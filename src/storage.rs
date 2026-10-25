@@ -1,5 +1,4 @@
 use anyhow::Result;
-use colored::*;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -228,7 +227,7 @@ pub fn remove_done(tasks: &mut Vec<Task>) -> usize {
 }
 
 fn eprint_db_location(location: &str) {
-    crate::errln!("{}", format!("Database path: {location}").blue());
+    crate::errln!("{}", crate::config::theme().info.paint(&format!("Database path: {location}")));
 }
 
 impl TaskManager {

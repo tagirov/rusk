@@ -18,10 +18,10 @@ pub(crate) fn is_bare(modifiers: KeyModifiers) -> bool {
 }
 
 impl HandlerCLI {
-    /// Shared "[y/N]: " tail for confirmation prompts: dimmed so the
-    /// accent-colored question stays the visual focus.
+    /// Shared "[y/N]: " tail for confirmation prompts: dimmed (in the
+    /// `hint` color) so the accent-colored question stays the visual focus.
     pub(crate) fn yn_hint() -> String {
-        format!("{} ", "[y/N]:".dimmed())
+        format!("{} ", theme().hint.paint("[y/N]:").dimmed())
     }
 
     /// Whether there is a terminal to talk to: the question on standard
@@ -105,6 +105,7 @@ impl HandlerCLI {
     /// names them, since the deletion takes it off their lists.
     pub(crate) fn print_delete_confirmation_dialog(
         task_text: &str,
+        done: bool,
         task_id: TaskId,
         dependents: &[TaskId],
     ) -> Result<String> {
@@ -141,16 +142,17 @@ impl HandlerCLI {
         )?;
 
         let left_indent = " ".repeat(LEFT_MARGIN);
+        let color = Self::task_text_color(done);
 
         for (idx, line) in wrapped_lines.iter().enumerate() {
             let is_last = idx == wrapped_lines.len() - 1;
             if is_last && prompt_fits_on_last_line {
                 // Prompt fits after the final text line: print inline and let
                 // the caller read the answer from this position.
-                out!("{}{}{}", left_indent, line.bold(), prompt_painted)?;
+                out!("{}{}{}", left_indent, color.paint(line).bold(), prompt_painted)?;
                 return Ok(String::new());
             }
-            outln!("{}{}", left_indent, line.bold())?;
+            outln!("{}{}", left_indent, color.paint(line).bold())?;
         }
 
         let spaces_before_prompt = max_line_width

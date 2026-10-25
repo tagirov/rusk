@@ -158,20 +158,27 @@ thread_local! {
     static BODY_READ: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// The sign-in page, in the theme's colors like the task page: the same
+/// CSS variables with the same fallbacks (see `template.html`).
 const LOGIN_PAGE: &str = r#"<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>rusk — sign in</title>
 <link rel="icon" href="data:,">
 <style>
-body{margin:0;display:grid;place-items:center;min-height:100vh;background:#111114;color:#e8e8ea;
+:root{/*__THEME__*/}
+:root{--bg:var(--rusk-web-bg,#111114);--card:var(--rusk-web-card,#1c1c21);--text:var(--rusk-web-text,#e8e8ea);
+--border:var(--rusk-web-border,#2a2a31)}
+@media (prefers-color-scheme:light){:root{--bg:var(--rusk-web-bg-light,var(--rusk-web-bg,#f5f5f7));
+--card:var(--rusk-web-card-light,var(--rusk-web-card,#fff));--text:var(--rusk-web-text-light,var(--rusk-web-text,#1b1b1f));
+--border:var(--rusk-web-border-light,var(--rusk-web-border,#e2e2e8))}}
+body{margin:0;display:grid;place-items:center;min-height:100vh;background:var(--bg);color:var(--text);
 font:16px/1.4 system-ui,sans-serif}
 form{display:flex;flex-direction:column;gap:12px;width:min(90vw,320px)}
 h1{font-size:18px;margin:0;text-align:center}
-input{background:#1c1c21;color:inherit;border:1px solid #2a2a31;border-radius:10px;padding:12px;font:inherit}
-button{background:#ffa500;border:0;border-radius:10px;padding:12px;font:inherit;font-weight:600;cursor:pointer}
-.wrong{margin:0;text-align:center;color:#ff5f5f}
-@media (prefers-color-scheme:light){body{background:#f5f5f7;color:#1b1b1f}input{background:#fff;border-color:#e2e2e8}}
+input{background:var(--card);color:inherit;border:1px solid var(--border);border-radius:10px;padding:12px;font:inherit}
+button{background:var(--rusk-accent,#ffa500);color:var(--rusk-web-accent-text,#14140a);border:0;border-radius:10px;padding:12px;font:inherit;font-weight:600;cursor:pointer}
+.wrong{margin:0;text-align:center;color:var(--rusk-error,#ff5f5f)}
 </style></head><body>
 <form method="post" action="/auth">
 <h1>rusk</h1>
@@ -187,7 +194,9 @@ fn login_page(wrong_token: bool) -> String {
     } else {
         ""
     };
-    LOGIN_PAGE.replace("<!--wrong-->", note)
+    LOGIN_PAGE
+        .replacen("/*__THEME__*/", &super::theme_css(&crate::config::config().theme), 1)
+        .replace("<!--wrong-->", note)
 }
 
 struct Reply {
@@ -969,6 +978,10 @@ mod tests {
     fn the_sign_in_page_says_when_the_token_was_wrong() {
         assert!(login_page(true).contains("That is not the access token."));
         assert!(!login_page(false).contains("not the access token"));
+        // In the theme's colors, like the task page.
+        let page = login_page(false);
+        assert!(page.contains("--rusk-accent: #ffa500;"), "{page}");
+        assert!(!page.contains("__THEME__"));
         assert!(!login_page(false).contains("<!--wrong-->"));
     }
 

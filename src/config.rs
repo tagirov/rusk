@@ -100,6 +100,47 @@ impl ColorValue {
             None => s.normal(),
         }
     }
+
+    /// The crossterm color for the editor, which paints past `colored`;
+    /// `None` for the terminal default. A named color is its index in the
+    /// terminal's palette, as `colored` renders it.
+    #[cfg(feature = "interactive")]
+    pub fn to_crossterm(self) -> Option<crossterm::style::Color> {
+        match self {
+            ColorValue::Named(i) => Some(crossterm::style::Color::AnsiValue(i)),
+            ColorValue::Rgb(r, g, b) => Some(crossterm::style::Color::Rgb { r, g, b }),
+            ColorValue::Default => None,
+        }
+    }
+
+    /// The color for clap's `--help` and argument errors; `None` for the
+    /// terminal default.
+    pub fn to_anstyle(self) -> Option<clap::builder::styling::Color> {
+        use clap::builder::styling::{AnsiColor, Color, RgbColor};
+        const ANSI: [AnsiColor; 16] = [
+            AnsiColor::Black,
+            AnsiColor::Red,
+            AnsiColor::Green,
+            AnsiColor::Yellow,
+            AnsiColor::Blue,
+            AnsiColor::Magenta,
+            AnsiColor::Cyan,
+            AnsiColor::White,
+            AnsiColor::BrightBlack,
+            AnsiColor::BrightRed,
+            AnsiColor::BrightGreen,
+            AnsiColor::BrightYellow,
+            AnsiColor::BrightBlue,
+            AnsiColor::BrightMagenta,
+            AnsiColor::BrightCyan,
+            AnsiColor::BrightWhite,
+        ];
+        match self {
+            ColorValue::Named(i) => Some(Color::Ansi(ANSI[i as usize])),
+            ColorValue::Rgb(r, g, b) => Some(Color::Rgb(RgbColor(r, g, b))),
+            ColorValue::Default => None,
+        }
+    }
 }
 
 /// Defines [`Theme`] with per-key defaults plus key-string lookup used by the
@@ -140,6 +181,17 @@ macro_rules! theme_keys {
             pub fn entries(&self) -> Vec<(&'static str, ColorValue)> {
                 vec![ $( (stringify!($field), self.$field), )+ ]
             }
+
+            /// clap's styles for `--help` and argument errors: its own
+            /// (bold, underline) with the theme's colors where clap paints
+            /// one — an error, a valid value, an invalid one.
+            pub fn clap_styles(&self) -> clap::builder::Styles {
+                use clap::builder::styling::Style;
+                clap::builder::Styles::styled()
+                    .error(Style::new().bold().fg_color(self.error.to_anstyle()))
+                    .valid(Style::new().fg_color(self.success.to_anstyle()))
+                    .invalid(Style::new().fg_color(self.warning.to_anstyle()))
+            }
         }
     };
 }
@@ -165,6 +217,28 @@ theme_keys! {
     editor_footer => ColorValue::Rgb(128, 128, 128),
     editor_dirty => ColorValue::Rgb(185, 185, 190),
     editor_clean => ColorValue::Rgb(100, 100, 100),
+    hint => ColorValue::Default,              // dim only: `[y/N]`, the editor help's notes
+    editor_help => ColorValue::Default,       // bold only: the editor help's title and keys
+    editor_selection => ColorValue::Default,  // reverse video; a color is the background
+    task_text => ColorValue::Default,         // task text in the list, dialogs, reports
+    task_done_text => ColorValue::Default,    // done tasks' text; Default = task_text
+    editor_text => ColorValue::Default,       // the editor's text
+    // The web page's own surfaces: the template's dark and light values
+    // unless set. A `web_*` key colors both schemes, its `_light` twin
+    // the light one alone.
+    web_bg => ColorValue::Default,
+    web_card => ColorValue::Default,
+    web_text => ColorValue::Default,
+    web_muted => ColorValue::Default,
+    web_border => ColorValue::Default,
+    web_bg_light => ColorValue::Default,
+    web_card_light => ColorValue::Default,
+    web_text_light => ColorValue::Default,
+    web_muted_light => ColorValue::Default,
+    web_border_light => ColorValue::Default,
+    web_accent_text => ColorValue::Default,   // text on accent buttons (#14140a)
+    web_error_text => ColorValue::Default,    // text on the error banner (#fff)
+    web_backdrop => ColorValue::Default,      // dialog backdrop, at 55% (#000)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -614,6 +688,29 @@ priority_marker = accent
 # editor_footer = #808080
 # editor_dirty = #b9b9be
 # editor_clean = #646464
+# hint = default             # `[y/N]` hints, the editor help's notes (always dim)
+# editor_help = default      # the editor help's title and key names (always bold)
+# editor_selection = default # the editor's selection: reverse video, or a background color
+# task_text = default        # task text in the list, the delete dialog and the reports
+# task_done_text = default   # text of done tasks, when it should differ from task_text
+# editor_text = default      # the text in the editor
+
+# --- theme: web page (rusk serve / rusk gen) ---
+# The page's own surfaces; `default` keeps the page's dark and light colors.
+# A key colors both schemes; its _light twin the light scheme alone.
+# web_bg = default
+# web_card = default
+# web_text = default
+# web_muted = default
+# web_border = default
+# web_bg_light = default
+# web_card_light = default
+# web_text_light = default
+# web_muted_light = default
+# web_border_light = default
+# web_accent_text = default  # text on accent buttons
+# web_error_text = default   # text on the error banner
+# web_backdrop = default     # the dialog backdrop, shown at 55%
 ";
 
 /// Default config path: `<config_dir>/rusk/cfg`
@@ -842,6 +939,50 @@ mod tests {
         assert_eq!(t.editor_footer, ColorValue::Rgb(128, 128, 128));
         assert_eq!(t.editor_dirty, ColorValue::Rgb(185, 185, 190));
         assert_eq!(t.editor_clean, ColorValue::Rgb(100, 100, 100));
+        // The elements that had no color of their own keep the terminal's
+        // (and the web page its own values) until a key is set.
+        for key in [
+            "hint", "editor_help", "editor_selection", "task_text", "task_done_text", "editor_text",
+            "web_bg", "web_text_light", "web_error_text", "web_backdrop",
+        ] {
+            assert_eq!(t.get(key), Some(ColorValue::Default), "{key}");
+        }
+    }
+
+    #[test]
+    fn the_new_elements_take_a_color() {
+        let c = cfg("hint = bright_black\neditor_selection = #112233\nweb_bg = black\nweb_bg_light = #fafafa\n");
+        assert_eq!(c.theme.hint, ColorValue::Named(8));
+        assert_eq!(c.theme.editor_selection, ColorValue::Rgb(0x11, 0x22, 0x33));
+        assert_eq!(c.theme.web_bg, ColorValue::Named(0));
+        assert_eq!(c.theme.web_bg_light, ColorValue::Rgb(0xfa, 0xfa, 0xfa));
+        assert_eq!(c.theme.web_card, ColorValue::Default);
+    }
+
+    #[test]
+    fn clap_styles_follow_the_theme() {
+        use clap::builder::styling::{AnsiColor, Color, RgbColor};
+        let styles = Theme::default().clap_styles();
+        assert_eq!(styles.get_error().get_fg_color(), Some(Color::Ansi(AnsiColor::Red)));
+        assert_eq!(styles.get_valid().get_fg_color(), Some(Color::Ansi(AnsiColor::Green)));
+        assert_eq!(styles.get_invalid().get_fg_color(), Some(Color::Ansi(AnsiColor::Yellow)));
+        let styles = cfg("error = #123456\nwarning = bright_black\n").theme.clap_styles();
+        assert_eq!(styles.get_error().get_fg_color(), Some(Color::Rgb(RgbColor(0x12, 0x34, 0x56))));
+        assert_eq!(styles.get_invalid().get_fg_color(), Some(Color::Ansi(AnsiColor::BrightBlack)));
+        // A key at the terminal default leaves clap's own style without a color.
+        let plain = Theme { success: ColorValue::Default, ..Theme::default() }.clap_styles();
+        assert_eq!(plain.get_valid().get_fg_color(), None);
+        assert_eq!(plain.get_error().get_fg_color(), Some(Color::Ansi(AnsiColor::Red)));
+        assert_eq!(ColorValue::Default.to_anstyle(), None);
+    }
+
+    #[cfg(feature = "interactive")]
+    #[test]
+    fn crossterm_colors() {
+        use crossterm::style::Color;
+        assert_eq!(ColorValue::Named(9).to_crossterm(), Some(Color::AnsiValue(9)));
+        assert_eq!(ColorValue::Rgb(1, 2, 3).to_crossterm(), Some(Color::Rgb { r: 1, g: 2, b: 3 }));
+        assert_eq!(ColorValue::Default.to_crossterm(), None);
     }
 
     #[test]
@@ -1052,6 +1193,6 @@ mod tests {
     fn theme_entries_cover_all_keys() {
         let t = Theme::default();
         assert_eq!(t.entries().len(), Theme::KEYS.len());
-        assert_eq!(t.entries().len(), 20);
+        assert_eq!(t.entries().len(), 39);
     }
 }

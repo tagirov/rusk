@@ -16,9 +16,12 @@ use rusk::{
 use rusk::{args::CompletionAction, completions::Shell};
 
 /// The command line as clap reads it, painting its help and errors the way
-/// the rest of the output is painted (see `output::Colors`).
+/// the rest of the output is painted (see `output::Colors`), in the
+/// theme's colors.
 fn cli_command() -> clap::Command {
-    Cli::command().color(output::colors().clap())
+    Cli::command()
+        .color(output::colors().clap())
+        .styles(config::theme().clap_styles())
 }
 
 fn print_subcommand_help(name: &str) -> anyhow::Result<()> {

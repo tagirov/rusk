@@ -152,18 +152,19 @@ Each key colors one semantic group of elements. Values are either one of the
 and their `bright_*` variants. ANSI names follow your terminal palette; hex
 values render as truecolor.
 
-A key whose default is the terminal default (`task_id`, `hint`, ...) leaves
-its elements in the terminal's own foreground color until set; their style
+The value `dim` is the terminal's own foreground, faint. A key whose
+default is the terminal default (`task_id`, `hint`, ...) leaves its
+elements in the terminal's own foreground color until set; their style
 (bold, dim) stays either way.
 
 | Key | Default | Used for |
 |---|---|---|
 | `error` | `red` | Error messages, the argument errors of the command line included |
 | `success` | `green` | "Added task", "Edited task", confirmation checkmarks; a valid value in an argument error |
-| `warning` | `yellow` | Warnings, "No tasks", skipped/not-found notices; the invalid value in an argument error |
-| `notice` | `magenta` | "Task unchanged", "Canceled ..." |
+| `warning` | `yellow` | Warnings, "No tasks", skipped/not-found notices; the invalid value in an argument error; the tasks that depend on the one `rusk del` asks about |
+| `notice` | `dim` | "Task unchanged", "Canceled ...", the age and preview in the draft question |
 | `info` | `cyan` | Date-change details, completions instructions |
-| `emphasis` | `white` | IDs and counts inside prompts |
+| `emphasis` | terminal default | IDs and counts inside prompts (always bold, like the ids of the list) |
 | `accent` | `#ffa500` | Confirmation prompts, delete dialogs |
 | `list_header` | `blue` | The `id / date / task` header of `rusk list` |
 | `done_marker` | `green` | The `✔` in the list |
@@ -190,13 +191,16 @@ its elements in the terminal's own foreground color until set; their style
 | `web_error_text` | `#ffffff` | Text on the web page's error banner |
 | `web_backdrop` | `#000000` | The backdrop behind the web page's dialogs, shown at 55% |
 
-Out of the box the theme reproduces the previous hardcoded colors exactly.
+Out of the box the theme is the one rusk ships with; `default` for a key
+brings its color back.
 
 ### Web mapping
 
 `rusk gen` and `rusk serve` expose the theme to the web page as CSS custom
 properties (`--rusk-date-overdue`, `--rusk-priority-marker`, ...). Hex values
-pass through unchanged. ANSI names map through the canonical xterm palette:
+pass through unchanged; a key at the terminal default or `dim` is not
+exported, and the page keeps its own value. ANSI names map through the
+canonical xterm palette:
 
 | Name | CSS | Name | CSS |
 |---|---|---|---|

@@ -131,12 +131,12 @@ impl HandlerCLI {
             last_line_width + prompt_width <= available_width_for_text;
 
         let depended_on = depended_on(dependents)
-            .map(|note| theme().notice.paint(&format!(" ({note})")).to_string())
+            .map(|note| theme().warning.paint(&format!(" ({note})")).to_string())
             .unwrap_or_default();
         outln!(
             "{}{}{}{}",
             theme().accent.paint("Delete task "),
-            theme().emphasis.paint(&task_id.to_string()),
+            theme().emphasis.paint(&task_id.to_string()).bold(),
             depended_on,
             theme().accent.paint(":")
         )?;

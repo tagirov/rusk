@@ -36,19 +36,23 @@ const PALETTE: [(&str, Color, &str); 16] = [
 ];
 
 /// A theme color: a named ANSI-16 color (index into [`PALETTE`]), a truecolor
-/// RGB value from `#rrggbb`, or the terminal's default foreground.
+/// RGB value from `#rrggbb`, the terminal's default foreground, or that
+/// foreground faint (`dim`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColorValue {
     Named(u8),
     Rgb(u8, u8, u8),
     /// No coloring: the terminal's default foreground (e.g. `task_id`).
     Default,
+    /// The terminal's default foreground, faint (e.g. `notice`).
+    Dim,
 }
 
 impl ColorValue {
-    /// Parses an ANSI-16 color name (`red`, `bright_black`, `purple` alias)
-    /// or a `#rrggbb` hex value. Never falls back silently: unknown names
-    /// are an error (unlike `colored`'s `From<&str>`, which yields White).
+    /// Parses an ANSI-16 color name (`red`, `bright_black`, `purple` alias),
+    /// a `#rrggbb` hex value or `dim`. Never falls back silently: unknown
+    /// names are an error (unlike `colored`'s `From<&str>`, which yields
+    /// White).
     pub fn parse(s: &str) -> Result<Self, String> {
         let norm = s.trim().to_ascii_lowercase();
         if let Some(hex) = norm.strip_prefix('#') {
@@ -57,6 +61,9 @@ impl ColorValue {
                 return Ok(ColorValue::Rgb(byte(0), byte(2), byte(4)));
             }
             return Err(format!("invalid hex color '{s}' (expected #rrggbb)"));
+        }
+        if norm == "dim" {
+            return Ok(ColorValue::Dim);
         }
         let name = norm.replace('_', " ");
         let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -69,35 +76,41 @@ impl ColorValue {
             return Ok(ColorValue::Named(idx as u8));
         }
         Err(format!(
-            "unknown color '{s}' (expected one of the 16 ANSI names or #rrggbb)"
+            "unknown color '{s}' (expected one of the 16 ANSI names, #rrggbb or dim)"
         ))
     }
 
-    /// The `colored` color to render with; `None` for the terminal default.
+    /// The `colored` color to render with; `None` for the terminal default
+    /// (faint or not).
     pub fn to_colored(self) -> Option<Color> {
         match self {
             ColorValue::Named(i) => Some(PALETTE[i as usize].1),
             ColorValue::Rgb(r, g, b) => Some(Color::TrueColor { r, g, b }),
-            ColorValue::Default => None,
+            ColorValue::Default | ColorValue::Dim => None,
         }
     }
 
     /// CSS hex for the web frontend; named colors map through the canonical
-    /// xterm palette. `None` for the terminal default (template fallback wins).
+    /// xterm palette. `None` for the terminal default and `dim` (template
+    /// fallback wins).
     pub fn to_css_hex(self) -> Option<String> {
         match self {
             ColorValue::Named(i) => Some(PALETTE[i as usize].2.to_string()),
             ColorValue::Rgb(r, g, b) => Some(format!("#{r:02x}{g:02x}{b:02x}")),
-            ColorValue::Default => None,
+            ColorValue::Default | ColorValue::Dim => None,
         }
     }
 
-    /// Applies this color to `s` (no-op coloring for [`ColorValue::Default`]).
-    /// Styles chain as usual: `theme().task_id.paint("1").bold()`.
+    /// Applies this color to `s` (no-op coloring for [`ColorValue::Default`],
+    /// the faint attribute for [`ColorValue::Dim`]). Styles chain as usual:
+    /// `theme().task_id.paint("1").bold()`.
     pub fn paint(self, s: &str) -> ColoredString {
-        match self.to_colored() {
-            Some(color) => s.color(color),
-            None => s.normal(),
+        match self {
+            ColorValue::Dim => s.dimmed(),
+            _ => match self.to_colored() {
+                Some(color) => s.color(color),
+                None => s.normal(),
+            },
         }
     }
 
@@ -109,7 +122,7 @@ impl ColorValue {
         match self {
             ColorValue::Named(i) => Some(crossterm::style::Color::AnsiValue(i)),
             ColorValue::Rgb(r, g, b) => Some(crossterm::style::Color::Rgb { r, g, b }),
-            ColorValue::Default => None,
+            ColorValue::Default | ColorValue::Dim => None,
         }
     }
 
@@ -138,7 +151,7 @@ impl ColorValue {
         match self {
             ColorValue::Named(i) => Some(Color::Ansi(ANSI[i as usize])),
             ColorValue::Rgb(r, g, b) => Some(Color::Rgb(RgbColor(r, g, b))),
-            ColorValue::Default => None,
+            ColorValue::Default | ColorValue::Dim => None,
         }
     }
 }
@@ -147,8 +160,7 @@ impl ColorValue {
 /// parser (`set`) and the web frontend (`entries`).
 macro_rules! theme_keys {
     ( $( $field:ident => $default:expr ),+ $(,)? ) => {
-        /// Semantic color groups; defaults reproduce the previously
-        /// hardcoded colors exactly.
+        /// Semantic color groups with the colors rusk ships with.
         #[derive(Debug, Clone, PartialEq, Eq)]
         pub struct Theme {
             $( pub $field: ColorValue, )+
@@ -200,9 +212,9 @@ theme_keys! {
     error => ColorValue::Named(1),            // red
     success => ColorValue::Named(2),          // green
     warning => ColorValue::Named(3),          // yellow
-    notice => ColorValue::Named(5),           // magenta
+    notice => ColorValue::Dim,                // faint: nothing happened
     info => ColorValue::Named(6),             // cyan
-    emphasis => ColorValue::Named(7),         // white
+    emphasis => ColorValue::Default,          // bold only: ids in prompts, like the list
     accent => ColorValue::Rgb(255, 165, 0),   // prompts, counters
     list_header => ColorValue::Named(4),      // blue
     done_marker => ColorValue::Named(2),      // green ✔
@@ -626,7 +638,8 @@ const DEFAULT_CONFIG: &str = "\
 # value that matches a variable name resolves to it. The bare value
 # `default` is the built-in value, also after an earlier line set another.
 # Colors: one of the 16 ANSI names (black, red, green, yellow, blue, magenta,
-# cyan, white, bright_black, bright_red, ...) or a hex value like #ffa500.
+# cyan, white, bright_black, bright_red, ...), a hex value like #ffa500, or
+# dim (the terminal's own text, faint).
 # Environment variables always override this file:
 #   RUSK_CONFIG, RUSK_DB, RUSK_DB_TOKEN, RUSK_NO_COLOR / NO_COLOR,
 #   RUSK_SYNC_REMOTE, RUSK_SYNC_TOKEN.
@@ -673,9 +686,9 @@ priority_marker = accent
 # error = red
 # success = green
 # warning = yellow
-# notice = magenta
+# notice = dim
 # info = cyan
-# emphasis = white
+# emphasis = default
 # list_header = blue
 # done_marker = green
 # task_id = default
@@ -924,9 +937,9 @@ mod tests {
         assert_eq!(t.error, ColorValue::Named(1));
         assert_eq!(t.success, ColorValue::Named(2));
         assert_eq!(t.warning, ColorValue::Named(3));
-        assert_eq!(t.notice, ColorValue::Named(5));
+        assert_eq!(t.notice, ColorValue::Dim);
         assert_eq!(t.info, ColorValue::Named(6));
-        assert_eq!(t.emphasis, ColorValue::Named(7));
+        assert_eq!(t.emphasis, ColorValue::Default);
         assert_eq!(t.accent, ColorValue::Rgb(255, 165, 0));
         assert_eq!(t.list_header, ColorValue::Named(4));
         assert_eq!(t.done_marker, ColorValue::Named(2));
@@ -1005,6 +1018,21 @@ mod tests {
         assert!(ColorValue::parse("#fff").is_err());
         assert!(ColorValue::parse("#ffa500aa").is_err());
         assert!(ColorValue::parse("blu").is_err());
+        assert_eq!(ColorValue::parse("dim"), Ok(ColorValue::Dim));
+        assert_eq!(ColorValue::parse(" DIM "), Ok(ColorValue::Dim));
+    }
+
+    /// `dim` is the terminal's text, faint: no color anywhere, the faint
+    /// attribute in the terminal.
+    #[test]
+    fn dim_is_faint_default_text() {
+        let _colors = crate::cli::tests::force_colors();
+        assert_eq!(ColorValue::Dim.paint("x").to_string(), "x".dimmed().to_string());
+        assert_eq!(ColorValue::Dim.paint("x").bold().to_string(), "x".dimmed().bold().to_string());
+        assert_eq!(ColorValue::Dim.to_colored(), None);
+        assert_eq!(ColorValue::Dim.to_css_hex(), None);
+        assert_eq!(ColorValue::Dim.to_anstyle(), None);
+        assert_eq!(cfg("warning = dim\n").theme.warning, ColorValue::Dim);
     }
 
     #[test]

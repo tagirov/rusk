@@ -92,7 +92,7 @@ impl HandlerCLI {
         let prompt = format!(
             "{} {} {}{} {}",
             theme().accent.paint("Restore unsaved draft for"),
-            theme().emphasis.paint(what),
+            theme().emphasis.paint(what).bold(),
             theme().notice.paint(&format!("({age}")),
             theme().notice.paint(&format!("“{}”)?", saved.preview())),
             Self::yn_hint()
@@ -471,7 +471,7 @@ impl HandlerCLI {
         outln!(
             "{}{}{}",
             theme().accent.paint("Deleted "),
-            theme().emphasis.paint(&count.to_string()),
+            theme().emphasis.paint(&count.to_string()).bold(),
             theme().accent.paint(suffix)
         )
     }
@@ -484,7 +484,7 @@ impl HandlerCLI {
             outln!(
                 "{}{}{}{}",
                 theme().notice.paint("Task "),
-                theme().emphasis.paint(&id.to_string()),
+                theme().emphasis.paint(&id.to_string()).bold(),
                 theme().notice.paint(" no longer depends on "),
                 theme().notice.paint(&format!("{lost}."))
             )?;
@@ -521,7 +521,7 @@ impl HandlerCLI {
                 outln!(
                     "{} {}{}",
                     theme().notice.paint("Canceled deletion of task"),
-                    theme().emphasis.paint(&task.id.to_string()),
+                    theme().emphasis.paint(&task.id.to_string()).bold(),
                     theme().notice.paint(".")
                 )?;
             }
@@ -559,7 +559,7 @@ impl HandlerCLI {
             let confirmed = Self::read_confirmation(&format!(
                 "{}{}{} {}",
                 theme().accent.paint("Delete all done tasks ("),
-                theme().emphasis.paint(&done.len().to_string()),
+                theme().emphasis.paint(&done.len().to_string()).bold(),
                 theme().accent.paint(")?"),
                 Self::yn_hint()
             ))?;

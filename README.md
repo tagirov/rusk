@@ -435,8 +435,8 @@ priority_marker = accent
 # sync_remote = user@vps:/srv/tasks/tasks.json
 ```
 
-Colors are ANSI names (`red`, `cyan`, `bright_black`, ...) or hex
-(`#d75f00`). A broken line never prevents rusk from starting: it produces a
+Colors are ANSI names (`red`, `cyan`, `bright_black`, ...), hex
+(`#d75f00`) or `dim`. A broken line never prevents rusk from starting: it produces a
 warning and the default is kept. `RUSK_CONFIG=<path>` overrides the file
 location; an empty `RUSK_CONFIG` disables the config entirely.
 

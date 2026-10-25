@@ -287,16 +287,17 @@ pub fn delete_task(tm: &mut TaskManager, id: TaskId, if_match: Option<&str>) -> 
     finish(deleted, |()| ApiResponse::no_content())
 }
 
-/// DELETE /api/tasks/done[?older=…&newer=…] — parallels `rusk rm done
-/// [--older …] [--newer …]`: every done task, or those marked done within
-/// the range (the days, worked out by the caller from the ages or dates).
-/// `kept` counts the done tasks a bounded range left alone for want of a
-/// day on record.
-pub fn delete_done(tm: &mut TaskManager, range: Selection, if_match: Option<&str>) -> ApiResponse {
+/// DELETE /api/tasks/done[?older=…&newer=…] and /api/tasks/all[?…] —
+/// parallel `rusk rm done` and `rusk rm all` with `[--older …] [--newer …]`:
+/// every task of the scope, or those with a day within the bounds (the
+/// days, worked out by the caller from the ages or dates): the day they
+/// were marked done, or the due date. `kept` counts the tasks of the scope
+/// a bounded selection left alone for want of that day.
+pub fn delete_selected(tm: &mut TaskManager, selection: Selection, if_match: Option<&str>) -> ApiResponse {
     let deleted = tm.update(|tasks| {
         check_if_match(tasks, None, if_match)?;
-        let kept = tasks.iter().filter(|t| range.leaves_undated(t)).count();
-        Ok((remove_selected(tasks, range), kept))
+        let kept = tasks.iter().filter(|t| selection.leaves_undated(t)).count();
+        Ok((remove_selected(tasks, selection), kept))
     });
     let tasks = tm.tasks();
     finish(deleted, |(deleted, kept)| {
@@ -431,7 +432,7 @@ mod tests {
         create_task(&mut tm, r#"{"text":"a"}"#, None);
         create_task(&mut tm, r#"{"text":"b"}"#, None);
         update_task(&mut tm, 1, r#"{"done":true}"#, None);
-        let res = delete_done(&mut tm, Selection::every(Scope::Done), None);
+        let res = delete_selected(&mut tm, Selection::every(Scope::Done), None);
         assert_eq!(res.status, 200);
         assert!(res.body.contains("\"deleted\":1"));
         assert_eq!(tm.tasks().len(), 1);
@@ -456,18 +457,51 @@ mod tests {
         })
         .unwrap();
         let week_ago = today - chrono::Duration::days(7);
-        let res = delete_done(&mut tm, Selection { scope: Scope::Done, older: Some(week_ago), newer: None }, None);
+        let res = delete_selected(&mut tm, Selection { scope: Scope::Done, older: Some(week_ago), newer: None }, None);
         assert_eq!(res.status, 200);
         assert!(res.body.contains("\"deleted\":1") && res.body.contains("\"kept\":1"), "{}", res.body);
         assert_eq!(tm.tasks().iter().map(|t| t.id).collect::<Vec<_>>(), [2, 3, 4]);
         // `newer` alone: the one done lately; the undated is kept again.
-        let res = delete_done(&mut tm, Selection { scope: Scope::Done, older: None, newer: Some(week_ago) }, None);
+        let res = delete_selected(&mut tm, Selection { scope: Scope::Done, older: None, newer: Some(week_ago) }, None);
         assert!(res.body.contains("\"deleted\":1") && res.body.contains("\"kept\":1"), "{}", res.body);
         assert_eq!(tm.tasks().iter().map(|t| t.id).collect::<Vec<_>>(), [3, 4]);
         // Without bounds the undated go too, and nothing is kept.
-        let res = delete_done(&mut tm, Selection::every(Scope::Done), None);
+        let res = delete_selected(&mut tm, Selection::every(Scope::Done), None);
         assert!(res.body.contains("\"deleted\":1") && res.body.contains("\"kept\":0"), "{}", res.body);
         assert_eq!(tm.tasks().len(), 1);
+    }
+
+    /// `/api/tasks/all`: every task, open or done; its bounds by the due
+    /// date, so a task without one is kept and counted, and the day a done
+    /// task was marked done plays no part.
+    #[test]
+    fn delete_all_goes_by_the_due_date_and_keeps_the_undated() {
+        let (_dir, mut tm) = tm();
+        for text in ["open, long due", "open, undated", "done, lately due", "done, undated"] {
+            create_task(&mut tm, &format!(r#"{{"text":"{text}"}}"#), None);
+        }
+        let today = chrono::Local::now().date_naive();
+        tm.update(|tasks| {
+            tasks[0].date = Some(today - chrono::Duration::days(10));
+            tasks[2].date = Some(today - chrono::Duration::days(3));
+            tasks[2].done = true;
+            tasks[2].done_on = Some(today - chrono::Duration::days(30));
+            tasks[3].done = true;
+            tasks[3].done_on = Some(today - chrono::Duration::days(30));
+            Ok(())
+        })
+        .unwrap();
+        let week_ago = today - chrono::Duration::days(7);
+        let res = delete_selected(&mut tm, Selection { scope: Scope::All, older: Some(week_ago), newer: None }, None);
+        assert_eq!(res.status, 200);
+        assert!(res.body.contains("\"deleted\":1") && res.body.contains("\"kept\":2"), "{}", res.body);
+        assert_eq!(tm.tasks().iter().map(|t| t.id).collect::<Vec<_>>(), [2, 3, 4]);
+        let res = delete_selected(&mut tm, Selection { scope: Scope::All, older: None, newer: Some(week_ago) }, None);
+        assert!(res.body.contains("\"deleted\":1") && res.body.contains("\"kept\":2"), "{}", res.body);
+        assert_eq!(tm.tasks().iter().map(|t| t.id).collect::<Vec<_>>(), [2, 4]);
+        let res = delete_selected(&mut tm, Selection::every(Scope::All), None);
+        assert!(res.body.contains("\"deleted\":2") && res.body.contains("\"kept\":0"), "{}", res.body);
+        assert!(tm.tasks().is_empty());
     }
 
     /// `"done": true` dates the task with the day of the request, `false`
@@ -516,7 +550,7 @@ mod tests {
         assert_eq!(update_task(&mut tm, 2, r#"{"text":"beta!"}"#, stale).status, 412);
         assert_eq!(update_task(&mut tm, 2, r#"{"done":true}"#, stale).status, 412);
         assert_eq!(update_task(&mut tm, 7, r#"{"done":true}"#, stale).status, 412);
-        assert_eq!(delete_done(&mut tm, Selection::every(Scope::Done), stale).status, 412);
+        assert_eq!(delete_selected(&mut tm, Selection::every(Scope::Done), stale).status, 412);
         assert_eq!(replace_tasks(&mut tm, "[]", stale).status, 412);
         assert_eq!(create_task(&mut tm, r#"{"text":"x"}"#, stale).status, 412);
         assert_eq!(list_tasks(&tm).body, current.body, "a refused request changed something");
@@ -526,7 +560,7 @@ mod tests {
         let fresh = quoted(&current.etag);
         assert_eq!(update_task(&mut tm, 2, r#"{"done":true}"#, Some(&fresh)).status, 200);
         let fresh = quoted(&list_tasks(&tm).etag);
-        let res = delete_done(&mut tm, Selection::every(Scope::Done), Some(&fresh));
+        let res = delete_selected(&mut tm, Selection::every(Scope::Done), Some(&fresh));
         assert_eq!(res.status, 200);
         assert_eq!(res.etag, list_tasks(&tm).etag);
         let res = replace_tasks(&mut tm, "[]", Some(&quoted(&res.etag)));
@@ -581,7 +615,7 @@ mod tests {
         // A task revision says nothing about the list.
         let brand_new = quoted(&get_task(&tm, 2).etag);
         assert_eq!(replace_tasks(&mut tm, "[]", Some(&brand_new)).status, 412);
-        assert_eq!(delete_done(&mut tm, Selection::every(Scope::Done), Some(&brand_new)).status, 412);
+        assert_eq!(delete_selected(&mut tm, Selection::every(Scope::Done), Some(&brand_new)).status, 412);
     }
 
     /// The server reloads per request, but a handler must not depend on it:

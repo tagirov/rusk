@@ -308,6 +308,7 @@ or Bearer header. Dates are ISO `YYYY-MM-DD`, in the years 1000–9999.
 | `PATCH /api/tasks/{id}` | any subset of `{text, date, done, priority, after}`; `"date": null` clears, `after` replaces the whole list (`[]` clears; the same ids in another order are no change) | `200` + updated task |
 | `DELETE /api/tasks/{id}` | — | `204` |
 | `DELETE /api/tasks/done[?older=…&newer=…]` | — | `{"deleted": n, "kept": k}`: every done task, or those marked done within the bounds — `older` that day or earlier, `newer` that day or later, both a range — each an age (`7d`, `2w`, `1m`) or a date (`30-09-2026`, `today`) as `rusk rm done --older` / `--newer` take them; `kept` counts the done tasks the bounds left alone for want of a day on record |
+| `DELETE /api/tasks/all[?older=…&newer=…]` | — | `{"deleted": n, "kept": k}`: every task, open or done, or those due within the bounds, written as above (`rusk rm all`); `kept` counts the tasks without a due date the bounds left alone |
 | `PUT /api/tasks` | full task array | replaces the whole list (used by sync); `{"count": n, "tasks": [...]}`, the list as the server's database holds it |
 
 **Tasks.** A task is sent as the JSON format stores it: `id`, `text`, `date`
@@ -382,7 +383,8 @@ commit.
 - Send a revision back as `If-Match` to make a changing request conditional.
   A request on one task takes the revision of that task (or of the list,
   which is stricter). A request on the list (`PUT`,
-  `DELETE /api/tasks/done`, `POST`) takes the revision of the list.
+  `DELETE /api/tasks/done`, `DELETE /api/tasks/all`, `POST`) takes the
+  revision of the list.
 - If it no longer matches (for a task also when the task is gone), the
   answer is `412 Precondition Failed` and nothing is written: re-read and
   retry.

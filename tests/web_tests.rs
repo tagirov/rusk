@@ -240,6 +240,48 @@ fn test_serve_full_crud() {
     assert_eq!(status_of(&res), 415, "{res}");
 }
 
+
+
+/// `DELETE /api/tasks/all`: every task, or with `older` / `newer` those
+/// due within the bounds; a task without a due date is kept and counted.
+#[test]
+fn test_serve_delete_all_by_due_date() {
+    let today = chrono::Local::now().date_naive();
+    let day = |ago: i64| (today - chrono::Duration::days(ago)).format("%Y-%m-%d").to_string();
+    let sb = common::Sandbox::new();
+    sb.write_db(&format!(
+        r#"[{{"id":1,"text":"long due","date":"{}"}},
+            {{"id":2,"text":"undated"}},
+            {{"id":3,"text":"due tomorrow, done","date":"{}","done":true,"done_on":"{}"}}]"#,
+        day(10),
+        day(-1),
+        day(30)
+    ));
+    let server = spawn_serve(&sb, "", &[]);
+    let mut client = Client::connect(server.port);
+
+    let res = client.request("DELETE /api/tasks/all?older=7d HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    assert_eq!(status_of(&res), 200, "{res}");
+    assert!(res.contains(r#""deleted":1"#) && res.contains(r#""kept":1"#), "{res}");
+    let res = client.get("/api/tasks", "");
+    assert!(res.contains(r#""id":2"#) && res.contains(r#""id":3"#) && !res.contains(r#""id":1"#), "{res}");
+
+    let res = client.request("DELETE /api/tasks/all?newer=1m&older=2m HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    assert_eq!(status_of(&res), 400, "{res}");
+    assert!(res.contains("empty range"), "{res}");
+    let res = client.request("DELETE /api/tasks/all?older=soon HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    assert_eq!(status_of(&res), 400, "{res}");
+    assert!(res.contains("older"), "{res}");
+
+    let res = client.request("DELETE /api/tasks/all HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    assert_eq!(status_of(&res), 200, "{res}");
+    assert!(res.contains(r#""deleted":2"#) && res.contains(r#""kept":0"#), "{res}");
+    let res = client.get("/api/tasks", "");
+    assert!(res.ends_with("[]"), "{res}");
+    let res = client.request("GET /api/tasks/all HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    assert_eq!(status_of(&res), 405, "{res}");
+}
+
 /// REVIEW №22 (R1): an error body names the cause, not only the step that
 /// failed - also where the database cannot even be opened for a request
 /// (`server.rs`, before any API handler runs). A directory in place of the

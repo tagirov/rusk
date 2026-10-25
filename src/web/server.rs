@@ -681,9 +681,14 @@ fn route(request: &mut Request, opts: &ServeOptions) -> Reply {
         (Method::Put, "/api/tasks") => with_body_and_tm(request, |tm, body| {
             api::replace_tasks(tm, body, if_match.as_deref())
         }),
-        (Method::Delete, "/api/tasks/done") => {
-            // `?older=7d&newer=01-09-2026`: ages or dates, as `rusk rm done
-            // --older` / `--newer` take them.
+        (Method::Delete, p @ ("/api/tasks/done" | "/api/tasks/all")) => {
+            // `?older=7d&newer=01-09-2026`: ages or dates, as `rusk rm done`
+            // and `rusk rm all` take them with --older / --newer.
+            let scope = if p == "/api/tasks/all" {
+                crate::storage::Scope::All
+            } else {
+                crate::storage::Scope::Done
+            };
             let today = chrono::Local::now().date_naive();
             let bound = |name: &str| match form_value(query, name, false) {
                 None => Ok(None),
@@ -691,16 +696,16 @@ fn route(request: &mut Request, opts: &ServeOptions) -> Reply {
                     .map(Some)
                     .map_err(|e| Reply::json_error(400, &format!("{name}: {e:#}"))),
             };
-            let range = match (bound("older"), bound("newer")) {
-                (Ok(older), Ok(newer)) => crate::storage::Selection { scope: crate::storage::Scope::Done, older, newer },
+            let selection = match (bound("older"), bound("newer")) {
+                (Ok(older), Ok(newer)) => crate::storage::Selection { scope, older, newer },
                 (Err(reply), _) | (_, Err(reply)) => return reply,
             };
-            if let (Some(o), Some(n)) = (range.older, range.newer)
+            if let (Some(o), Some(n)) = (selection.older, selection.newer)
                 && n > o
             {
                 return Reply::json_error(400, "an empty range: newer is after older");
             }
-            with_tasks(|tm| Reply::from_api(api::delete_done(tm, range, if_match.as_deref())))
+            with_tasks(|tm| Reply::from_api(api::delete_selected(tm, selection, if_match.as_deref())))
         }
         (Method::Get, p) if task_id_from_path(p).is_some() => {
             let id = task_id_from_path(p).unwrap();
@@ -716,7 +721,12 @@ fn route(request: &mut Request, opts: &ServeOptions) -> Reply {
             let id = task_id_from_path(p).unwrap();
             with_tasks(|tm| Reply::from_api(api::delete_task(tm, id, if_match.as_deref())))
         }
-        (_, p) if p == "/api/tasks" || p == "/api/tasks/done" || task_id_from_path(p).is_some() => {
+        (_, p)
+            if p == "/api/tasks"
+                || p == "/api/tasks/done"
+                || p == "/api/tasks/all"
+                || task_id_from_path(p).is_some() =>
+        {
             Reply::json_error(405, "method not allowed")
         }
         (_, p) if p.starts_with("/api/") => Reply::json_error(404, "not found"),

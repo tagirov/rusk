@@ -233,7 +233,7 @@ theme_keys! {
     editor_help => ColorValue::Default,       // bold only: the editor help's title and keys
     editor_selection => ColorValue::Default,  // reverse video; a color is the background
     task_text => ColorValue::Default,         // task text in the list, dialogs, reports
-    task_done_text => ColorValue::Default,    // done tasks' text; Default = task_text
+    task_done_text => ColorValue::Dim,        // done tasks' text: faint, as the web page fades it; Default = task_text
     editor_text => ColorValue::Default,       // the editor's text
     // The web page's own surfaces: the template's dark and light values
     // unless set. A `web_*` key colors both schemes, its `_light` twin
@@ -705,7 +705,7 @@ priority_marker = accent
 # editor_help = default      # the editor help's title and key names (always bold)
 # editor_selection = default # the editor's selection: reverse video, or a background color
 # task_text = default        # task text in the list, the delete dialog and the reports
-# task_done_text = default   # text of done tasks, when it should differ from task_text
+# task_done_text = dim       # text of done tasks: faint, as the web page fades it; default = task_text
 # editor_text = default      # the text in the editor
 
 # --- theme: web page (rusk serve / rusk gen) ---
@@ -955,11 +955,14 @@ mod tests {
         // The elements that had no color of their own keep the terminal's
         // (and the web page its own values) until a key is set.
         for key in [
-            "hint", "editor_help", "editor_selection", "task_text", "task_done_text", "editor_text",
+            "hint", "editor_help", "editor_selection", "task_text", "editor_text",
             "web_bg", "web_text_light", "web_error_text", "web_backdrop",
         ] {
             assert_eq!(t.get(key), Some(ColorValue::Default), "{key}");
         }
+        // Done tasks read as done at a glance: their text is faint, as the
+        // web page fades it.
+        assert_eq!(t.task_done_text, ColorValue::Dim);
     }
 
     #[test]

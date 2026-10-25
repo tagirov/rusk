@@ -183,7 +183,7 @@ elements in the terminal's own foreground color until set; their style
 | `editor_help` | terminal default | The editor help's title and key names (always bold) |
 | `editor_selection` | terminal default | The editor's selection: reverse video by default; a set color is its background |
 | `task_text` | terminal default | Task text in the list, the delete dialog and the reports of `add`, `edit` and `mark` (bold where it was); the text of the web page's tasks |
-| `task_done_text` | same as `task_text` | The text of done tasks, when it should differ (the web page fades it as before) |
+| `task_done_text` | `dim` | The text of done tasks: faint in the terminal, as the web page fades it; `default` gives it the `task_text` color |
 | `editor_text` | terminal default | The text in the editor |
 | `web_bg`, `web_card`, `web_text`, `web_muted`, `web_border` | the page's own | The web page's surfaces: background, cards and inputs, text, secondary text, borders. Unset, the page keeps its own dark and light colors; set, a key colors both schemes. See [Web mapping](#web-mapping) |
 | `web_bg_light`, `web_card_light`, `web_text_light`, `web_muted_light`, `web_border_light` | the page's own | The same for the light scheme alone, over the key without `_light` |

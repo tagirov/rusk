@@ -275,7 +275,7 @@ _rusk_main() {
     if [ $rusk_idx -ge 0 ] && [ -n "$CURRENT" ] && [ "$CURRENT" -eq $((rusk_idx + 1)) ] 2>/dev/null; then
         case "${words[CURRENT]}" in
             -*) compadd -- -h --help -V --version ;;
-            *) compadd add edit mark del list search restore gen serve sync completions help a e m d l s r g c ;;
+            *) compadd add edit mark rm list search restore gen serve sync completions help a e m l s r g c ;;
         esac
         return
     fi
@@ -347,21 +347,36 @@ _rusk_main() {
             # No task ID completion for edit
             ;;
             
-        mark|m|del|d)
+        mark|m)
             if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
-                if [[ "$cmd" == "del" || "$cmd" == "d" ]]; then
-                    # `--done` takes no ids: offered only before any
-                    if [ "$(_rusk_count_ids)" -eq 0 ]; then
-                        compadd -- --done --yes -y --help -h
-                    else
-                        compadd -- --yes -y --help -h
-                    fi
+                compadd -- -p --priority -h --help
+            fi
+            ;;
+
+        rm)
+            # Ids (never offered) or the word `done`; `--older`/`--newer` go
+            # with `done`, `--yes` with both. The word is offered until it,
+            # or an id, is on the line (the words before the one being
+            # completed, as above).
+            if [[ "$prev" == "--older" || "$prev" == "--newer" ]]; then
+                # Free-form value (an age or a date): no candidates
+                :
+            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]] || [[ "done" == "$cur"* ]]; then
+                local has_done=0 rm_i
+                local rm_end=${CURRENT:-${#words[@]}}
+                for ((rm_i=1; rm_i<rm_end; rm_i++)); do
+                    [[ "${words[rm_i]}" == "done" ]] && has_done=1
+                done
+                if (( has_done )); then
+                    compadd -- --older --newer --yes -y --help -h
+                elif [[ "$(_rusk_count_ids)" -gt 0 ]]; then
+                    compadd -- --yes -y --help -h
                 else
-                    compadd -- -p --priority -h --help
+                    compadd -- done --older --newer --yes -y --help -h
                 fi
             fi
             ;;
-            
+
         list|l)
             if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
                 compadd -- -c --compact --no-compact -h --help
@@ -478,7 +493,7 @@ _rusk_main() {
         help)
             # `rusk help <command> [<subcommand>]`, nothing more.
             case $((CURRENT - rusk_idx)) in
-                2) compadd add edit mark del list search restore gen serve sync completions ;;
+                2) compadd add edit mark rm list search restore gen serve sync completions ;;
                 3)
                     case "${words[rusk_idx + 2]}" in
                         sync) compadd push pull ;;

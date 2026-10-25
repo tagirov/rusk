@@ -71,6 +71,19 @@ pub struct Task {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub after: Vec<TaskId>,
+    /// The day the task was marked done — by `rusk mark` or the web page,
+    /// or as another tool recorded it in the file (a todo.txt completion
+    /// date, a VTODO's `COMPLETED`). `None` on an open task, and on one
+    /// done without the day on record: a database an earlier rusk wrote,
+    /// an `[x]` ticked by hand. What `rusk rm done --older` goes by. Skipped in
+    /// JSON when there is none, so a database stays byte-identical until a
+    /// task is done.
+    #[serde(
+        default,
+        deserialize_with = "stored_date",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub done_on: Option<NaiveDate>,
 }
 
 /// A stored date, as chrono reads one: any year (see [`YEARS`]). One it
@@ -99,7 +112,7 @@ where
 }
 
 /// The text a task that was stored without one is given, so that it shows
-/// in the list and `rusk edit` / `rusk del` can reach it. It is saved like
+/// in the list and `rusk edit` / `rusk rm` can reach it. It is saved like
 /// any other text.
 pub const NO_TEXT: &str = "(no text)";
 
@@ -116,7 +129,9 @@ pub const NO_TEXT: &str = "(no text)";
 ///   free id, in list order;
 /// - a task depends only on other tasks that exist, each listed once;
 /// - a date outside [`YEARS`] is kept, and reported: it is the user's to
-///   correct, and the database has to stay open for that.
+///   correct, and the database has to stay open for that;
+/// - a completion date belongs to a done task: one on an open task is
+///   dropped, in silence (nothing it said about the task was true).
 ///
 /// Dependencies are settled against the ids the list itself gives, before
 /// any id is handed out: a dependency on a task that is not there must not
@@ -134,6 +149,9 @@ pub fn normalize(tasks: &mut Vec<Task>) -> anyhow::Result<Repairs> {
         }
         is_task
     });
+    for task in tasks.iter_mut().filter(|task| !task.done) {
+        task.done_on = None;
+    }
     let written: Vec<TaskId> = tasks.iter().map(|task| task.id).collect();
     let mut untitled: Vec<usize> = Vec::new();
     for (index, task) in tasks.iter_mut().enumerate() {
@@ -461,6 +479,7 @@ mod tests {
             text: text.to_string(),
             date: None,
             done: false,
+            done_on: None,
             priority: false,
             after: Vec::new(),
         }
@@ -475,6 +494,29 @@ mod tests {
         tasks.iter().map(|t| t.id).collect()
     }
 
+    /// A completion date belongs to a done task: one on an open task is
+    /// dropped, a done task keeps its own, dated or not. In JSON the field
+    /// is left out when there is none.
+    #[test]
+    fn a_completion_date_belongs_to_a_done_task() {
+        use super::{normalize, Task};
+        let day = chrono::NaiveDate::from_ymd_opt(2026, 10, 25).unwrap();
+        let mut tasks: Vec<Task> = serde_json::from_str(
+            r#"[{"id":1,"text":"open","done_on":"2026-10-25"},
+                {"id":2,"text":"done","done":true,"done_on":"2026-10-25"},
+                {"id":3,"text":"done, day unknown","done":true}]"#,
+        )
+        .unwrap();
+        assert_eq!(tasks[0].done_on, Some(day), "read as written");
+        let repairs = normalize(&mut tasks).unwrap();
+        assert!(repairs.is_empty(), "{repairs:?}");
+        assert_eq!(tasks[0].done_on, None);
+        assert_eq!(tasks[1].done_on, Some(day));
+        assert_eq!(tasks[2].done_on, None);
+        let json = serde_json::to_string(&tasks).unwrap();
+        assert_eq!(json.matches("done_on").count(), 1, "{json}");
+        assert!(json.contains(r#""done_on":"2026-10-25""#), "{json}");
+    }
     #[test]
     fn a_list_that_follows_the_rules_comes_out_unchanged() {
         let list = vec![

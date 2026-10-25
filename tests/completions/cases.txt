@@ -10,15 +10,16 @@
 # holds spaces is written in double quotes. Rusk never offers task ids; a
 # word that is an id followed by a space gets the flags. The database the
 # scripts read holds one task: `1 buy milk`.
-rusk |a add c completions d del e edit g gen help l list m mark r restore s search serve sync
+rusk |a add c completions e edit g gen help l list m mark r restore rm s search serve sync
 # fish and nu list the flags of rusk itself along with the commands.
-rusk |-h --help -V --version a add c completions d del e edit g gen help l list m mark r restore s search serve sync|fish,nu
+rusk |-h --help -V --version a add c completions e edit g gen help l list m mark r restore rm s search serve sync|fish,nu
 rusk -|-h --help -V --version
 rusk --|--help --version
 rusk a|a add
 rusk s|s search serve sync
+rusk r|r restore rm
 rusk he|help
-rusk help |add completions del edit gen list mark restore search serve sync
+rusk help |add completions edit gen list mark restore rm search serve sync
 rusk help s|search serve sync
 rusk add |-h --help
 rusk add -|-h --help
@@ -38,11 +39,21 @@ rusk edit 1 -|-h --help -d --date -a --after
 rusk mark |-h --help -p --priority
 rusk m |-h --help -p --priority
 rusk mark 1 |-h --help -p --priority
-rusk del |-h --help --done -y --yes
-rusk d |-h --help --done -y --yes
-rusk del -|-h --help --done -y --yes
-# `--done` takes no ids.
-rusk del 1 2 |-h --help -y --yes
+# `rm` takes ids, never offered, or the word `done`, offered
+# until it or an id is on the line; `--older` and `--newer` go with `done`
+# and take an age or a date, a free value; `--yes` goes with both.
+rusk rm |-h --help --older --newer -y --yes done
+rusk rm -|-h --help --older --newer -y --yes
+rusk rm d|done
+rusk rm 1 |-h --help -y --yes
+rusk rm 1 2 |-h --help -y --yes
+rusk rm 1,2 -|-h --help -y --yes
+rusk rm done |-h --help --older --newer -y --yes
+rusk rm done --older |
+rusk rm done --newer |
+rusk rm done --older 7d |-h --help --older --newer -y --yes
+rusk rm done --newer 1m --older |
+rusk rm done --newer 01-09-2026 --older 30-09-2026 |-h --help --older --newer -y --yes
 rusk list |-h --help -c --compact --no-compact
 rusk l |-h --help -c --compact --no-compact
 rusk list -|-h --help -c --compact --no-compact
@@ -63,6 +74,7 @@ rusk add|add
 rusk list|list
 rusk e|e edit
 rusk edit|edit
+rusk rm|rm
 rusk help|help
 rusk sync|sync
 rusk completions|completions

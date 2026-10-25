@@ -11,10 +11,12 @@
 //!
 //! `[x]` marks done, a leading `!` token marks priority, a trailing
 //! `@YYYY-MM-DD` token is the due date, and the trailing HTML comment pins
-//! the task id and optional dependencies (`<!-- id:3 after:1,2 -->`,
-//! invisible in rendered Markdown). Hand-added items may omit
-//! the id comment: the lowest free id is assigned on load. The file renders
-//! as a normal task list on GitHub/Obsidian and can be edited by hand.
+//! the task id, optional dependencies and, on a task done with the day on
+//! record, that day (`<!-- id:3 after:1,2 done:2026-10-25 -->`, invisible
+//! in rendered Markdown; the tokens read in any order). Hand-added items
+//! may omit the id comment: the lowest free id is assigned on load, and an
+//! `[x]` ticked by hand is done without a day. The file renders as a
+//! normal task list on GitHub/Obsidian and can be edited by hand.
 //! Numbered items (`1. [ ]`) are tasks too, and so are the other checkbox
 //! marks of one character of Obsidian and its themes: `[-]` (cancelled) is
 //! done, `[/]`, `[>]`, `[?]`, `[b]` and the rest are not; rusk writes every
@@ -66,17 +68,20 @@ pub fn encode(tasks: &[Task]) -> String {
         if let Some(date) = task.date {
             out.push_str(&format!(" @{date}"));
         }
-        if task.after.is_empty() {
-            out.push_str(&format!(" <!-- id:{} -->\n", task.id));
-        } else {
+        out.push_str(&format!(" <!-- id:{}", task.id));
+        if !task.after.is_empty() {
             let after = task
                 .after
                 .iter()
                 .map(|id| id.to_string())
                 .collect::<Vec<_>>()
                 .join(",");
-            out.push_str(&format!(" <!-- id:{} after:{} -->\n", task.id, after));
+            out.push_str(&format!(" after:{after}"));
         }
+        if let Some(done_on) = task.done_on {
+            out.push_str(&format!(" done:{done_on}"));
+        }
+        out.push_str(" -->\n");
         for line in lines {
             out.push_str("  ");
             out.push_str(line);
@@ -144,45 +149,60 @@ fn continuation(line: &str) -> Option<&str> {
     line.strip_prefix("  ").or_else(|| line.strip_prefix('\t'))
 }
 
-/// Strips the trailing `<!-- id:N -->` / `<!-- id:N after:A,B -->` metadata
-/// comment and the one space rusk writes before it — no more: the spaces
-/// in front of that are the text's own (REVIEW №88), and so is a `! ` in
-/// front of an empty first line (REVIEW №31). Foreign comments stay in the
-/// text.
-fn take_meta(content: &str) -> (Option<TaskId>, Vec<TaskId>, &str) {
+/// What the metadata comment pins on a task.
+#[derive(Default)]
+struct Meta {
+    id: Option<TaskId>,
+    after: Vec<TaskId>,
+    done_on: Option<NaiveDate>,
+}
+
+/// Strips the trailing `<!-- id:N [after:A,B] [done:YYYY-MM-DD] -->`
+/// metadata comment and the one space rusk writes before it — no more: the
+/// spaces in front of that are the text's own (REVIEW №88), and so is a
+/// `! ` in front of an empty first line (REVIEW №31). Foreign comments stay
+/// in the text.
+fn take_meta(content: &str) -> (Meta, &str) {
     let trimmed = content.trim_end();
     if let Some(before_close) = trimmed.strip_suffix("-->")
         && let Some((text, inner)) = before_close.rsplit_once("<!--")
-        && let Some((id, after)) = parse_meta_comment(inner)
+        && let Some(meta) = parse_meta_comment(inner)
     {
-        return (Some(id), after, text.strip_suffix(' ').unwrap_or(text));
+        return (meta, text.strip_suffix(' ').unwrap_or(text));
     }
-    (None, Vec::new(), trimmed)
+    (Meta::default(), trimmed)
 }
 
-/// `id:N [after:A,B]` inside the metadata comment. Anything else (a foreign
-/// comment, an invalid id) rejects the whole comment so it stays in the text.
-fn parse_meta_comment(inner: &str) -> Option<(TaskId, Vec<TaskId>)> {
-    let mut id = None;
-    let mut after = Vec::new();
+/// `id:N [after:A,B] [done:YYYY-MM-DD]` inside the metadata comment, the
+/// tokens in any order. Anything else (a foreign comment, an invalid id, a
+/// `done:` that is no date) rejects the whole comment so it stays in the
+/// text.
+fn parse_meta_comment(inner: &str) -> Option<Meta> {
+    let mut meta = Meta::default();
     for token in inner.split_whitespace() {
         if let Some(n) = token.strip_prefix("id:") {
             match n.parse::<TaskId>() {
-                Ok(n) if n != 0 && id.is_none() => id = Some(n),
+                Ok(n) if n != 0 && meta.id.is_none() => meta.id = Some(n),
                 _ => return None,
             }
         } else if let Some(list) = token.strip_prefix("after:") {
             for part in list.split(',') {
                 match part.trim().parse::<TaskId>() {
-                    Ok(n) if n != 0 => after.push(n),
+                    Ok(n) if n != 0 => meta.after.push(n),
                     _ => return None,
                 }
+            }
+        } else if let Some(date) = token.strip_prefix("done:") {
+            match date.parse::<NaiveDate>() {
+                Ok(date) if meta.done_on.is_none() => meta.done_on = Some(date),
+                _ => return None,
             }
         } else {
             return None;
         }
     }
-    id.map(|id| (id, after))
+    meta.id?;
+    Some(meta)
 }
 
 /// Strips a trailing `@YYYY-MM-DD` token — unless nothing but the priority
@@ -209,19 +229,20 @@ pub fn decode(data: &str) -> Result<Vec<Task>> {
     for (i, raw) in lines.iter().enumerate() {
         let line = raw.trim_end_matches('\r');
         if let Some((done, content)) = item_start(line) {
-            let (id, after, content) = take_meta(content);
+            let (meta, content) = take_meta(content);
             let (date, content) = take_date(content);
             let (priority, text) = match content.strip_prefix("! ") {
                 Some(rest) => (true, rest),
                 None => (false, content),
             };
             tasks.push(Task {
-                id: id.unwrap_or(0),
+                id: meta.id.unwrap_or(0),
                 text: text.to_string(),
                 date,
                 done,
+                done_on: meta.done_on,
                 priority,
-                after,
+                after: meta.after,
             });
             in_task = true;
         } else if in_task && let Some(rest) = continuation(line) {
@@ -258,6 +279,7 @@ mod tests {
             text: text.to_string(),
             date: None,
             done: false,
+            done_on: None,
             priority: false, after: Vec::new(),
         }
     }
@@ -324,6 +346,49 @@ mod tests {
         // A malformed after list rejects the whole comment (kept as text).
         let tasks = decode("- [ ] x <!-- id:3 after:oops -->\n").unwrap();
         assert_eq!(tasks[0].text, "x <!-- id:3 after:oops -->");
+    }
+
+    #[test]
+    fn the_day_a_task_was_done_rides_in_the_meta_comment() {
+        let mut t = task(3, "shipped");
+        t.done = true;
+        t.date = NaiveDate::from_ymd_opt(2026, 7, 15);
+        t.done_on = NaiveDate::from_ymd_opt(2026, 10, 25);
+        let md = encode(&[t.clone()]);
+        assert_eq!(md, "- [x] shipped @2026-07-15 <!-- id:3 done:2026-10-25 -->\n");
+        assert_eq!(decode(&md).unwrap(), vec![t.clone()]);
+
+        // With dependencies: id, after, done.
+        t.after = vec![1, 2];
+        let md = encode(&[t.clone()]);
+        assert_eq!(md, "- [x] shipped @2026-07-15 <!-- id:3 after:1,2 done:2026-10-25 -->\n");
+        assert_eq!(decode(&md).unwrap(), vec![t]);
+
+        // Not written without a day; the tokens read in any order.
+        let mut open = task(4, "open");
+        open.done = true;
+        assert_eq!(encode(&[open]), "- [x] open <!-- id:4 -->\n");
+        let tasks = decode("- [x] y <!-- done:2026-01-02 after:1 id:5 -->\n").unwrap();
+        assert_eq!(tasks[0].text, "y");
+        assert_eq!(tasks[0].id, 5);
+        assert_eq!(tasks[0].after, vec![1]);
+        assert_eq!(tasks[0].done_on, NaiveDate::from_ymd_opt(2026, 1, 2));
+
+        // A `done:` that is no date makes the comment foreign, like
+        // `after:oops` does; so does a second one.
+        for comment in ["id:3 done:soon", "id:3 done:2026-13-01", "id:3 done:2026-01-01 done:2026-01-02"] {
+            let line = format!("- [x] x <!-- {comment} -->\n");
+            let tasks = decode(&line).unwrap();
+            assert_eq!(tasks[0].text, line.trim_end()[6..], "{comment}");
+            assert_eq!(tasks[0].id, 0);
+            assert_eq!(tasks[0].done_on, None);
+        }
+        // The decoder takes the day as written: an open task with one is
+        // for `normalize` to settle (the day belongs to a done task).
+        let mut tasks = decode("- [ ] open <!-- id:1 done:2026-01-02 -->\n").unwrap();
+        assert_eq!(tasks[0].done_on, NaiveDate::from_ymd_opt(2026, 1, 2));
+        crate::model::normalize(&mut tasks).unwrap();
+        assert_eq!(tasks[0].done_on, None);
     }
 
     #[test]

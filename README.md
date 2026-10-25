@@ -101,7 +101,7 @@ rusk add Finish the report -d 31-12-25  # with a due date
 rusk                                    # list the tasks (same as `rusk list`)
 rusk mark 1                             # done; run it again to undo
 rusk edit 2 Finish the quarterly report # new text
-rusk del 1                              # asks for confirmation first
+rusk rm 1                               # asks for confirmation first
 rusk --help                             # help; `rusk add --help` for one command
 ```
 
@@ -204,31 +204,47 @@ rusk add INFO deploy notes live on the wiki
 ### Deleting
 
 ```bash
-rusk del 1          # asks for confirmation first
-rusk del --done     # all completed tasks
-rusk del 1 --yes    # no question asked: for scripts and pipes
-rusk del --done -y
+rusk rm 1                          # asks for confirmation first
+rusk rm 1 --yes                    # no question asked: for scripts and pipes
+rusk rm done                       # all completed tasks
+rusk rm done --older 7d            # completed a week ago or earlier
+rusk rm done --older 30-09-2026    # completed on that day or earlier
+rusk rm done --newer 1m --older 2w # a range: a month to two weeks ago
+rusk rm done --newer 1-9-26 --older 30-9-26 -y
 ```
 
 The question names the tasks that depend on the one being deleted. The
 deletion then says which of them no longer do
 (`Task 3 no longer depends on 1.`). Without a terminal to ask on (a script,
-a pipe) `rusk del` refuses instead of guessing: `--yes` is how to delete
+a pipe) `rusk rm` refuses instead of guessing: `--yes` is how to delete
 there.
+
+`rusk rm done` deletes the completed tasks; `--older` and `--newer` narrow
+it down to the day they were marked done. Each takes an age or a date:
+an age is written like a relative date — `7d`, `2w`, `1m`, `1q`, `1y`,
+combinable (`1m2w`) — and counts back from today; a date is written as `-d`
+takes one (`30-09-2026`, `30-9-26`, `30-sep-26`, `today`). `--older` keeps
+to that day and earlier, `--newer` to that day and later, both together
+make a range (inclusive at both ends). rusk records the day a task is
+marked done (`rusk mark`, the web page; the todo.txt and iCalendar formats
+keep it in their own fields, see [STORAGE.md](STORAGE.md)). A task done
+before rusk recorded that day, or ticked off in a file by hand, has no day
+on record: the bounds keep it and say how many they kept; `rusk rm done`
+without them deletes it with the rest.
 
 ### Several tasks at once
 
-`mark`, `edit` and `del` take one comma-separated list of ids: `1,2,3`
+`mark`, `edit` and `rm` take one comma-separated list of ids: `1,2,3`
 (`1, 2, 3` is read the same way).
 
 ```bash
 rusk mark 1,2,3
 rusk edit 1,2,3 Update status to completed
-rusk del 1,2,3
+rusk rm 1,2,3
 ```
 
 - Anything in the list that is not an id is an error. A repeated id counts once.
-- For `mark` and `del` a second word after the list is an error (`rusk mark 1 2`).
+- For `mark` and `rm` a second word after the list is an error (`rusk mark 1 2`).
 - For `edit` the first word that is not glued to the list by a comma starts
   the new text: `rusk edit 3 1,000 units` edits task 3 only.
 - When everything after the list is numbers (`rusk edit 1,2 3 -d 2w`)
@@ -255,7 +271,7 @@ rusk edit 1,2,3     # several tasks in one session
 | `list` | `l` |
 | `mark` | `m` |
 | `edit` | `e` |
-| `del` | `d` |
+| `rm` | — |
 | `restore` | `r` |
 | `gen` | `g` |
 | `search` | `s` |
@@ -267,7 +283,8 @@ rusk edit 1,2,3     # several tasks in one session
 | `--after` | `-a` | `add`, `edit` |
 | `--compact` | `-c` | `list` (`--no-compact` has no short form) |
 | `--priority` | `-p` | `mark` |
-| `--yes` | `-y` | `del` |
+| `--yes` | `-y` | `rm` |
+| `--older`, `--newer` | — | `rm done` |
 | `--output` | `-o` | `gen` |
 | `--help` | `-h` | everywhere |
 | `--version` | `-V` | `rusk -V` |
@@ -448,7 +465,7 @@ rusk completions show zsh         # print the script for a manual install
 ```
 
 Tab completes the commands and their aliases, the flags (`--date`,
-`--after`, `--done`, …) and, after `rusk edit <id>`, the task's own text,
+`--after`, `--older`, …) and, after `rusk edit <id>`, the task's own text,
 quoted so that running the line stores exactly that text. Manual installation
 per shell, what exactly is completed and the Windows notes are in
 [completions/README.md](completions/README.md).
@@ -477,7 +494,7 @@ export RUSK_NO_COLOR=1
   printed. An output that cannot be written (a full disk) is an error, exit
   code 1.
 - Questions are asked only on a terminal (standard input and output both).
-  `rusk del` without one refuses and asks for `--yes`. The editors (`rusk add`,
+  `rusk rm` without one refuses and asks for `--yes`. The editors (`rusk add`,
   `rusk edit <id>`) need a terminal too.
 - `rusk search --id` prints the matching ids only, one per line, no colors.
 

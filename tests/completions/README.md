@@ -100,7 +100,7 @@ same in all five shells unless the line names the shells it is for. In short:
 - `rusk help <tab>`: the commands. `rusk help sync <tab>` → push, pull;
   `rusk help completions <tab>` → install, show; nothing after that.
 - Task ids are never offered: `rusk edit <tab>`, `rusk mark <tab>`,
-  `rusk del <tab>` give the flags of the command.
+  `rusk rm <tab>` give the flags of the command.
 - `rusk edit 1<TAB>` puts the text of task 1 next to its id. fish completes
   the id first and gives the text on the next `<TAB>`, `rusk edit 1 <TAB>`.
 - `add` and `edit` offer `-d`/`--date` and `-a`/`--after` while they are not

@@ -34,10 +34,10 @@ rusk completions show zsh > ~/.zsh/completions/_rusk
 
 ## What is completed
 
-- **Commands**: `add`, `edit`, `mark`, `del`, `completions`, etc. and their
-  aliases.
-- **Flags**: `--date` / `--after` (`add`, and `edit` after an id), `--done`,
-  etc.
+- **Commands**: `add`, `edit`, `mark`, `rm`, `completions`, etc. and
+  their aliases.
+- **Flags**: `--date` / `--after` (`add`, and `edit` after an id), `--older` / `--newer`
+  (`rm`), etc.
 - **Task text**: `rusk edit <id><tab>` appends the text of that task, quoted
   so that running the line stores exactly that text.
   - The text is wrapped in single quotes when it contains shell-special
@@ -55,7 +55,7 @@ rusk completions show zsh > ~/.zsh/completions/_rusk
 - **WSL**: works with the `bash`, `zsh`, `fish` and `nu` completions.
 - **Nu Shell**: works natively (`%APPDATA%\nushell\completions\`).
 - **PowerShell**: works natively (`Documents\PowerShell\rusk-completions.ps1`).
-- **CMD**: the basic commands work (add, list, mark, del, edit with text).
+- **CMD**: the basic commands work (add, list, mark, rm, edit with text).
   Due dates go on the first line of the interactive editor (`rusk edit`
   without text) or in `rusk edit <id> -d <date>`. Interactive editing
   requires Windows 10+ and may have limited functionality. Tab completion

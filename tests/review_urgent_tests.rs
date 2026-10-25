@@ -265,6 +265,7 @@ mod sqlite_concurrent_writers {
             text: text.to_string(),
             date: None,
             done: false,
+            done_on: None,
             priority: false,
             after: Vec::new(),
         }

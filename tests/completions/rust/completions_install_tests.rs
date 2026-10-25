@@ -777,21 +777,22 @@ fn test_nu_completion_quotes_special_characters() {
 
 #[test]
 fn test_nu_completion_mark_del_flags_after_subcommand() {
-    // mark/del: no task ID completion; empty cur or -prefix should offer flags
+    // mark: no task ID completion; empty cur or -prefix should offer flags
     let nu_script = Shell::Nu.get_script();
 
     assert!(
-        nu_script.contains("def complete-mark-del"),
-        "Nu script should define complete-mark-del"
+        nu_script.contains("def complete-mark"),
+        "Nu script should define complete-mark"
     );
     assert!(
         nu_script.contains("get-common-flags"),
-        "Nu mark/del should include common help flags"
+        "Nu mark should include common help flags"
     );
     assert!(
-        nu_script.contains("--done") && nu_script.contains("del"),
-        "Nu del completion should offer --done"
+        nu_script.contains("def complete-rm") && nu_script.contains("--older"),
+        "Nu rm completion should offer --older"
     );
+    assert!(!nu_script.contains("--done"), "Nu rm completion must not offer --done");
 }
 
 #[test]

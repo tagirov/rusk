@@ -142,7 +142,8 @@ function _rusk_emit_flag_completions {
             '-d' { 'Set task date' }
             '--after' { 'Depend on tasks (comma-separated ids)' }
             '-a' { 'Depend on tasks (comma-separated ids)' }
-            '--done' { 'Delete all completed tasks' }
+            '--older' { 'Only the tasks completed this long ago or earlier (7d, 2w, 1m), or on this date or earlier' }
+            '--newer' { 'Only the tasks completed this long ago or later, or on this date or later; with --older, a range' }
             '--yes' { 'Delete without asking' }
             '-y' { 'Delete without asking' }
             '--no-compact' { 'Full view for this run' }
@@ -332,7 +333,7 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
 
     # Complete commands (when only "rusk" is typed)
     if ($tokens.Count -eq 1) {
-        $commands = @('add', 'a', 'edit', 'e', 'mark', 'm', 'del', 'd', 'list', 'l', 'search', 's', 'restore', 'r', 'gen', 'g', 'serve', 'sync', 'completions', 'c', 'help')
+        $commands = @('add', 'a', 'edit', 'e', 'mark', 'm', 'rm', 'list', 'l', 'search', 's', 'restore', 'r', 'gen', 'g', 'serve', 'sync', 'completions', 'c', 'help')
         if ([string]::IsNullOrEmpty($wordToComplete)) {
             $filtered = $commands
         } else {
@@ -349,7 +350,7 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
     # The first word after rusk is a command (or a flag of rusk itself), a
     # command typed in full too: Tab ends the word, the next Tab offers what
     # follows it (`rusk e ` + Tab: the flags of edit).
-    $allSubcommands = @('add', 'a', 'edit', 'e', 'mark', 'm', 'del', 'd', 'list', 'l', 'search', 's', 'restore', 'r', 'gen', 'g', 'serve', 'sync', 'completions', 'c', 'help')
+    $allSubcommands = @('add', 'a', 'edit', 'e', 'mark', 'm', 'rm', 'list', 'l', 'search', 's', 'restore', 'r', 'gen', 'g', 'serve', 'sync', 'completions', 'c', 'help')
     $afterSpace = _rusk_cursor_after_whitespace $commandAst $cursorPosition
     if ($tokens.Count -eq 2 -and -not $afterSpace) {
         $first = _rusk_token_text $tokens[1]
@@ -458,21 +459,39 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
             return @()
         }
 
-        { $_ -in 'mark', 'm', 'del', 'd' } {
+        { $_ -in 'mark', 'm' } {
             if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur)) {
-                $df = if ($command -in @('del', 'd')) {
-                    # `--done` takes no ids: offered only before any (`1,2` is one array token)
-                    $hasIds = $false
-                    for ($i = 2; $i -lt $tokens.Count; $i++) {
-                        if ((_rusk_token_text $tokens[$i]) -match '^[\d,]+$') { $hasIds = $true }
-                    }
-                    if ($hasIds) { @('--yes', '-y', '--help', '-h') } else { @('--done', '--yes', '-y', '--help', '-h') }
-                } else {
-                    @('--priority', '-p', '--help', '-h')
-                }
-                return _rusk_emit_flag_completions $df $wordToComplete $tokens $command $cur
+                return _rusk_emit_flag_completions @('--priority', '-p', '--help', '-h') $wordToComplete $tokens $command $cur
             }
             return @()
+        }
+
+        { $_ -in 'rm' } {
+            # Ids (never offered) or the word `done`; `--older`/`--newer` go
+            # with `done`, `--yes` with both. The word is offered until it,
+            # or an id, is on the line.
+            if ($prev -in @('--older', '--newer')) {
+                # Free-form value (an age or a date): no candidates
+                return @()
+            }
+            $hasDone = $false
+            $hasId = $false
+            for ($i = 2; $i -lt $tokens.Count; $i++) {
+                $v = _rusk_token_text $tokens[$i]
+                if ($v -eq 'done') { $hasDone = $true }
+                if ($v -match '^[0-9,]+$') { $hasId = $true }
+            }
+            $results = @()
+            if (-not $hasDone -and -not $hasId -and -not ($wordToComplete -like '-*') -and ('done' -like "$wordToComplete*")) {
+                $results += [System.Management.Automation.CompletionResult]::new('done', 'done', [System.Management.Automation.CompletionResultType]::ParameterValue, 'The completed tasks')
+            }
+            if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur)) {
+                $flags = if ($hasDone) { @('--older', '--newer', '--yes', '-y', '--help', '-h') }
+                         elseif ($hasId) { @('--yes', '-y', '--help', '-h') }
+                         else { @('--older', '--newer', '--yes', '-y', '--help', '-h') }
+                $results += _rusk_emit_flag_completions $flags $wordToComplete $tokens $command $cur
+            }
+            return $results
         }
 
         { $_ -in 'list', 'l' } {
@@ -558,7 +577,7 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
         { $_ -in 'help' } {
             # `rusk help <command> [<subcommand>]`, nothing more.
             $topics = switch ($last) {
-                2 { @('add', 'edit', 'mark', 'del', 'list', 'search', 'restore', 'gen', 'serve', 'sync', 'completions') }
+                2 { @('add', 'edit', 'mark', 'rm', 'list', 'search', 'restore', 'gen', 'serve', 'sync', 'completions') }
                 3 {
                     switch (_rusk_token_text $tokens[2]) {
                         'sync' { @('push', 'pull') }

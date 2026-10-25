@@ -43,7 +43,7 @@ def get-commands [] {
     {value: "add", aliases: ["a"], description: "Add a new task"}
     {value: "edit", aliases: ["e"], description: "Edit tasks by id(s)"}
     {value: "mark", aliases: ["m"], description: "Mark tasks as done/undone"}
-    {value: "del", aliases: ["d"], description: "Delete tasks by id(s)"}
+    {value: "rm", aliases: [], description: "Delete tasks by id, or the completed ones (rm done)"}
     {value: "list", aliases: ["l"], description: "List all tasks"}
     {value: "search", aliases: ["s"], description: "Search tasks by text"}
     {value: "restore", aliases: ["r"], description: "Restore from backup"}
@@ -90,6 +90,22 @@ def get-after-flags [] {
 # True when the token is a flag that takes a value (-d/--date, -a/--after)
 def is-value-flag [token: string] {
   $token == "-d" or $token == "--date" or $token == "-a" or $token == "--after"
+}
+
+# rm subcommand: no confirmation
+def get-yes-flags [] {
+  [
+    {value: "--yes", description: "Delete without asking"}
+    {value: "-y", description: "Delete without asking"}
+  ]
+}
+
+# rm subcommand: the age of the completed tasks to delete (value is free-form)
+def get-older-flags [] {
+  [
+    {value: "--older", description: "Only the tasks completed this long ago or earlier (7d, 2w, 1m), or on this date or earlier"}
+    {value: "--newer", description: "Only the tasks completed this long ago or later, or on this date or later; with --older, a range"}
+  ]
 }
 
 # list subcommand: compact view
@@ -527,29 +543,41 @@ def complete-edit [spans: list<string>, cur: string, prev: string, has_trailing_
   []
 }
 
-# Complete mark/del commands
-def complete-mark-del [cur: string, command: string, spans: list<string>] {
+# Complete mark command
+def complete-mark [cur: string, command: string] {
   # Complete flags (including empty cur after command)
   if ($cur == "") or ($cur | str starts-with "-") {
-    let all_flags = if ($command == "del" or $command == "d") {
-      # `--done` takes no ids: offered only before any
-      let cmd_idx = ($spans | enumerate | where item == $command | get index | first)
-      let has_ids = ($spans | skip ($cmd_idx + 1) | drop 1 | any {|w| $w =~ '^[0-9,]+$' })
-      if $has_ids { [] } else {
-        [{value: "--done", description: "Delete all completed tasks"}]
-      } | append [
-        {value: "--yes", description: "Delete without asking"},
-        {value: "-y", description: "Delete without asking"}
-      ] | append (get-common-flags)
-    } else {
-      [
-        {value: "-p", description: "Toggle the priority flag"},
-        {value: "--priority", description: "Toggle the priority flag"}
-      ] | append (get-common-flags)
-    }
+    let all_flags = [
+      {value: "-p", description: "Toggle the priority flag"},
+      {value: "--priority", description: "Toggle the priority flag"}
+    ] | append (get-common-flags)
     return (complete-flags $all_flags $cur)
   }
-  
+
+  []
+}
+
+# Complete rm: ids, never offered, or the word `done`;
+# `--older`/`--newer` go with `done`, `--yes` with both. The word is offered
+# until it, or an id, is on the line (the --older/--newer value is a
+# free-form age or date: no candidates after it)
+def complete-rm [spans: list<string>, cur: string, prev: string] {
+  if $prev in ["--older", "--newer"] {
+    return []
+  }
+  let before = (add-completed-args-after $spans)
+  let has_done = ("done" in $before)
+  let has_id = (($before | where {|w| $w =~ '^[0-9,]+$' } | length) > 0)
+  if ($cur == "") or ($cur | str starts-with "-") or ("done" | str starts-with $cur) {
+    let candidates = if $has_done {
+      (get-older-flags) | append (get-yes-flags) | append (get-common-flags)
+    } else if $has_id {
+      (get-yes-flags) | append (get-common-flags)
+    } else {
+      [{value: "done", description: "The completed tasks"}] | append (get-older-flags) | append (get-yes-flags) | append (get-common-flags)
+    }
+    return (complete-flags $candidates $cur)
+  }
   []
 }
 
@@ -788,7 +816,7 @@ def parse-spans [spans: list<string>] {
     ""
   }
   
-  # After `rusk e ` (trailing "" span): word_count is 1 but prev must be `e` for edit/mark/del logic.
+  # After `rusk e ` (trailing "" span): word_count is 1 but prev must be `e` for edit/mark logic.
   let prev = if $has_trailing_space {
     if $word_count >= 1 {
       try { ($rusk_spans | last) } catch { "" }
@@ -884,10 +912,14 @@ export def rusk-completions-main [spans: list<string>] {
       complete-edit $spans $cur_n $ctx.prev $ctx.has_trailing_space $ctx.command
     }
     
-    "mark" | "m" | "del" | "d" => {
-      complete-mark-del $cur_n $ctx.command $spans
+    "mark" | "m" => {
+      complete-mark $cur_n $ctx.command
     }
-    
+
+    "rm" => {
+      complete-rm $spans $cur_n $ctx.prev
+    }
+
     "list" | "l" | "restore" | "r" => {
       complete-list-restore $cur_n $ctx.command
     }

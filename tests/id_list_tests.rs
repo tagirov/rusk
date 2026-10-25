@@ -167,7 +167,7 @@ fn split_first_word_must_be_a_list() {
     );
 }
 
-// --- parse_id_args: mark / del ----------------------------------------------
+// --- parse_id_args: mark / rm -----------------------------------------------
 
 #[test]
 fn id_args_accept_one_list() {

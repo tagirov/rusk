@@ -67,7 +67,7 @@ cargo test --test review_known_bugs -- --ignored    # the repros of open review 
   invalid; see `rusk edit --help`).
 - **`cli_tests.rs`**: CLI command behavior via `TaskManager` (no
   subprocess): `add` with and without dates, `edit` of text and dates,
-  `mark` done/undone, `del`, the task data used by `list` (no TTY output
+  `mark` done/undone, `rm`, the task data used by `list` (no TTY output
   assertions here), `restore` from backups.
 - **`cli_utils_tests.rs`**: CLI utility functions: text wrapping by words
   (`wrap_text_by_words`), output formatting helpers, other helpers.
@@ -106,7 +106,7 @@ cargo test --test review_known_bugs -- --ignored    # the repros of open review 
   (`src/parser/ids.rs`). One comma-separated list (`1,2,3`), blanks and
   empty parts tolerated, repeats dropped; words glued back across a comma
   when the shell split them (`1, 2, 3`); a word without a comma boundary
-  ends the list (`edit 3 1,000 units` is text); `mark` / `del` reject a
+  ends the list (`edit 3 1,000 units` is text); `mark` / `rm` reject a
   second word, and every command rejects a part that is not an id; for
   `edit`, numbers alone after the list read as more ids (`edit 1,2 3` is an
   error), and the words after `--` are text as they are.
@@ -186,7 +186,7 @@ fn my_test() {
 `#[ignore]`: `cargo test --test review_known_bugs -- --ignored` shows them.
 When a fix lands, drop the `#[ignore]` of the tests it turns green. The
 tests of a closed cluster stay in the file as its regression suite. Closed
-so far: R1 error causes, R2 argv of edit/mark/del, R3 the rules every loaded
+so far: R1 error causes, R2 argv of edit/mark/rm (`del` then), R3 the rules every loaded
 list is held to, R4 text measured in terminal cells, R5 "cannot read" is not
 "zero tasks", R6 the terminal comes back, R7 task text does not drive the
 terminal, R8 the draft lifecycle, R9 restore, R10/R13 reading a location
@@ -249,7 +249,7 @@ Where each cluster's checks live, black-box (`r<N>_*` tests here) and unit
   color decision, closed-pipe errors), `src/search.rs` (folding, byte
   ranges), `src/cli/formatter.rs` (rows as ranges, highlights, the compact
   row). What needs a pty (an empty `NO_COLOR` on a terminal, clap's colors,
-  the `del` prompt, the editor's report after a failed save) was checked
+  the `rm` prompt, the editor's report after a failed save) was checked
   against a release binary (see the R19 status in REVIEW.md).
 - **R20**: starts `rusk serve --port 0` (`serve()`, which reads the port
   from the first line and kills the server when the test ends) and speaks
@@ -299,7 +299,7 @@ Where each cluster's checks live, black-box (`r<N>_*` tests here) and unit
   deletion takes off the lists in `src/storage.rs`, the painting of many
   search matches in `src/cli/formatter.rs`, the files that belong to a
   database in `src/backend/mod.rs`.
-  `r27_the_delete_question_names_who_depends_on_the_task` drives the `del`
+  `r27_the_delete_question_names_who_depends_on_the_task` drives the `rm`
   prompt in a pty.
 - **R28**: the http side runs through a fake `curl` that logs its arguments
   and header files, and a real one with a `~/.curlrc` of the test's own.

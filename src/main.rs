@@ -58,7 +58,7 @@ fn exit_with_error(msg: impl std::fmt::Display) -> ! {
     std::process::exit(1);
 }
 
-/// What `mark` / `del` / `edit` made of their task ids, or the error for
+/// What `mark` / `rm` / `edit` made of their task ids, or the error for
 /// what they got instead, followed by `examples` of the command's usage.
 fn ids_or_exit<T>(parsed: Result<T, IdListError>, examples: &str) -> T {
     parsed.unwrap_or_else(|err| match err {
@@ -249,18 +249,53 @@ fn run() -> Result<()> {
             let mut tm = TaskManager::new()?;
             HandlerCLI::handle_add_task(&mut tm, text, date, after_ids)?;
         }
-        Some(Command::Del { ids, done, yes }) => {
-            // clap rejects `--done` together with ids.
-            let ids = if done {
-                Vec::new()
+        Some(Command::Rm { what, older, newer, yes }) => {
+            // The word `done`, or an id list: both read before the database,
+            // like every other argument.
+            if what.first().map(String::as_str) == Some("done") {
+                if let Some(more) = what.get(1) {
+                    exit_with_error(format!(
+                        "`rusk rm done` deletes the completed tasks and takes nothing more, got \
+                         '{more}'; tasks by id are `rusk rm 1,2,3`"
+                    ));
+                }
+                let today = chrono::Local::now().date_naive();
+                let bound = |flag: &str, value: Option<String>| {
+                    value.map(|text| match rusk::parser::date::day_bound(&text, today) {
+                        Ok(day) => rusk::cli::Bound { text, day },
+                        Err(err) => exit_with_error(format!("{flag}: {err:#}")),
+                    })
+                };
+                let bounds = rusk::cli::DoneBounds {
+                    older: bound("--older", older),
+                    newer: bound("--newer", newer),
+                };
+                if let (Some(o), Some(n)) = (&bounds.older, &bounds.newer)
+                    && n.day > o.day
+                {
+                    exit_with_error(format!(
+                        "an empty range: --newer {} ({}) is after --older {} ({})",
+                        n.text,
+                        n.day.format("%d-%m-%Y"),
+                        o.text,
+                        o.day.format("%d-%m-%Y")
+                    ));
+                }
+                let mut tm = TaskManager::new()?;
+                HandlerCLI::handle_rm(&mut tm, bounds, yes)?;
             } else {
-                ids_or_exit(
-                    parse_id_args(&ids),
-                    "`rusk del 1,2,3`, or `rusk del --done` for all completed tasks",
-                )
-            };
-            let mut tm = TaskManager::new()?;
-            HandlerCLI::handle_delete_tasks(&mut tm, ids, done, yes)?;
+                if older.is_some() || newer.is_some() {
+                    exit_with_error(
+                        "`--older` and `--newer` go with the word `done`: `rusk rm done --older 7d`",
+                    );
+                }
+                let ids = ids_or_exit(
+                    parse_id_args(&what),
+                    "`rusk rm 1,2,3`, or `rusk rm done` for the completed tasks",
+                );
+                let mut tm = TaskManager::new()?;
+                HandlerCLI::handle_delete_tasks(&mut tm, ids, yes)?;
+            }
         }
         Some(Command::Mark { ids, priority }) => {
             let ids = ids_or_exit(parse_id_args(&ids), "`rusk mark 1,2,3`");

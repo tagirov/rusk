@@ -7,11 +7,27 @@ mod common;
 #[test]
 fn test_binary_del_help() {
     let sb = common::Sandbox::new();
-    let out = sb.cmd().args(["del", "--help"]).output().unwrap();
+    // Gone since 1.0.0-beta.3: `rusk rm` deletes, by id or the completed
+    // tasks with `done`. No alias is kept, so nothing is mistaken.
+    for cmd in ["del", "d"] {
+        let out = sb.cmd().args([cmd, "--help"]).output().unwrap();
+        assert!(!out.status.success(), "{cmd}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("unrecognized subcommand"), "{cmd}: {stderr}");
+    }
+    let out = sb.cmd().args(["rm", "--help"]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Delete tasks") && !stdout.contains("--done"), "{stdout}");
+}
+
+#[test]
+fn test_binary_rm_help() {
+    let sb = common::Sandbox::new();
+    let out = sb.cmd().args(["rm", "--help"]).output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Delete tasks"));
-    assert!(stdout.contains("--done"));
+    assert!(stdout.contains("completed tasks"), "{stdout}");
+    assert!(stdout.contains("--older"), "{stdout}");
 }
 
 #[test]

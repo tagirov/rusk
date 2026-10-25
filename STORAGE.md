@@ -82,7 +82,7 @@ export RUSK_DB="$HOME/tasks/tasks.csv"    # or rusk_db = ~/tasks/tasks.csv in th
 | Extension | Format | Interop | Feature |
 |---|---|---|---|
 | `.json` (or anything else) | pretty JSON | the default | built-in |
-| `.csv` | RFC 4180, `id,text,date,done,priority,after` schema | LibreOffice / Excel / Google Sheets | built-in |
+| `.csv` | RFC 4180, `id,text,date,done,priority,after,done_on` schema | LibreOffice / Excel / Google Sheets | built-in |
 | `.md` / `.markdown` | GitHub-style task list | GitHub, Obsidian, any editor | `fmt-markdown` |
 | `.txt` | [todo.txt](http://todotxt.org) | todo.sh, Simpletask, … | `fmt-todotxt` |
 | `.ndjson` / `.jsonl` | one JSON task per line | git diffs, `grep`, `jq` | `fmt-ndjson` |
@@ -117,6 +117,12 @@ SQLite itself, so it holds what a WAL holds too.
 
 - Multiline task text, commas and quotes are handled. Dates are ISO
   `YYYY-MM-DD`. The `after` cell takes ids separated by spaces or commas.
+  The `done_on` cell is the day the task was marked done, and empty on an
+  open task or one done without the day on record.
+- Each column rusk gained went to the end, so the columns of a spreadsheet
+  keep their positions: a file with the header of an earlier rusk, without
+  `done_on` or without `after` and `done_on`, loads as it is (the missing
+  columns read as empty), and the next save writes the full header.
 - A row typed in with an empty id cell is a new task. Rows of empty cells
   are skipped.
 - LibreOffice edits the file in place and keeps ISO dates as they are.
@@ -132,8 +138,13 @@ SQLite itself, so it holds what a WAL holds too.
 
 - An item is `- [x] text @2026-07-15 <!-- id:3 -->`. A leading `!` marks
   priority. Continuation lines are indented by two spaces (or a tab).
+- The comment also carries the dependencies and the day the task was
+  marked done: `<!-- id:3 after:1,2 done:2026-10-25 -->`, in that order
+  when rusk writes it, in any order when read. `done:` is written only
+  when the day is on record. A comment with a `done:` that is no date (or
+  an `after:` that is no id list) is not rusk's: it stays in the text.
 - Items added by hand without the id comment get the lowest free id on the
-  next run.
+  next run; an `[x]` ticked by hand is done without a day on record.
 - Numbered items (`1. [ ] …`) are tasks too. So are the other one-character
   checkbox marks of Obsidian and its themes: `[-]` (cancelled) reads as
   done; `[/]`, `[>]`, `[?]`, `[b]` and the rest as not done. Every task is
@@ -149,14 +160,18 @@ SQLite itself, so it holds what a WAL holds too.
 
 ### todo.txt
 
-- A line is `x (A) text due:2026-07-15 id:3`. Projects and contexts stay in
-  the task text. Newlines are stored as a literal `\n`.
+- A line is `x 2026-10-25 (A) text due:2026-07-15 id:3`. The date after
+  the `x` is the completion date of the spec: the day the task was marked
+  done, written when it is on record. Projects and contexts stay in the
+  task text. Newlines are stored as a literal `\n`.
 - A word of the text that would read as metadata is written with a `\` in
   front, so the text comes back as it was: `x`, `(B)` or a date as the first
   word, a `due:`/`id:`/`after:` tag anywhere (`\x marks the spot`).
 - rusk has one priority flag. Any priority `(A)`–`(Z)` reads as priority and
   is written back as `(A)`.
-- Completion and creation dates (`x 2026-07-09 2026-07-01 …`) are dropped.
+- Of the head dates another tool writes (`x 2026-07-09 2026-07-01 …`) the
+  completion date is kept as the day the task was done; the creation date,
+  and the one at the head of an open line, is dropped.
 
 ### iCalendar
 
@@ -164,6 +179,12 @@ SQLite itself, so it holds what a WAL holds too.
   relations are ignored and not preserved.
 - `STATUS:COMPLETED` or `CANCELLED` is done. Without a `STATUS`, so is a
   `COMPLETED` time or `PERCENT-COMPLETE:100`.
+- The day of the `COMPLETED` time (its date part, as written, with no
+  time-zone conversion) is the day the task was marked done, kept when the
+  VTODO reads as done. rusk writes it, when the day is on record, as
+  `COMPLETED:20261025T120000Z`: it knows the day and not the time, and
+  noon UTC is the time that falls on that calendar day in every time zone
+  but the farthest, so a client anywhere shows the same day.
 - A dependency is `RELATED-TO;RELTYPE=DEPENDS-ON` (or `FINISHTOSTART`). A
   `RELATED-TO` without `RELTYPE` is a dependency only when it names a UID of
   the form rusk wrote up to 0.7.3 (`rusk-3@rusk`). Otherwise it is the parent
@@ -191,7 +212,7 @@ is held to the same rules before anything uses it:
   task: it is skipped with a warning, and the next save leaves it out. A
   task that has an id but no text (`{"id": 2, "text": ""}`) keeps its date,
   flags and dependents and shows as `(no text)`, with a warning, so that
-  `rusk edit 2` or `rusk del 2` can take care of it.
+  `rusk edit 2` or `rusk rm 2` can take care of it.
 - **Every task has an id of its own.** One without an id (or with id 0)
   gets the lowest free id. One that repeats the id of an earlier task gets a
   new id, and a warning names it. `rusk list` shows the ids the next save
@@ -208,8 +229,13 @@ is held to the same rules before anything uses it:
   `-d _` can correct it. `rusk serve` does not take a whole list with one
   (`PUT`, as `rusk sync push` sends), as it takes no list a load would have
   to repair.
-- In JSON only `text` is required: any other field may be left out or
-  `null`.
+- **A completion date belongs to a done task.** One on an open task is
+  dropped, in silence: nothing it said about the task was true. A done task
+  without one is done without the day on record (a database an earlier
+  rusk wrote, an `[x]` ticked by hand); `rusk rm done --older` leaves such tasks
+  alone and names them.
+- In JSON only `text` is required: any other field (`id`, `date`, `done`,
+  `priority`, `after`, `done_on`) may be left out or `null`.
 
 The file itself changes only with the next save, and the `.backup` keeps
 what that save replaced.
@@ -334,7 +360,7 @@ copy.
   draft, offered again by the next `rusk edit <id>`. If not even the draft
   can be written (a read-only directory), the text is printed with the
   error instead.
-- `rusk del` deletes what you confirmed. A task that was changed, or deleted
+- `rusk rm` deletes what you confirmed. A task that was changed, or deleted
   and its id reused, while the prompt was waiting is reported instead.
 - Anything else that writes the file (an editor, a sync tool) is noticed as
   well, but without the lock there is a window of a few milliseconds.

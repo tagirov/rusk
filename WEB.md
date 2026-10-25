@@ -307,12 +307,19 @@ or Bearer header. Dates are ISO `YYYY-MM-DD`, in the years 1000–9999.
 | `POST /api/tasks` | `{"text": "...", "date": "2026-08-01" \| null, "after": [1, 2]}` (`date` and `after` optional) | `201` + created task, listed in the place of its id |
 | `PATCH /api/tasks/{id}` | any subset of `{text, date, done, priority, after}`; `"date": null` clears, `after` replaces the whole list (`[]` clears; the same ids in another order are no change) | `200` + updated task |
 | `DELETE /api/tasks/{id}` | — | `204` |
-| `DELETE /api/tasks/done` | — | `{"deleted": n}` |
+| `DELETE /api/tasks/done[?older=…&newer=…]` | — | `{"deleted": n, "kept": k}`: every done task, or those marked done within the bounds — `older` that day or earlier, `newer` that day or later, both a range — each an age (`7d`, `2w`, `1m`) or a date (`30-09-2026`, `today`) as `rusk rm done --older` / `--newer` take them; `kept` counts the done tasks the bounds left alone for want of a day on record |
 | `PUT /api/tasks` | full task array | replaces the whole list (used by sync); `{"count": n, "tasks": [...]}`, the list as the server's database holds it |
 
 **Tasks.** A task is sent as the JSON format stores it: `id`, `text`, `date`
-(`YYYY-MM-DD` or `null`), `done`, `priority` and `after`, the ids of the
-tasks it waits for (`--after`; left out when there are none).
+(`YYYY-MM-DD` or `null`), `done`, `priority`, `after`, the ids of the tasks
+it waits for (`--after`; left out when there are none), and `done_on`, the
+day the task was marked done (`YYYY-MM-DD`; left out when there is none).
+
+- `done_on` is not set directly: `"done": true` in a `PATCH` gives the task
+  the day of the request, `"done": false` takes it away, and marking a done
+  task done again changes nothing. A list sent with `PUT` is stored as it
+  is, a `done_on` on an open task excepted (it is dropped, as every load
+  drops one).
 
 - `after` may name only other tasks that exist and must not close a loop (a
   task that waits for itself, or for one that waits for it). Otherwise a

@@ -46,6 +46,7 @@ mod tests {
                 text: "multi\nline".into(),
                 date: NaiveDate::from_ymd_opt(2026, 7, 15),
                 done: false,
+                done_on: None,
                 priority: true, after: Vec::new(),
             },
             Task {
@@ -53,6 +54,7 @@ mod tests {
                 text: "plain".into(),
                 date: None,
                 done: true,
+                done_on: None,
                 priority: false, after: Vec::new(),
             },
         ];
@@ -78,5 +80,31 @@ mod tests {
     #[test]
     fn empty_input() {
         assert_eq!(decode("").unwrap(), Vec::<Task>::new());
+    }
+
+    /// `done_on` is a key only when there is a day: a line of a task done
+    /// without one, or open, is what an earlier rusk wrote.
+    #[test]
+    fn the_day_a_task_was_done_is_a_key_only_when_there_is_one() {
+        let mut done = Task {
+            id: 1,
+            text: "shipped".into(),
+            date: None,
+            done: true,
+            done_on: NaiveDate::from_ymd_opt(2026, 10, 25),
+            priority: false,
+            after: Vec::new(),
+        };
+        let data = encode(std::slice::from_ref(&done)).unwrap();
+        assert_eq!(data, "{\"id\":1,\"text\":\"shipped\",\"date\":null,\"done\":true,\"priority\":false,\"done_on\":\"2026-10-25\"}\n");
+        assert_eq!(decode(&data).unwrap(), vec![done.clone()]);
+
+        done.done_on = None;
+        let data = encode(std::slice::from_ref(&done)).unwrap();
+        assert!(!data.contains("done_on"), "{data}");
+        assert_eq!(decode(&data).unwrap(), vec![done]);
+        // Absent and null read the same.
+        let tasks = decode("{\"text\":\"a\",\"done\":true}\n{\"text\":\"b\",\"done\":true,\"done_on\":null}\n").unwrap();
+        assert!(tasks.iter().all(|task| task.done_on.is_none()));
     }
 }

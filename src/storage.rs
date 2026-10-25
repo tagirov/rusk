@@ -1,4 +1,5 @@
 use anyhow::Result;
+use chrono::NaiveDate;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -217,11 +218,47 @@ pub fn remove_tasks(tasks: &mut Vec<Task>, ids: &[TaskId]) -> Vec<TaskId> {
     not_found
 }
 
-/// Deletes every done task, along with every dependency on them. Returns
-/// how many there were.
-pub fn remove_done(tasks: &mut Vec<Task>) -> usize {
-    let done_ids: Vec<TaskId> = tasks.iter().filter(|t| t.done).map(|t| t.id).collect();
-    tasks.retain(|t| !t.done);
+/// The done tasks `rusk rm done` selects: those marked done on a day from
+/// `newer` to `older`, both inclusive, either bound optional (`--newer`,
+/// `--older`). With a bound set, a done task without the day on record
+/// (done before rusk recorded it, or ticked off in a file by hand) is of
+/// unknown age and not selected: the caller says how many it kept.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DoneRange {
+    /// Marked done on this day or before.
+    pub older: Option<NaiveDate>,
+    /// Marked done on this day or after.
+    pub newer: Option<NaiveDate>,
+}
+
+impl DoneRange {
+    pub fn is_bounded(&self) -> bool {
+        self.older.is_some() || self.newer.is_some()
+    }
+
+    pub fn selects(&self, task: &Task) -> bool {
+        if !task.done {
+            return false;
+        }
+        if !self.is_bounded() {
+            return true;
+        }
+        task.done_on.is_some_and(|on| {
+            self.older.is_none_or(|day| on <= day) && self.newer.is_none_or(|day| on >= day)
+        })
+    }
+}
+
+/// A done task a bounded [`DoneRange`] does not reach: no day on record.
+pub fn is_done_undated(task: &Task) -> bool {
+    task.done && task.done_on.is_none()
+}
+
+/// Deletes every done task the range selects, along with every dependency
+/// on them. Returns how many there were.
+pub fn remove_done(tasks: &mut Vec<Task>, range: DoneRange) -> usize {
+    let done_ids: Vec<TaskId> = tasks.iter().filter(|t| range.selects(t)).map(|t| t.id).collect();
+    tasks.retain(|t| !done_ids.contains(&t.id));
     strip_deps(tasks, &done_ids);
     done_ids.len()
 }
@@ -251,20 +288,20 @@ impl TaskManager {
         let last_week = today - chrono::Duration::days(7);
 
         vec![
-            Task { id: 1, text: "Simple task without date".to_string(), date: None, done: false, priority: false, after: Vec::new() },
-            Task { id: 2, text: "Completed task without date".to_string(), date: None, done: true, priority: false, after: Vec::new() },
-            Task { id: 3, text: "Overdue task from last week".to_string(), date: Some(last_week), done: false, priority: true, after: Vec::new() },
-            Task { id: 4, text: "Completed overdue task".to_string(), date: Some(yesterday), done: true, priority: false, after: Vec::new() },
-            Task { id: 5, text: "Task due today".to_string(), date: Some(today), done: false, priority: true, after: Vec::new() },
-            Task { id: 6, text: "Completed task due today".to_string(), date: Some(today), done: true, priority: false, after: Vec::new() },
-            Task { id: 7, text: "Task due tomorrow".to_string(), date: Some(tomorrow), done: false, priority: false, after: Vec::new() },
-            Task { id: 8, text: "Completed future task".to_string(), date: Some(next_week), done: true, priority: false, after: Vec::new() },
-            Task { id: 9, text: "Short".to_string(), date: None, done: false, priority: false, after: Vec::new() },
-            Task { id: 10, text: "This is a very long task description that contains multiple words and demonstrates how the system handles longer text content".to_string(), date: Some(tomorrow), done: false, priority: false, after: Vec::new() },
-            Task { id: 11, text: "Task with special chars: @#$%^&*()".to_string(), date: None, done: false, priority: false, after: Vec::new() },
-            Task { id: 12, text: "Complete task 42 and review items 1-10".to_string(), date: Some(next_week), done: false, priority: false, after: Vec::new() },
-            Task { id: 13, text: "Buy groceries: milk, bread, eggs, and cheese".to_string(), date: Some(tomorrow), done: false, priority: false, after: Vec::new() },
-            Task { id: 14, text: "Long-term project milestone".to_string(), date: Some(today + chrono::Duration::days(30)), done: false, priority: false, after: Vec::new() },
+            Task { id: 1, text: "Simple task without date".to_string(), date: None, done: false, done_on: None, priority: false, after: Vec::new() },
+            Task { id: 2, text: "Completed task without date".to_string(), date: None, done: true, done_on: Some(last_week), priority: false, after: Vec::new() },
+            Task { id: 3, text: "Overdue task from last week".to_string(), date: Some(last_week), done: false, done_on: None, priority: true, after: Vec::new() },
+            Task { id: 4, text: "Completed overdue task".to_string(), date: Some(yesterday), done: true, done_on: Some(yesterday), priority: false, after: Vec::new() },
+            Task { id: 5, text: "Task due today".to_string(), date: Some(today), done: false, done_on: None, priority: true, after: Vec::new() },
+            Task { id: 6, text: "Completed task due today".to_string(), date: Some(today), done: true, done_on: Some(today), priority: false, after: Vec::new() },
+            Task { id: 7, text: "Task due tomorrow".to_string(), date: Some(tomorrow), done: false, done_on: None, priority: false, after: Vec::new() },
+            Task { id: 8, text: "Completed future task".to_string(), date: Some(next_week), done: true, done_on: Some(today), priority: false, after: Vec::new() },
+            Task { id: 9, text: "Short".to_string(), date: None, done: false, done_on: None, priority: false, after: Vec::new() },
+            Task { id: 10, text: "This is a very long task description that contains multiple words and demonstrates how the system handles longer text content".to_string(), date: Some(tomorrow), done: false, done_on: None, priority: false, after: Vec::new() },
+            Task { id: 11, text: "Task with special chars: @#$%^&*()".to_string(), date: None, done: false, done_on: None, priority: false, after: Vec::new() },
+            Task { id: 12, text: "Complete task 42 and review items 1-10".to_string(), date: Some(next_week), done: false, done_on: None, priority: false, after: Vec::new() },
+            Task { id: 13, text: "Buy groceries: milk, bread, eggs, and cheese".to_string(), date: Some(tomorrow), done: false, done_on: None, priority: false, after: Vec::new() },
+            Task { id: 14, text: "Long-term project milestone".to_string(), date: Some(today + chrono::Duration::days(30)), done: false, done_on: None, priority: false, after: Vec::new() },
         ]
     }
 
@@ -422,6 +459,7 @@ impl TaskManager {
                     text: text.to_string(),
                     date,
                     done: false,
+                    done_on: None,
                     priority: false,
                     after,
                 },
@@ -471,12 +509,17 @@ impl TaskManager {
     }
 
     pub fn delete_all_done(&mut self) -> Result<usize> {
-        self.update(|tasks| Ok(remove_done(tasks)))
+        self.update(|tasks| Ok(remove_done(tasks, DoneRange::default())))
     }
 
+    /// Toggles `done` for the given task ids. A task marked done gets
+    /// today as the day it was done on (what `rusk rm done --older` goes by);
+    /// one marked undone loses it.
     pub fn mark_tasks(&mut self, ids: Vec<TaskId>) -> Result<MarkResult> {
+        let today = chrono::Local::now().date_naive();
         self.toggle_tasks(ids, |task| {
             task.done = !task.done;
+            task.done_on = task.done.then_some(today);
             task.done
         })
     }
@@ -700,6 +743,46 @@ mod tests {
     use crate::model::{Task, TaskId};
     use chrono::NaiveDate;
 
+    /// `rusk mark` records the day a task is done and forgets it when the
+    /// task is marked undone; `rusk rm done --older` goes by it.
+    #[test]
+    fn marking_done_records_the_day_and_rm_reads_it() {
+        use super::{DoneRange, is_done_undated, remove_done};
+        let mut tm = TaskManager::new_empty().unwrap();
+        for text in ["a", "b", "c"] {
+            tm.add_task(vec![text.to_string()], None).unwrap();
+        }
+        let today = chrono::Local::now().date_naive();
+        tm.mark_tasks(vec![1, 2]).unwrap();
+        assert_eq!(tm.tasks()[0].done_on, Some(today));
+        tm.mark_tasks(vec![2]).unwrap();
+        assert!(!tm.tasks()[1].done && tm.tasks()[1].done_on.is_none());
+        // Done ten days ago; done, day unknown; open.
+        tm.update(|tasks| {
+            tasks[0].done_on = Some(today - chrono::Duration::days(10));
+            tasks[1].done = true;
+            Ok(())
+        })
+        .unwrap();
+        let week_ago = today - chrono::Duration::days(7);
+        let older = DoneRange { older: Some(week_ago), newer: None };
+        let all = DoneRange::default();
+        assert!(older.selects(&tm.tasks()[0]));
+        assert!(!older.selects(&tm.tasks()[1]) && all.selects(&tm.tasks()[1]));
+        assert!(is_done_undated(&tm.tasks()[1]) && !is_done_undated(&tm.tasks()[0]));
+        assert!(!all.selects(&tm.tasks()[2]));
+        // Both bounds, inclusive: a range of one day holds the day itself.
+        let ten_days_ago = today - chrono::Duration::days(10);
+        let that_day = DoneRange { older: Some(ten_days_ago), newer: Some(ten_days_ago) };
+        assert!(that_day.selects(&tm.tasks()[0]));
+        let after = DoneRange { older: None, newer: Some(week_ago) };
+        assert!(!after.selects(&tm.tasks()[0]) && !after.selects(&tm.tasks()[1]));
+        let mut tasks = tm.tasks().to_vec();
+        assert_eq!(remove_done(&mut tasks, older), 1);
+        assert_eq!(tasks.iter().map(|t| t.id).collect::<Vec<_>>(), [2, 3]);
+        assert_eq!(remove_done(&mut tasks, all), 1);
+        assert_eq!(tasks.iter().map(|t| t.id).collect::<Vec<_>>(), [3]);
+    }
     #[test]
     fn add_task_with_parsed_date_roundtrip() {
         let mut tm = TaskManager::new_empty().unwrap();
@@ -729,6 +812,7 @@ mod tests {
                     text: "t".into(),
                     date: None,
                     done: false,
+                    done_on: None,
                     priority: false,
                     after: Vec::new(),
                 })
@@ -749,6 +833,7 @@ mod tests {
             text: format!("task {id}"),
             date: None,
             done: false,
+            done_on: None,
             priority: false,
             after: Vec::new(),
         };
@@ -823,6 +908,7 @@ mod tests {
                 text: format!("task {id}"),
                 date: None,
                 done: false,
+                done_on: None,
                 priority: false,
                 after: Vec::new(),
             })

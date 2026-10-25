@@ -6,6 +6,44 @@ mod handlers;
 
 pub struct HandlerCLI;
 
+/// A bound of `rusk rm done --older` / `--newer`: as it was given (an age
+/// or a date), for the messages, and the day it names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Bound {
+    pub text: String,
+    pub day: chrono::NaiveDate,
+}
+
+/// What `rusk rm done` was told to select: the tasks marked done on a day
+/// from `newer` to `older`, both inclusive, either bound optional.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DoneBounds {
+    pub older: Option<Bound>,
+    pub newer: Option<Bound>,
+}
+
+impl DoneBounds {
+    pub fn range(&self) -> crate::storage::DoneRange {
+        crate::storage::DoneRange {
+            older: self.older.as_ref().map(|b| b.day),
+            newer: self.newer.as_ref().map(|b| b.day),
+        }
+    }
+
+    /// The bounds in words: `older than 7d`, `newer than 01-09-2026`, or
+    /// both joined with `and`; empty without a bound.
+    pub fn describe(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(b) = &self.older {
+            parts.push(format!("older than {}", b.text));
+        }
+        if let Some(b) = &self.newer {
+            parts.push(format!("newer than {}", b.text));
+        }
+        parts.join(" and ")
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use std::sync::{Mutex, MutexGuard};

@@ -656,6 +656,7 @@ mod tests {
                         text: "t".into(),
                         date: None,
                         done: false,
+                        done_on: None,
                         priority: false,
                         after: Vec::new(),
                     })
@@ -678,6 +679,7 @@ mod tests {
             text: "hello".into(),
             date: chrono::NaiveDate::from_ymd_opt(2026, 7, 8),
             done: false,
+            done_on: None,
             priority: true, after: Vec::new(),
         }];
         // Pretty JSON on disk and compact JSON over HTTP hash identically

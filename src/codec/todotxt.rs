@@ -5,18 +5,22 @@
 //! (todo.sh, Simpletask, …):
 //!
 //! ```text
-//! x write the report due:2026-07-15 id:3
+//! x 2026-10-25 write the report due:2026-07-15 id:3
 //! (A) call mom +family id:1
 //! ```
 //!
-//! Mapping: `x ` prefix = done; any `(A)`–`(Z)` priority = the priority
-//! flag (written back as `(A)`); a `due:YYYY-MM-DD` token = the due date;
-//! an `id:N` token pins the rusk id (assigned on load when missing);
-//! an `after:A,B` token lists task ids this task depends on.
-//! Projects/contexts/other `key:value` tokens are kept as part of the task
-//! text. Completion/creation dates at the head of a line are accepted but
-//! not preserved. Newlines inside task text are stored as a literal `\n`
-//! (with `\\` escaping a backslash) — nonstandard, but round-trips.
+//! Mapping: `x ` prefix = done, and the date right after it (the
+//! completion date of the spec, before the priority) = the day the task
+//! was marked done, written only when it is on record; any `(A)`–`(Z)`
+//! priority = the priority flag (written back as `(A)`); a
+//! `due:YYYY-MM-DD` token = the due date; an `id:N` token pins the rusk id
+//! (assigned on load when missing); an `after:A,B` token lists task ids
+//! this task depends on. Projects/contexts/other `key:value` tokens are
+//! kept as part of the task text. A second head date of a completed line
+//! and the head date of an open one are creation dates, which rusk does
+//! not keep: accepted, dropped. Newlines inside task text are stored as a
+//! literal `\n` (with `\\` escaping a backslash) — nonstandard, but
+//! round-trips.
 //!
 //! A word of the task text that would be read as metadata — `x`, a
 //! priority or a date as the first word, a valid `due:`, `id:` or `after:`
@@ -60,6 +64,9 @@ pub fn encode(tasks: &[Task]) -> String {
     for task in tasks {
         if task.done {
             out.push_str("x ");
+            if let Some(done_on) = task.done_on {
+                out.push_str(&format!("{done_on} "));
+            }
         }
         if task.priority {
             out.push_str("(A) ");
@@ -170,6 +177,7 @@ pub fn decode(data: &str) -> Result<Vec<Task>> {
         }
 
         let mut done = false;
+        let mut done_on = None;
         let mut priority = false;
         let mut rest = line;
         if let Some(r) = rest.strip_prefix("x ") {
@@ -177,14 +185,21 @@ pub fn decode(data: &str) -> Result<Vec<Task>> {
             rest = r.trim_start();
         }
         // Head metadata in any order todo.txt tools produce: a priority and
-        // up to two dates (completion, creation) — the dates are dropped.
-        let mut skipped_dates = 0;
+        // up to two dates. On a completed line the first is the completion
+        // date, the day the task was done; the second (creation) is
+        // dropped, and so is the one of an open line.
+        let mut head_dates = 0;
         loop {
             let (token, tail) = rest.split_once(' ').unwrap_or((rest, ""));
             if is_priority_token(token) && !priority {
                 priority = true;
-            } else if is_date_token(token) && skipped_dates < 2 {
-                skipped_dates += 1;
+            } else if head_dates < 2
+                && let Ok(date) = token.parse::<NaiveDate>()
+            {
+                if done && head_dates == 0 {
+                    done_on = Some(date);
+                }
+                head_dates += 1;
             } else {
                 break;
             }
@@ -220,6 +235,7 @@ pub fn decode(data: &str) -> Result<Vec<Task>> {
             text: unescape(&words.join(" ")),
             date,
             done,
+            done_on,
             priority,
             after,
         });
@@ -238,6 +254,7 @@ mod tests {
             text: text.to_string(),
             date: None,
             done: false,
+            done_on: None,
             priority: false, after: Vec::new(),
         }
     }
@@ -272,10 +289,44 @@ mod tests {
         assert!(tasks[0].done);
         assert_eq!(tasks[0].text, "pay the bill");
         assert_eq!(tasks[0].date, NaiveDate::from_ymd_opt(2026, 7, 20));
+        assert_eq!(tasks[0].done_on, NaiveDate::from_ymd_opt(2026, 7, 9), "the completion date");
         assert_eq!(tasks[0].id, 0, "no id: the load hands one out");
         assert!(tasks[1].priority);
         assert_eq!(tasks[1].text, "call mom");
+        assert_eq!(tasks[1].done_on, None, "a creation date is dropped");
         assert_eq!(tasks[1].id, 0);
+    }
+
+    #[test]
+    fn the_completion_date_is_the_day_the_task_was_done() {
+        let mut t = task(3, "write report");
+        t.done = true;
+        t.priority = true;
+        t.date = NaiveDate::from_ymd_opt(2026, 7, 15);
+        t.done_on = NaiveDate::from_ymd_opt(2026, 10, 25);
+        let txt = encode(&[t.clone()]);
+        assert_eq!(txt, "x 2026-10-25 (A) write report due:2026-07-15 id:3\n");
+        assert_eq!(decode(&txt).unwrap(), vec![t]);
+
+        // Done without the day on record: no date.
+        let mut t = task(3, "done by hand");
+        t.done = true;
+        assert_eq!(encode(&[t]), "x done by hand id:3\n");
+
+        // A priority before the date, as some tools write it; a creation
+        // date after the completion date is dropped.
+        let tasks = decode("x (B) 2026-07-09 2026-07-01 pay id:4\n").unwrap();
+        assert_eq!(tasks[0].done_on, NaiveDate::from_ymd_opt(2026, 7, 9));
+        assert!(tasks[0].priority);
+        assert_eq!(tasks[0].text, "pay");
+        // A date-first text after the completion date is not the creation
+        // date: the encoder protects it.
+        let mut t = task(5, "2026-09-20 dentist appointment");
+        t.done = true;
+        t.done_on = NaiveDate::from_ymd_opt(2026, 10, 25);
+        let txt = encode(std::slice::from_ref(&t));
+        assert_eq!(txt, "x 2026-10-25 \\2026-09-20 dentist appointment id:5\n");
+        assert_eq!(decode(&txt).unwrap(), vec![t]);
     }
 
     /// Review of R25: a `due:` word any date chrono reads is protected by
@@ -345,13 +396,16 @@ mod tests {
         ];
         for text in texts {
             for (done, priority) in [(false, false), (true, false), (false, true), (true, true)] {
-                let mut t = task(7, text);
-                t.done = done;
-                t.priority = priority;
-                t.date = NaiveDate::from_ymd_opt(2027, 2, 2);
-                t.after = vec![1];
-                let txt = encode(std::slice::from_ref(&t));
-                assert_eq!(decode(&txt).unwrap(), vec![t], "{txt:?}");
+                for done_on in [None, NaiveDate::from_ymd_opt(2027, 3, 3)] {
+                    let mut t = task(7, text);
+                    t.done = done;
+                    t.done_on = done_on.filter(|_| done);
+                    t.priority = priority;
+                    t.date = NaiveDate::from_ymd_opt(2027, 2, 2);
+                    t.after = vec![1];
+                    let txt = encode(std::slice::from_ref(&t));
+                    assert_eq!(decode(&txt).unwrap(), vec![t], "{txt:?}");
+                }
             }
         }
         // Only what would be misread is marked.

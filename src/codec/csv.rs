@@ -1,7 +1,12 @@
-//! CSV database format (RFC 4180, fixed `id,text,date,done,priority,after`
-//! schema) for spreadsheet interop: LibreOffice/Excel edit the file in
-//! place, Google Sheets can import it. Files with the older header without
-//! the `after` column still load (the column is treated as empty).
+//! CSV database format (RFC 4180, fixed
+//! `id,text,date,done,priority,after,done_on` schema) for spreadsheet
+//! interop: LibreOffice/Excel edit the file in place, Google Sheets can
+//! import it. Each column rusk gained went to the end, so a spreadsheet's
+//! columns and an older file's keep their positions: files with the header
+//! without `done_on`, or without `after` and `done_on`, still load (the
+//! missing columns are treated as empty). `done_on` is the day the task
+//! was marked done, ISO like `date`, and empty on an open task or one done
+//! without the day on record.
 //!
 //! Made for editing in a spreadsheet: a row of empty cells is skipped, a row
 //! with an empty id cell is a new task (it gets the lowest free id on load),
@@ -12,7 +17,11 @@
 use crate::model::{Task, TaskId};
 use anyhow::{Result, bail};
 
-const CSV_COLUMNS: [&str; 6] = ["id", "text", "date", "done", "priority", "after"];
+const CSV_COLUMNS: [&str; 7] = ["id", "text", "date", "done", "priority", "after", "done_on"];
+
+/// How many of the leading columns an older header may stop at: 5 is a
+/// file from before `after`, 6 one from before `done_on`.
+const LEGACY_WIDTHS: [usize; 2] = [5, 6];
 
 fn csv_field(s: &str) -> String {
     if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
@@ -26,9 +35,10 @@ fn csv_field(s: &str) -> String {
 /// Dates are ISO `YYYY-MM-DD`; multiline task text stays inside one quoted
 /// field; `after` ids are space-separated so the cell needs no quoting.
 pub fn to_csv(tasks: &[Task]) -> String {
-    let mut out = String::from("id,text,date,done,priority,after\r\n");
+    let mut out = String::from("id,text,date,done,priority,after,done_on\r\n");
     for task in tasks {
         let date = task.date.map(|d| d.to_string()).unwrap_or_default();
+        let done_on = task.done_on.map(|d| d.to_string()).unwrap_or_default();
         let after = task
             .after
             .iter()
@@ -36,13 +46,14 @@ pub fn to_csv(tasks: &[Task]) -> String {
             .collect::<Vec<_>>()
             .join(" ");
         out.push_str(&format!(
-            "{},{},{},{},{},{}\r\n",
+            "{},{},{},{},{},{},{}\r\n",
             task.id,
             csv_field(&task.text),
             date,
             task.done,
             task.priority,
-            after
+            after,
+            done_on
         ));
     }
     out
@@ -175,6 +186,23 @@ fn parse_csv_after(value: &str, record: &Record) -> Result<Vec<TaskId>> {
         .collect()
 }
 
+/// An ISO date in the `date` or `done_on` column; an empty cell is none.
+fn parse_csv_date(
+    value: &str,
+    column: &str,
+    record: &Record,
+) -> Result<Option<chrono::NaiveDate>> {
+    match value.trim() {
+        "" => Ok(None),
+        d => d.parse::<chrono::NaiveDate>().map(Some).map_err(|_| {
+            anyhow::anyhow!(
+                "{}: invalid {column} '{d}' (expected YYYY-MM-DD)",
+                record.at()
+            )
+        }),
+    }
+}
+
 /// Whether `data` holds a record that is not blank. In a file that decoded
 /// to no tasks that record is the header: the file is an empty database,
 /// while one of blank rows only is not a database at all.
@@ -195,10 +223,15 @@ pub fn from_csv(data: &str) -> Result<Vec<Task>> {
         .iter()
         .map(|h| h.trim().to_ascii_lowercase())
         .collect();
-    // Legacy databases predate the trailing `after` column.
-    if normalized != CSV_COLUMNS && normalized != CSV_COLUMNS[..5] {
+    // Legacy databases predate the trailing `after` and `done_on` columns.
+    let known = normalized == CSV_COLUMNS
+        || LEGACY_WIDTHS
+            .iter()
+            .any(|&width| normalized == CSV_COLUMNS[..width]);
+    if !known {
         bail!(
-            "CSV header must be exactly `id,text,date,done,priority,after` (the `after` column may be omitted), got `{}`",
+            "CSV header must be exactly `id,text,date,done,priority,after,done_on` (the trailing \
+             `after` and `done_on` columns may be omitted), got `{}`",
             header.fields.join(",")
         );
     }
@@ -215,19 +248,15 @@ pub fn from_csv(data: &str) -> Result<Vec<Task>> {
                 cells.len()
             );
         }
-        let date = match cells[2].trim() {
-            "" => None,
-            d => Some(d.parse::<chrono::NaiveDate>().map_err(|_| {
-                anyhow::anyhow!("{}: invalid date '{d}' (expected YYYY-MM-DD)", record.at())
-            })?),
-        };
+        let cell = |index: usize| cells.get(index).map(String::as_str).unwrap_or("");
         tasks.push(Task {
             id: parse_csv_id(&cells[0], &record)?,
             text: cells[1].clone(),
-            date,
+            date: parse_csv_date(&cells[2], "date", &record)?,
             done: parse_csv_bool(&cells[3], "done", &record)?,
             priority: parse_csv_bool(&cells[4], "priority", &record)?,
-            after: parse_csv_after(cells.get(5).map(String::as_str).unwrap_or(""), &record)?,
+            after: parse_csv_after(cell(5), &record)?,
+            done_on: parse_csv_date(cell(6), "done_on", &record)?,
         });
     }
     Ok(tasks)
@@ -244,6 +273,7 @@ mod tests {
             text: text.to_string(),
             date: None,
             done: false,
+            done_on: None,
             priority: false, after: Vec::new(),
         }
     }
@@ -293,7 +323,7 @@ mod tests {
         let mut t = task(3, "blocked");
         t.after = vec![1, 2];
         let csv = to_csv(&[t.clone()]);
-        assert!(csv.contains(",1 2\r\n"), "{csv}");
+        assert!(csv.contains(",1 2,\r\n"), "{csv}");
         assert_eq!(from_csv(&csv).unwrap(), vec![t]);
 
         // Pre-`after` databases: 5-column header, no after data.
@@ -304,6 +334,39 @@ mod tests {
         let bad = "id,text,date,done,priority,after\n1,x,,false,false,nope\n";
         let err = from_csv(bad).unwrap_err().to_string();
         assert!(err.contains("after"), "{err}");
+    }
+
+    #[test]
+    fn done_on_column_roundtrips_and_older_headers_read_it_as_empty() {
+        let mut t = task(3, "finished");
+        t.done = true;
+        t.done_on = NaiveDate::from_ymd_opt(2026, 10, 25);
+        let csv = to_csv(&[t.clone(), task(4, "open")]);
+        assert!(csv.starts_with("id,text,date,done,priority,after,done_on\r\n"), "{csv}");
+        assert!(csv.contains("3,finished,,true,false,,2026-10-25\r\n"), "{csv}");
+        assert!(csv.contains("4,open,,false,false,,\r\n"), "{csv}");
+        assert_eq!(from_csv(&csv).unwrap(), vec![t, task(4, "open")]);
+
+        // A file of the rusk before `done_on`: 6-column header.
+        let older = "id,text,date,done,priority,after\n1,old,,true,false,\n";
+        let tasks = from_csv(older).unwrap();
+        assert!(tasks[0].done);
+        assert_eq!(tasks[0].done_on, None);
+        // And of the one before `after`.
+        let oldest = "id,text,date,done,priority\n1,old,,true,false\n";
+        assert_eq!(from_csv(oldest).unwrap()[0].done_on, None);
+
+        let bad = "id,text,date,done,priority,after,done_on\n1,x,,true,false,,yesterday\n";
+        let err = from_csv(bad).unwrap_err().to_string();
+        assert_eq!(
+            err,
+            "CSV row 2: invalid done_on 'yesterday' (expected YYYY-MM-DD)"
+        );
+
+        let unknown = "id,text,date,done,priority,after,done_on,extra\n";
+        let err = from_csv(unknown).unwrap_err().to_string();
+        assert!(err.contains("`id,text,date,done,priority,after,done_on`"), "{err}");
+        assert!(err.contains("may be omitted"), "{err}");
     }
 
     #[test]

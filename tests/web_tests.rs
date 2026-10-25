@@ -372,7 +372,7 @@ fn test_http_backend_does_not_overwrite_concurrent_changes() {
         assert_eq!(status_of(&res), 201, "{res}");
     };
 
-    // `rusk del 1` waits at its prompt while the web UI adds a task.
+    // `rusk rm 1` waits at its prompt while the web UI adds a task.
     let snapshot = db.load().unwrap();
     add_from_web_ui(&mut client, "added during the prompt");
 

@@ -2,7 +2,7 @@
 //! extension (`RUSK_DB` / `rusk_db`) picks the format:
 //!
 //! - `.json` (or anything unrecognized) — pretty-printed JSON, the default;
-//! - `.csv` — RFC 4180 with a fixed `id,text,date,done,priority,after` schema
+//! - `.csv` — RFC 4180 with a fixed `id,text,date,done,priority,after,done_on` schema
 //!   for spreadsheet interop (LibreOffice/Excel/Google Sheets);
 //! - `.md` / `.markdown` — GitHub-style task list (feature `fmt-markdown`);
 //! - `.txt` — todo.txt (feature `fmt-todotxt`);
@@ -285,6 +285,7 @@ impl DbFormat {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::NaiveDate;
     use std::path::PathBuf;
 
     fn fmt(name: &str) -> DbFormat {
@@ -353,6 +354,7 @@ mod tests {
             text: "bom".into(),
             date: None,
             done: false,
+            done_on: None,
             priority: false,
             after: Vec::new(),
         };
@@ -380,6 +382,72 @@ mod tests {
                 format.encode(&[]).unwrap()
             )));
         }
+    }
+
+    /// The day a task was marked done round-trips in every format, and is
+    /// not written when there is none: in JSON the key is absent, so a
+    /// database stays byte-identical until a task is done with the day on
+    /// record.
+    #[test]
+    fn a_done_task_keeps_the_day_it_was_done_in_every_format() {
+        let open = Task {
+            id: 1,
+            text: "open".into(),
+            date: NaiveDate::from_ymd_opt(2026, 7, 15),
+            done: false,
+            done_on: None,
+            priority: true,
+            after: Vec::new(),
+        };
+        let done = Task {
+            id: 2,
+            text: "shipped".into(),
+            date: None,
+            done: true,
+            done_on: NaiveDate::from_ymd_opt(2024, 3, 9),
+            priority: false,
+            after: vec![1],
+        };
+        let undated = Task {
+            id: 3,
+            text: "done by hand".into(),
+            date: None,
+            done: true,
+            done_on: None,
+            priority: false,
+            after: Vec::new(),
+        };
+        let tasks = vec![open, done, undated];
+        for format in [
+            DbFormat::Json,
+            DbFormat::Csv,
+            #[cfg(feature = "fmt-markdown")]
+            DbFormat::Markdown,
+            #[cfg(feature = "fmt-todotxt")]
+            DbFormat::TodoTxt,
+            #[cfg(feature = "fmt-ndjson")]
+            DbFormat::Ndjson,
+            #[cfg(feature = "fmt-ics")]
+            DbFormat::Ics,
+        ] {
+            let encoded = format.encode(&tasks).unwrap();
+            assert_eq!(format.decode(&encoded).unwrap(), tasks, "{}", format.name());
+            // Written once (a day the DTSTAMP of a save cannot be).
+            assert_eq!(
+                encoded.matches("2024-03-09").count() + encoded.matches("20240309").count(),
+                1,
+                "{}: {encoded}",
+                format.name()
+            );
+        }
+        // JSON: the key is there with a day, and only then.
+        let json = DbFormat::Json.encode(&tasks).unwrap();
+        assert!(json.contains("\"done_on\": \"2024-03-09\""), "{json}");
+        assert_eq!(json.matches("done_on").count(), 1, "{json}");
+        let older: Vec<Task> = DbFormat::Json
+            .decode(r#"[{"id":3,"text":"done by hand","done":true}]"#)
+            .unwrap();
+        assert_eq!(older, tasks[2..]);
     }
 
     /// Blanks decode to no records whatever the format, so that "cannot be

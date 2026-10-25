@@ -25,8 +25,8 @@ fn test_nu_completion_script_structure() {
         "Script should have complete-edit function"
     );
     assert!(
-        script.contains("def complete-mark-del"),
-        "Script should have complete-mark-del function"
+        script.contains("def complete-mark"),
+        "Script should have complete-mark function"
     );
     assert!(
         script.contains("def complete-list-restore"),
@@ -72,7 +72,7 @@ fn test_nu_completion_has_all_commands() {
         "add",
         "edit",
         "mark",
-        "del",
+        "rm",
         "list",
         "search",
         "restore",
@@ -90,8 +90,8 @@ fn test_nu_completion_has_all_commands() {
         );
     }
 
-    // Aliases (sync has no alias)
-    let aliases = vec!["a", "e", "m", "d", "l", "r", "g", "s", "c"];
+    // Aliases (rm, sync and serve have none)
+    let aliases = vec!["a", "e", "m", "l", "r", "g", "s", "c"];
     for alias in aliases {
         assert!(
             script.contains(&format!("\"{}\"", alias))
@@ -137,11 +137,12 @@ fn test_nu_completion_has_all_flags() {
         "Script should contain -d flag"
     );
 
-    // Done flag for del command
+    // The bounds of `rm done`; the old `del --done` is not offered
     assert!(
-        script.contains("--done") || script.contains("\"--done\""),
-        "Script should contain --done flag"
+        script.contains("--older") || script.contains("\"--older\""),
+        "Script should contain --older flag"
     );
+    assert!(!script.contains("--done"), "Script should not contain --done flag");
 }
 
 /// Test that Nu Shell completion script handles completions subcommands
@@ -485,17 +486,17 @@ fn test_nu_completion_mark_command() -> Result<()> {
     Ok(())
 }
 
-/// Test that Nu Shell completion handles del command
+/// Test that Nu Shell completion handles the rm command
 #[test]
-fn test_nu_completion_del_command() -> Result<()> {
+fn test_nu_completion_rm_command() -> Result<()> {
     let script = Shell::Nu.get_script();
     let temp_dir = TempDir::new()?;
     let script_path = temp_dir.path().join("rusk.nu");
     fs::write(&script_path, script)?;
 
-    // Test completion for "rusk del "
+    // Test completion for "rusk rm "
     let test_command = format!(
-        r#"use {} *; rusk-completions-main ["rusk", "del", ""] | length"#,
+        r#"use {} *; rusk-completions-main ["rusk", "rm", ""] | length"#,
         script_path.to_string_lossy()
     );
 
@@ -506,11 +507,11 @@ fn test_nu_completion_del_command() -> Result<()> {
             // Should not panic
             if !result.status.success() {
                 let stderr = String::from_utf8_lossy(&result.stderr);
-                panic!("Del command completion failed: {}", stderr);
+                panic!("Rm command completion failed: {}", stderr);
             }
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!("Warning: nu command not found, skipping del command test");
+            eprintln!("Warning: nu command not found, skipping rm command test");
             return Ok(());
         }
         Err(e) => return Err(e.into()),

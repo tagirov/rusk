@@ -111,6 +111,7 @@ mod tests {
             text: "quote \" backslash \\ tab \t newline \n emoji \u{1f600} <b>".into(),
             date: chrono::NaiveDate::from_ymd_opt(2026, 7, 8),
             done: false,
+            done_on: None,
             priority: true,
             after: vec![1, 2],
         };
@@ -139,6 +140,7 @@ mod tests {
             text: "hello".into(),
             date: chrono::NaiveDate::from_ymd_opt(2026, 7, 8),
             done: false,
+            done_on: None,
             priority: true,
             after: Vec::new(),
         }];

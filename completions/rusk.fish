@@ -455,10 +455,10 @@ end
 # Mark/Del Command Functions
 # ============================================================================
 
-# Flags for mark/del (no task ID completion)
-function __rusk_should_complete_mark_del_flags
+# Flags for mark (no task ID completion)
+function __rusk_should_complete_mark_flags
     __rusk_after_double_dash; and return 1
-    __rusk_is_command mark m del d; or return 1
+    __rusk_is_command mark m; or return 1
     set -l cw (__rusk_get_current_word)
     if __rusk_is_flag "$cw"
         return 0
@@ -466,7 +466,7 @@ function __rusk_should_complete_mark_del_flags
     if test -z "$cw"
         return 0
     end
-    if contains -- "$cw" mark m del d
+    if contains -- "$cw" mark m
         if test (count (__rusk_get_cmdline)) -eq 1
             return 0
         end
@@ -474,20 +474,77 @@ function __rusk_should_complete_mark_del_flags
     return 1
 end
 
-function __rusk_complete_mark_del_flags
+function __rusk_complete_mark_flags
+    __rusk_complete_flags -p --priority -h --help
+end
+
+# ============================================================================
+# Rm Command Functions
+# ============================================================================
+
+# Check if previous word is a rm bound flag (--older/--newer take a
+# free-form value: an age or a date)
+function __rusk_is_after_older_flag
     set -l cmdline (__rusk_get_cmdline)
-    test (count $cmdline) -ge 2; or return
-    set -l sub "$cmdline[2]"
-    if contains -- $sub del d
-        # `--done` takes no ids: offered only before any
-        if test (count $cmdline) -ge 3; and string match -qr '^[0-9,]+$' -- $cmdline[3..-1]
-            __rusk_complete_flags -y --yes -h --help
-        else
-            __rusk_complete_flags --done -y --yes -h --help
-        end
+    if test (count $cmdline) -ge 2
+        contains -- "$cmdline[-1]" --older --newer
     else
-        __rusk_complete_flags -p --priority -h --help
+        return 1
     end
+end
+
+# rm: ids, never offered, or the word `done`; `--older`/`--newer`
+# go with `done`, `--yes` with both. Option flags (no completion for the
+# --older/--newer value).
+function __rusk_should_complete_rm_flags
+    __rusk_after_double_dash; and return 1
+    __rusk_is_command rm; or return 1
+    if __rusk_is_after_older_flag
+        return 1
+    end
+    set -l cw (__rusk_get_current_word)
+    if __rusk_is_flag "$cw"
+        return 0
+    end
+    if test -z "$cw"
+        return 0
+    end
+    if contains -- "$cw" rm
+        if test (count (__rusk_get_cmdline)) -eq 1
+            return 0
+        end
+    end
+    return 1
+end
+
+# An id (or a comma-separated list of them) before the cursor
+function __rusk_rm_has_id
+    for w in (__rusk_get_cmdline)
+        string match -qr '^[0-9,]+$' -- "$w"; and return 0
+    end
+    return 1
+end
+
+function __rusk_complete_rm_flags
+    if contains -- done (__rusk_get_cmdline)
+        __rusk_complete_flags --older --newer -y --yes -h --help
+    else if __rusk_rm_has_id
+        __rusk_complete_flags -y --yes -h --help
+    else
+        __rusk_complete_flags --older --newer -y --yes -h --help
+    end
+end
+
+# rm: the word `done` (what to remove), until it or an id is on the line
+function __rusk_should_complete_rm_done
+    __rusk_after_double_dash; and return 1
+    __rusk_is_command rm; or return 1
+    __rusk_is_after_older_flag; and return 1
+    set -l cw (__rusk_get_current_word)
+    __rusk_is_flag "$cw"; and return 1
+    contains -- done (__rusk_get_cmdline); and return 1
+    __rusk_rm_has_id; and return 1
+    return 0
 end
 
 # list / restore: help flags only
@@ -694,7 +751,7 @@ function __rusk_complete_help
     set -l i (contains -i -- help $words); or return
     switch (math (count $words) - $i)
         case 0
-            printf '%s\n' add edit mark del list search restore gen serve sync completions
+            printf '%s\n' add edit mark rm list search restore gen serve sync completions
         case 1
             switch $words[(math $i + 1)]
                 case sync
@@ -786,7 +843,7 @@ complete -c rusk -f
 complete -c rusk -f -n '__fish_use_subcommand' -a 'add' -d 'Add a new task'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'edit' -d 'Edit tasks by id(s)'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'mark' -d 'Mark tasks as done/undone'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'del' -d 'Delete tasks by id(s)'
+complete -c rusk -f -n '__fish_use_subcommand' -a 'rm' -d 'Delete tasks by id, or the completed ones (rm done)'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'list' -d 'List all tasks'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'search' -d 'Search tasks by text'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'restore' -d 'Restore from backup'
@@ -802,7 +859,6 @@ complete -c rusk -f -n '__rusk_is_command help' -a '(__rusk_complete_help)'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'a' -d 'Add a new task'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'e' -d 'Edit tasks by id(s)'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'm' -d 'Mark tasks as done/undone'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'd' -d 'Delete tasks by id(s)'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'l' -d 'List all tasks'
 complete -c rusk -f -n '__fish_use_subcommand' -a 's' -d 'Search tasks by text'
 complete -c rusk -f -n '__fish_use_subcommand' -a 'r' -d 'Restore from backup'
@@ -840,7 +896,16 @@ complete -c rusk -f \
 # Mark/Del Command Completions
 # ============================================================================
 
-complete -c rusk -f -n '__rusk_should_complete_mark_del_flags' -a '(__rusk_complete_mark_del_flags)'
+complete -c rusk -f -n '__rusk_should_complete_mark_flags' -a '(__rusk_complete_mark_flags)'
+
+# ============================================================================
+# Rm Command Completions
+# ============================================================================
+
+complete -c rusk -f -n '__rusk_should_complete_rm_flags' -a '(__rusk_complete_rm_flags)'
+complete -c rusk -f -n '__rusk_should_complete_rm_done' -a done -d 'The completed tasks'
+# The --older/--newer value is free-form (an age or a date): suppress the file fallback, offer nothing
+complete -c rusk -f -n '__rusk_is_command rm; and __rusk_is_after_older_flag'
 
 # ============================================================================
 # List/Restore Command Completions

@@ -52,6 +52,7 @@ fn task(id: u32, text: &str) -> Task {
         text: text.to_string(),
         date: None,
         done: false,
+        done_on: None,
         priority: false,
         after: Vec::new(),
     }
@@ -571,29 +572,41 @@ fn r2_edit_rejects_a_repeated_date_flag() {
     assert!(db_tasks(&sb)[1]["date"].is_null(), "nothing may be written");
 }
 
-/// REVIEW №71: `del 1 -h` opened the delete prompt (`-h` was swallowed
-/// as an id word); it prints the help.
+/// REVIEW №71: `del 1 -h` (`rm 1 -h` now) opened the delete prompt (`-h`
+/// was swallowed as an id word); it prints the help.
 #[test]
-fn r2_del_help_after_an_id_prints_the_help() {
+fn r2_rm_help_after_an_id_prints_the_help() {
     let sb = Sandbox::with_db(THREE_TASKS_DB);
-    let out = sb.cmd().args(["del", "1", "-h"]).output().unwrap();
+    let out = sb.cmd().args(["rm", "1", "-h"]).output().unwrap();
     assert!(out.status.success(), "{}", stderr_of(&out));
     assert!(String::from_utf8_lossy(&out.stdout).contains("Delete tasks"));
     assert_eq!(db_tasks(&sb).len(), 3);
 }
 
 /// REVIEW №72: `--done` with ids did whatever the argument order made of
-/// it; the two are exclusive.
+/// it. Since 1.0.0-beta.3 `del` and `--done` are gone — `rusk rm` deletes
+/// by id, `rusk rm done` the completed tasks — and no alias is kept, so
+/// neither form deletes anything.
 #[test]
-fn r2_del_done_and_ids_are_exclusive() {
+fn r2_del_and_done_are_gone() {
     let sb = Sandbox::with_db(
         r#"[{"id":1,"text":"open","date":null,"done":false,"priority":false},
             {"id":2,"text":"closed","date":null,"done":true,"priority":false}]"#,
     );
-    for argv in [vec!["del", "1", "--done"], vec!["del", "--done", "1"]] {
+    for argv in [
+        vec!["del", "1", "-y"],
+        vec!["del", "--done", "-y"],
+        vec!["d", "1", "-y"],
+        vec!["rm", "--done"],
+        vec!["rm", "1", "--done", "-y"],
+    ] {
         let out = sb.cmd().args(&argv).output().unwrap();
         assert!(!out.status.success(), "{argv:?} must fail");
-        assert!(stderr_of(&out).contains("--done"), "{}", stderr_of(&out));
+        let err = stderr_of(&out);
+        assert!(
+            err.contains("unrecognized subcommand") || err.contains("unexpected argument"),
+            "{argv:?}: {err}"
+        );
     }
     assert_eq!(db_tasks(&sb).len(), 2, "nothing may be deleted");
 }
@@ -603,7 +616,7 @@ fn r2_del_done_and_ids_are_exclusive() {
 #[test]
 fn r2_del_without_valid_ids_fails_like_mark() {
     let sb = Sandbox::with_db(THREE_TASKS_DB);
-    for argv in [vec!["del"], vec!["del", "abc"], vec!["mark", "abc"], vec!["edit", "abc", "t"]] {
+    for argv in [vec!["rm"], vec!["rm", "abc"], vec!["mark", "abc"], vec!["edit", "abc", "t"]] {
         let out = sb.cmd().args(&argv).output().unwrap();
         assert_eq!(out.status.code(), Some(1), "{argv:?}");
         assert!(out.stdout.is_empty(), "{argv:?}: {}", String::from_utf8_lossy(&out.stdout));
@@ -647,7 +660,7 @@ fn r2_arguments_are_checked_before_the_database_is_opened() {
         (vec!["mark", "1", "2"], "unexpected argument '2'"),
         (vec!["mark", "abc"], "'abc' is not a task id"),
         (vec!["mark"], "no task ids given"),
-        (vec!["del", "1", "2"], "unexpected argument '2'"),
+        (vec!["rm", "1", "2"], "unexpected argument '2'"),
         (vec!["edit", "abc", "t"], "'abc' is not a task id"),
         (vec!["edit", "1,2", "3"], "more task ids"),
         (vec!["edit", "1", "-a", "abc"], "`--after` expects"),
@@ -696,10 +709,12 @@ fn r2_after_option_takes_dash_values_like_date() {
 
 // Shell completion after R2. `-d` / `-a` are real options now, so a task
 // text that `rusk edit <id><TAB>` inserts and that starts with `-` would be
-// read as options (`-d 2d` moved the date); it goes after `--`. And
-// `del --done` takes no ids, so it is not offered after one. Each test
-// drives one shell (without its user config) with a fake `rusk` first on
-// PATH, and is skipped when that shell is not installed.
+// read as options (`-d 2d` moved the date); it goes after `--`. And the
+// completed tasks go with `rm done [--older <AGE>]`, not with ids: `rusk rm
+// <TAB>` offers `done` and `--older`, `rusk rm <id> <TAB>` does not (nor
+// the old `--done`).
+// Each test drives one shell (without its user config) with a fake `rusk`
+// first on PATH, and is skipped when that shell is not installed.
 
 #[cfg(unix)]
 const COMPLETIONS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/completions");
@@ -741,7 +756,7 @@ fn run_shell(shell: &str, args: &[&str], path: &str) -> Option<String> {
 
 /// Four lines from a shell: what `rusk edit 1<TAB>` and `rusk edit 2<TAB>`
 /// put on the command line after `rusk edit `, then the candidates for
-/// `rusk del <TAB>` and `rusk del 1 <TAB>` joined with `|`.
+/// `rusk rm <TAB>` and `rusk rm 1 <TAB>` joined with `|`.
 #[cfg(unix)]
 fn assert_r2_completions(shell: &str, out: Option<String>) {
     let Some(out) = out else { return };
@@ -749,8 +764,18 @@ fn assert_r2_completions(shell: &str, out: Option<String>) {
     assert_eq!(lines.len(), 4, "{shell}: {out}");
     assert_eq!(lines[0], "1 -- '-x means exclude'", "{shell}");
     assert_eq!(lines[1], "2 plain text", "{shell}");
-    assert!(lines[2].split('|').any(|c| c == "--done"), "{shell}: {}", lines[2]);
-    assert!(!lines[3].split('|').any(|c| c == "--done"), "{shell}: {}", lines[3]);
+    assert_rm_and_del_flags(shell, lines[2], lines[3]);
+}
+
+/// `rm` offers its word `done`, `--older` and `--yes`; after an id it
+/// offers `--yes`, and neither `--older` nor the old `--done`.
+#[cfg(unix)]
+fn assert_rm_and_del_flags(shell: &str, rm: &str, del_after_id: &str) {
+    let rm: Vec<&str> = rm.split('|').collect();
+    assert!(rm.contains(&"done") && rm.contains(&"--older") && rm.contains(&"--yes"), "{shell}: {rm:?}");
+    let del: Vec<&str> = del_after_id.split('|').collect();
+    assert!(del.contains(&"--yes"), "{shell}: {del:?}");
+    assert!(!del.contains(&"--older") && !del.contains(&"--done"), "{shell}: {del:?}");
 }
 
 #[test]
@@ -760,7 +785,7 @@ fn r2_bash_completion_puts_a_dash_text_after_double_dash() {
     let script = format!(
         r#"source {COMPLETIONS}/rusk.bash
 c() {{ COMP_WORDS=("$@"); COMP_CWORD=$((${{#COMP_WORDS[@]}} - 1)); COMP_LINE="${{COMP_WORDS[*]}}"; COMPREPLY=(); _rusk_completion; local IFS='|'; echo "${{COMPREPLY[*]}}"; }}
-c rusk edit 1; c rusk edit 2; c rusk del ""; c rusk del 1 ""
+c rusk edit 1; c rusk edit 2; c rusk rm ""; c rusk rm 1 ""
 "#
     );
     let out = run_shell("bash", &["--norc", "--noprofile", "-c", &script], &path);
@@ -777,7 +802,7 @@ fn r2_zsh_completion_puts_a_dash_text_after_double_dash() {
         r#"_RUSK_ZSH_SKIP_ENTRY=1 source {COMPLETIONS}/rusk.zsh
 compadd() {{ local -a a=("$@"); reply+=("${{(@)a[${{a[(i)--]}}+1,-1]}}"); }}
 c() {{ words=("$@"); CURRENT=${{#words}}; LBUFFER="${{words[*]}}"; reply=(); _rusk; print -r -- "${{(j:|:)reply}}"; }}
-c rusk edit 1; c rusk edit 2; c rusk del ""; c rusk del 1 ""
+c rusk edit 1; c rusk edit 2; c rusk rm ""; c rusk rm 1 ""
 "#
     );
     let out = run_shell("zsh", &["-f", "-c", &script], &path);
@@ -793,16 +818,16 @@ fn r2_fish_completion_puts_a_dash_text_after_double_dash() {
     let (_dir, path) = fake_rusk_on_path();
     let script = format!(
         r#"source {COMPLETIONS}/rusk.fish
-for line in 'rusk edit 1 ' 'rusk edit 1 -- ' 'rusk edit 2 ' 'rusk del ' 'rusk del 1 '
+for line in 'rusk edit 1 ' 'rusk edit 1 -- ' 'rusk edit 2 ' 'rusk rm ' 'rusk rm 1 '
     complete --escape -C $line | string replace -r '\t.*' '' | string join '|'
 end
 "#
     );
     let Some(out) = run_shell("fish", &["-N", "-c", &script], &path) else { return };
     let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.len(), 5, "{out}");
     assert_eq!(lines[..3], ["--", "-x\\ means\\ exclude", "plain\\ text"], "{out}");
-    assert!(lines[3].split('|').any(|c| c == "--done"), "{}", lines[3]);
-    assert!(!lines[4].split('|').any(|c| c == "--done"), "{}", lines[4]);
+    assert_rm_and_del_flags("fish", lines[3], lines[4]);
 }
 
 #[test]
@@ -813,8 +838,8 @@ fn r2_nu_completion_puts_a_dash_text_after_double_dash() {
         r#"use {COMPLETIONS}/rusk.nu *
 print (rusk-completions-main [rusk edit 1] | get value | str join "|")
 print (rusk-completions-main [rusk edit 2] | get value | str join "|")
-print (rusk-completions-main [rusk del ""] | get value | str join "|")
-print (rusk-completions-main [rusk del 1 ""] | get value | str join "|")
+print (rusk-completions-main [rusk rm ""] | get value | str join "|")
+print (rusk-completions-main [rusk rm 1 ""] | get value | str join "|")
 "#
     );
     let out = run_shell("nu", &["-n", "-c", &script], &path);
@@ -827,7 +852,7 @@ fn r2_powershell_completion_puts_a_dash_text_after_double_dash() {
     let (_dir, path) = fake_rusk_on_path();
     let script = format!(
         r#". {COMPLETIONS}/rusk.ps1
-foreach ($line in @('rusk edit 1', 'rusk edit 2', 'rusk del ', 'rusk del 1 ')) {{
+foreach ($line in @('rusk edit 1', 'rusk edit 2', 'rusk rm ', 'rusk rm 1 ')) {{
     $r = TabExpansion2 -inputScript $line -cursorColumn $line.Length
     (@($r.CompletionMatches | ForEach-Object {{ $_.CompletionText }})) -join '|'
 }}
@@ -2581,7 +2606,7 @@ fn r12_editor_result_is_refused_when_the_task_changed_underneath() {
     assert_eq!(backend(&path).load().unwrap(), expected, "a refused edit wrote something");
 }
 
-/// REVIEW №155, the `del` prompt: what was confirmed is a task, not an id.
+/// REVIEW №155, the `rm` prompt: what was confirmed is a task, not an id.
 /// A task that another process changed — or deleted, the id going to a new
 /// task — while the prompt waited is reported, not deleted.
 #[test]
@@ -4623,7 +4648,7 @@ fn r19_output_that_cannot_be_written_is_an_error() {
 fn r19_del_without_a_terminal_asks_for_yes_instead() {
     let sb = Sandbox::with_db(THREE_TASKS_DB);
     sb.cmd().args(["mark", "3"]).output().unwrap();
-    for args in [&["del", "1"][..], &["del", "--done"], &["del", "1,9"]] {
+    for args in [&["rm", "1"][..], &["rm", "done"], &["rm", "1,9"]] {
         let out = without_terminal(sb.cmd().args(args)).output().unwrap();
         let err = stderr_of(&out);
         assert_eq!(out.status.code(), Some(1), "{args:?}: {err}");
@@ -4635,7 +4660,7 @@ fn r19_del_without_a_terminal_asks_for_yes_instead() {
     assert_eq!(db_tasks(&sb).len(), 3, "nothing may be deleted");
 
     // Nothing to confirm, nothing to ask.
-    let out = without_terminal(sb.cmd().args(["del", "9"])).output().unwrap();
+    let out = without_terminal(sb.cmd().args(["rm", "9"])).output().unwrap();
     assert!(out.status.success(), "{}", stderr_of(&out));
     assert!(stdout_of(&out).contains("not found"), "{}", stdout_of(&out));
 }
@@ -4647,10 +4672,10 @@ fn r19_del_without_a_terminal_asks_for_yes_instead() {
 fn r19_del_yes_deletes_without_asking() {
     let sb = Sandbox::with_db(THREE_TASKS_DB);
     sb.cmd().args(["mark", "3"]).output().unwrap();
-    let out = without_terminal(sb.cmd().args(["del", "1", "--yes"])).output().unwrap();
+    let out = without_terminal(sb.cmd().args(["rm", "1", "--yes"])).output().unwrap();
     assert!(out.status.success(), "{}", stderr_of(&out));
     assert!(stdout_of(&out).contains("Deleted 1 task"), "{}", stdout_of(&out));
-    let out = without_terminal(sb.cmd().args(["del", "--done", "-y"])).output().unwrap();
+    let out = without_terminal(sb.cmd().args(["rm", "done", "-y"])).output().unwrap();
     assert!(out.status.success(), "{}", stderr_of(&out));
     assert!(stdout_of(&out).contains("Deleted 1 done task"), "{}", stdout_of(&out));
     let tasks = db_tasks(&sb);
@@ -4872,7 +4897,7 @@ fn r19_help_offers_only_what_this_build_has() {
     };
     let root = help(&[]);
     let all = format!("{root}{}{}", help(&["add"]), help(&["edit"]));
-    let del = help(&["del"]);
+    let del = help(&["rm"]);
     for (built, text, words) in [
         (cfg!(feature = "interactive"), &all, &["editor", "TUI", "EDITOR.md"][..]),
         (cfg!(feature = "interactive"), &del, &["confirmed on the terminal"]),
@@ -6773,6 +6798,7 @@ fn r26_a_served_database_is_one_to_read_and_write() {
         text: "from the http backend".into(),
         date: None,
         done: false,
+        done_on: None,
         priority: false,
         after: vec![1],
     });
@@ -6862,7 +6888,7 @@ fn r27_deleting_a_task_tells_who_depended_on_it() {
             {"id":3,"text":"deploy","after":[1,2]},{"id":4,"text":"docs","after":[1]},
             {"id":5,"text":"free"}]"#,
     );
-    let out = sb.cmd().args(["del", "1", "--yes"]).output().unwrap();
+    let out = sb.cmd().args(["rm", "1", "--yes"]).output().unwrap();
     assert!(out.status.success(), "{}", stderr_of(&out));
     let said = stdout_of(&out);
     assert!(said.contains("Task 3 no longer depends on 1."), "{said}");
@@ -6870,13 +6896,13 @@ fn r27_deleting_a_task_tells_who_depended_on_it() {
     assert!(!said.contains("Task 5"), "{said}");
     assert_eq!(after_of(&db_tasks(&sb), 3), [2]);
 
-    let out = sb.cmd().args(["del", "--done", "--yes"]).output().unwrap();
+    let out = sb.cmd().args(["rm", "done", "--yes"]).output().unwrap();
     assert!(out.status.success(), "{}", stderr_of(&out));
     assert!(stdout_of(&out).contains("Task 3 no longer depends on 2."), "{}", stdout_of(&out));
     assert!(after_of(&db_tasks(&sb), 3).is_empty());
 
     // A task with no dependents is deleted as before, nothing more said.
-    let out = sb.cmd().args(["del", "5", "--yes"]).output().unwrap();
+    let out = sb.cmd().args(["rm", "5", "--yes"]).output().unwrap();
     assert!(!stdout_of(&out).contains("depends"), "{}", stdout_of(&out));
 }
 
@@ -6888,7 +6914,7 @@ fn r27_the_delete_question_names_who_depends_on_the_task() {
         r#"[{"id":1,"text":"alpha"},{"id":3,"text":"deploy","after":[1]},
             {"id":5,"text":"docs","after":[1]},{"id":6,"text":"lone","after":[3]}]"#,
     );
-    let Some(run) = sb.in_pty(&["del", "1,3"], b"y/N", &[(200, b"n"), (400, b"n")], false) else {
+    let Some(run) = sb.in_pty(&["rm", "1,3"], b"y/N", &[(200, b"n"), (400, b"n")], false) else {
         eprintln!("skipping r27_the_delete_question_names_who_depends_on_the_task: no pty");
         return;
     };
@@ -7060,12 +7086,12 @@ fn r27_a_sqlite_database_says_it_is_rusks() {
     // A database rusk makes says so, and which schema it holds.
     let path = dir.path().join("tasks.db");
     backend(&path).save(&[task(1, "a")]).unwrap();
-    assert_eq!(pragmas(&path), (RUSK, 1));
+    assert_eq!(pragmas(&path), (RUSK, 2));
     backend(&path).save(&[task(1, "b")]).unwrap();
-    assert_eq!(pragmas(&path.with_file_name("tasks.db.backup")), (RUSK, 1));
+    assert_eq!(pragmas(&path.with_file_name("tasks.db.backup")), (RUSK, 2));
 
     // A later schema is refused, not read as this one.
-    Connection::open(&path).unwrap().execute_batch("PRAGMA user_version = 2").unwrap();
+    Connection::open(&path).unwrap().execute_batch("PRAGMA user_version = 3").unwrap();
     let err = format!("{:#}", backend(&path).load().unwrap_err());
     assert!(err.contains("a newer rusk"), "{err}");
     assert!(backend(&path).save(&[task(1, "c")]).is_err());
@@ -7104,7 +7130,7 @@ fn r27_a_sqlite_database_says_it_is_rusks() {
     assert_eq!(ids_and_texts(&tasks), [(1, "old")]);
     assert_eq!(pragmas(&legacy), (0, 0), "reading changed the file");
     backend(&legacy).save(&tasks).unwrap();
-    assert_eq!(pragmas(&legacy), (RUSK, 1));
+    assert_eq!(pragmas(&legacy), (RUSK, 2));
 
     // A backup that is another program's, or of a later schema, is not
     // restored, and the refusal says it is about the backup (review of R27).
@@ -7557,20 +7583,20 @@ fn r30_the_discard_question_takes_y_alone() {
     }
 }
 
-/// The same for the `del` question.
+/// The same for the `rm` question.
 #[test]
 #[cfg(all(unix, feature = "interactive"))]
 fn r30_the_delete_question_takes_y_alone() {
     let sb = Sandbox::with_db(r#"[{"id":1,"text":"alpha"}]"#);
     for key in [&b"\x19"[..], b"\x1by"] {
-        let Some(run) = sb.in_pty(&["del", "1"], b"y/N", &[(200, key)], false) else {
+        let Some(run) = sb.in_pty(&["rm", "1"], b"y/N", &[(200, key)], false) else {
             return;
         };
         assert_eq!(run.code, Some(0));
         assert!(String::from_utf8_lossy(&run.screen).contains("Canceled deletion of task"));
     }
     assert_eq!(db_tasks(&sb).len(), 1);
-    let Some(_) = sb.in_pty(&["del", "1"], b"y/N", &[(200, b"y")], false) else {
+    let Some(_) = sb.in_pty(&["rm", "1"], b"y/N", &[(200, b"y")], false) else {
         return;
     };
     assert!(db_tasks(&sb).is_empty());
@@ -7655,7 +7681,7 @@ fn r30_a_dumb_terminal_gets_no_editor() {
         assert!(screen.contains("TERM is `dumb`"), "{args:?}: {screen}");
     }
     // The delete question is one line: it is asked there as well.
-    let Some(run) = sb.in_pty_steps(&["del", "1"], &[("TERM", "dumb")], b"y/N", &[common::PtyStep::Keys(200, b"n")], false) else {
+    let Some(run) = sb.in_pty_steps(&["rm", "1"], &[("TERM", "dumb")], b"y/N", &[common::PtyStep::Keys(200, b"n")], false) else {
         return;
     };
     assert_eq!(run.code, Some(0));
@@ -7740,7 +7766,7 @@ fn r30_only_an_unambiguous_cyrillic_letter_is_a_key() {
     assert_eq!(text_of(&db_tasks(&sb), 1), "XYZ alpha");
 }
 
-/// Review of R30: the bare `y` of the `del` and discard questions reached
+/// Review of R30: the bare `y` of the `rm` and discard questions reached
 /// "Restore unsaved draft?", where it is the "no" that throws something
 /// away: Ctrl+Y or Alt+Y there deleted the draft. Any `y` keeps it.
 #[test]

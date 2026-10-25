@@ -5,7 +5,7 @@
 //! three words, so words are glued back together across a comma boundary
 //! (`1,` `2` or `1` `,2`); a word that follows the list without such a comma is
 //! not an id — for `edit` it starts the text (`edit 3 1,000 units sold` keeps
-//! task 1 alone), for `mark` / `del` it is an error. Nothing is dropped
+//! task 1 alone), for `mark` / `rm` it is an error. Nothing is dropped
 //! silently: a part that is not a number is an error, and a repeated id is
 //! applied once.
 
@@ -117,7 +117,7 @@ pub fn split_leading_ids(args: &[String]) -> Result<(Vec<TaskId>, String, &[Stri
     Ok((ids, list, &args[used..]))
 }
 
-/// `mark` / `del`: argv is nothing but the id list.
+/// `mark` / `rm`: argv is nothing but the id list.
 pub fn parse_id_args(args: &[String]) -> Result<Vec<TaskId>, IdListError> {
     let (ids, list, rest) = split_leading_ids(args)?;
     if let Some(word) = rest.first() {

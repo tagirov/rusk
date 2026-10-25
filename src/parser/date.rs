@@ -193,17 +193,19 @@ pub fn normalize_date_string(date_str: &str) -> String {
     normalized
 }
 
-fn parse_relative_cli_segments(s: &str) -> Result<Vec<(u32, char)>> {
+/// The `<n><unit>` segments of a relative date (`10d5w`), or of an age as
+/// `rusk rm done --older` takes one (`what` names which in the errors).
+fn parse_relative_cli_segments(s: &str, what: &str) -> Result<Vec<(u32, char)>> {
+    let what_cap = {
+        let mut chars = what.chars();
+        chars.next().map(|c| c.to_uppercase().chain(chars).collect::<String>()).unwrap_or_default()
+    };
     let mut i = 0;
     let mut segments = Vec::new();
     let bytes = s.as_bytes();
     while i < bytes.len() {
         if !bytes[i].is_ascii_digit() {
-            anyhow::bail!(
-                "Invalid relative date '{}': expected a digit at position {}",
-                s,
-                i + 1
-            );
+            anyhow::bail!("Invalid {what} '{}': expected a digit at position {}", s, i + 1);
         }
         let start = i;
         while i < bytes.len() && bytes[i].is_ascii_digit() {
@@ -211,13 +213,13 @@ fn parse_relative_cli_segments(s: &str) -> Result<Vec<(u32, char)>> {
         }
         let n: u32 = s[start..i]
             .parse()
-            .map_err(|_| anyhow::anyhow!("Invalid number in relative date '{}'", s))?;
+            .map_err(|_| anyhow::anyhow!("Invalid number in {what} '{}'", s))?;
         if n == 0 {
-            anyhow::bail!("Relative date amounts must be positive (got 0)");
+            anyhow::bail!("{what_cap} amounts must be positive (got 0)");
         }
         if i >= bytes.len() {
             anyhow::bail!(
-                "Invalid relative date '{}': expected unit d, w, m, q, or y after {}",
+                "Invalid {what} '{}': expected unit d, w, m, q, or y after {}",
                 s,
                 &s[start..i]
             );
@@ -230,28 +232,19 @@ fn parse_relative_cli_segments(s: &str) -> Result<Vec<(u32, char)>> {
                 i += clen;
             }
             _ => {
-                anyhow::bail!(
-                    "Invalid relative date '{}': unknown unit {:?} (use d, w, m, q, y)",
-                    s,
-                    c
-                );
+                anyhow::bail!("Invalid {what} '{}': unknown unit {:?} (use d, w, m, q, y)", s, c);
             }
         }
     }
     if segments.is_empty() {
-        anyhow::bail!("Relative date cannot be empty");
+        anyhow::bail!("{what_cap} cannot be empty");
     }
     Ok(segments)
 }
 
-/// Adds the segments to `base`: all the months first (m, q = 3, y = 12), in
-/// one step, then all the days (d, w = 7). One step, so that `+1m1m` is
-/// `+2m`: from the 31st, a month with fewer days ends the date at its last
-/// day (31-01 + 1m = 28-02, or 29-02 in a leap year), and it does that once,
-/// not once per segment (REVIEW №132). The order of the segments does not
-/// matter.
-/// `None` when the sum runs past what a date can hold.
-fn apply_relative_cli_segments(base: NaiveDate, segments: &[(u32, char)]) -> Option<NaiveDate> {
+/// The months (m, q = 3, y = 12) and days (d, w = 7) the segments add up
+/// to, each in one sum. `None` past what a `u32` or an `i64` holds.
+fn sum_segments(segments: &[(u32, char)]) -> Option<(u32, i64)> {
     let (mut months, mut days) = (0u32, 0i64);
     for &(n, unit) in segments {
         match unit {
@@ -263,22 +256,108 @@ fn apply_relative_cli_segments(base: NaiveDate, segments: &[(u32, char)]) -> Opt
             _ => unreachable!(),
         }
     }
+    Some((months, days))
+}
+
+/// An age as `rusk rm done --older` takes one: `7d`, `2w`, `1m`, `1y` — the
+/// units of a relative date, combinable (`1m2w`) — and the day that long
+/// before `today`. The months first, then the days, the way a relative
+/// date counts forward; a month back from the 31st ends at the last day of
+/// the month it lands in.
+pub fn day_before_by_age(age: &str, today: NaiveDate) -> Result<NaiveDate> {
+    let segments = parse_relative_cli_segments(age.trim(), "age")?;
+    sum_segments(&segments)
+        .and_then(|(months, days)| {
+            today
+                .checked_sub_months(Months::new(months))
+                .and_then(|day| day.checked_sub_signed(Duration::try_days(days)?))
+        })
+        .ok_or_else(|| anyhow::anyhow!("Age '{age}' reaches back before any day a date can hold"))
+}
+
+/// Adds the segments to `base`: all the months first (m, q = 3, y = 12), in
+/// one step, then all the days (d, w = 7). One step, so that `+1m1m` is
+/// `+2m`: from the 31st, a month with fewer days ends the date at its last
+/// day (31-01 + 1m = 28-02, or 29-02 in a leap year), and it does that once,
+/// not once per segment (REVIEW №132). The order of the segments does not
+/// matter.
+/// `None` when the sum runs past what a date can hold.
+/// A bound of `rusk rm done --older` / `--newer`: an age, counted back
+/// ([`day_before_by_age`]), or a date as `-d` takes one (`25-10-2026`,
+/// `25-oct-26`, `today`). A word of digits and units is an age; a date has
+/// its separators.
+pub fn day_bound(value: &str, today: NaiveDate) -> Result<NaiveDate> {
+    let trimmed = value.trim();
+    let is_age = trimmed.bytes().next().is_some_and(|b| b.is_ascii_digit())
+        && !trimmed.contains(['-', '/', '.']);
+    if is_age {
+        return day_before_by_age(trimmed, today);
+    }
+    parse_cli_date_with_base(trimmed, today).map_err(|_| {
+        anyhow::anyhow!(
+            "'{trimmed}' is neither an age (7d, 2w, 1m, 1y; combinable: 1m2w) nor a date \
+             (DD-MM-YYYY, D-M-YY, DD-Mon-YY, today)"
+        )
+    })
+}
+
+fn apply_relative_cli_segments(base: NaiveDate, segments: &[(u32, char)]) -> Option<NaiveDate> {
+    let (months, days) = sum_segments(segments)?;
     base.checked_add_months(Months::new(months))
         .and_then(|d| d.checked_add_signed(Duration::try_days(days)?))
 }
 
 fn parse_and_apply_relative_cli_date(trimmed: &str, base: NaiveDate, shown: &str) -> Result<NaiveDate> {
-    let segments = parse_relative_cli_segments(trimmed)?;
+    let segments = parse_relative_cli_segments(trimmed, "relative date")?;
     apply_relative_cli_segments(base, &segments).ok_or_else(|| past_the_years(shown))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_cli_date_for_edit, parse_cli_date_with_base};
+    use super::{day_before_by_age, day_bound, parse_cli_date_for_edit, parse_cli_date_with_base};
     use chrono::{Local, NaiveDate};
 
     fn d(y: i32, m: u32, day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, day).unwrap()
+    }
+
+    /// `rusk rm done --older`: an age counts back the way a relative date counts
+    /// forward, and says "age" when it cannot be read.
+    #[test]
+    fn an_age_counts_back_from_today() {
+        let today = d(2026, 10, 25);
+        assert_eq!(day_before_by_age("7d", today).unwrap(), d(2026, 10, 18));
+        assert_eq!(day_before_by_age("2w", today).unwrap(), d(2026, 10, 11));
+        assert_eq!(day_before_by_age("1m", today).unwrap(), d(2026, 9, 25));
+        assert_eq!(day_before_by_age("1m2w", today).unwrap(), d(2026, 9, 11));
+        assert_eq!(day_before_by_age("1y", today).unwrap(), d(2025, 10, 25));
+        // A month back from the 31st: the last day of the month it lands in.
+        assert_eq!(day_before_by_age("1m", d(2026, 3, 31)).unwrap(), d(2026, 2, 28));
+        for bad in ["", "7", "0d", "7x", "d", "yesterday"] {
+            let err = day_before_by_age(bad, today).unwrap_err().to_string();
+            assert!(err.to_lowercase().contains("age"), "{bad:?}: {err}");
+            assert!(!err.contains("relative date"), "{bad:?}: {err}");
+        }
+        // Past what a number holds; a long way back in years is a date still.
+        assert!(day_before_by_age("5000000000d", today).is_err());
+        assert!(day_before_by_age("1000y", today).is_ok());
+    }
+
+    /// A bound is an age, counted back, or a date in any form `-d` takes.
+    #[test]
+    fn a_bound_is_an_age_or_a_date() {
+        let today = d(2026, 10, 25);
+        assert_eq!(day_bound("7d", today).unwrap(), d(2026, 10, 18));
+        assert_eq!(day_bound(" 1m2w ", today).unwrap(), d(2026, 9, 11));
+        assert_eq!(day_bound("01-10-2026", today).unwrap(), d(2026, 10, 1));
+        assert_eq!(day_bound("1-10-26", today).unwrap(), d(2026, 10, 1));
+        assert_eq!(day_bound("1.10.2026", today).unwrap(), d(2026, 10, 1));
+        assert_eq!(day_bound("25-oct-26", today).unwrap(), d(2026, 10, 25));
+        assert_eq!(day_bound("today", today).unwrap(), today);
+        for bad in ["", "7", "7x", "yesterday", "32-10-2026", "2026-10-01"] {
+            let err = day_bound(bad, today).unwrap_err().to_string();
+            assert!(err.contains("age") && (err.contains("date") || err.contains("unit")), "{bad:?}: {err}");
+        }
     }
 
     /// REVIEW №18: a year of one to three digits, with a sign or with five

@@ -10,7 +10,9 @@
 //! `pos` keeps the display order (insertion order, independent of the
 //! reusable ids). Foreign writers may INSERT without `pos` — rowid
 //! semantics append them at the end. `"after"` holds the comma-separated
-//! ids of the tasks a task depends on (NULL when none).
+//! ids of the tasks a task depends on (NULL when none); `done_on` the ISO
+//! date of the day the task was marked done (NULL on an open task, and on
+//! one done without the day on record).
 //!
 //! Reading changes nothing in the file: it is opened without being
 //! created, no table is created and no column added — a write-protected
@@ -42,15 +44,17 @@ const SCHEMA: &str = "CREATE TABLE tasks (
     date     TEXT,
     done     INTEGER NOT NULL DEFAULT 0,
     priority INTEGER NOT NULL DEFAULT 0,
-    \"after\" TEXT
+    \"after\" TEXT,
+    done_on  TEXT
 )";
 
 /// The header of a database rusk makes says whose file it is and what it
 /// holds: `application_id` is "rusk" in ASCII, `user_version` the schema.
 const APPLICATION_ID: i64 = 0x7275_736B;
 /// The schema of [`SCHEMA`]. A file of a later one was written by a newer
-/// rusk: this one neither reads it as its own nor writes it.
-const SCHEMA_VERSION: i64 = 1;
+/// rusk: this one neither reads it as its own nor writes it. 1 was the
+/// table up to `after`; 2 added `done_on`.
+const SCHEMA_VERSION: i64 = 2;
 
 /// `application_id` and `user_version` of the file.
 fn header(conn: &Connection, at: At<'_>) -> Result<(i64, i64)> {
@@ -98,11 +102,20 @@ enum Layout {
     /// Tables, none of them `tasks` (their names): another program's
     /// database, which rusk neither reads nor writes.
     Foreign(Vec<String>),
-    /// The `tasks` table. `has_after`: tables made before dependencies
-    /// existed lack that column. `narrow_ids`: the table still has the
+    /// The `tasks` table. `columns`: which of the columns later rusks added
+    /// an older table has. `narrow_ids`: the table still has the
     /// `CHECK (id BETWEEN 1 AND 255)` of the time ids were one byte, so it
     /// would refuse task 256.
-    Tasks { has_after: bool, narrow_ids: bool },
+    Tasks { columns: Columns, narrow_ids: bool },
+}
+
+/// The columns of the `tasks` table that an older table may lack: `after`
+/// came with dependencies, `done_on` with the day a task was marked done.
+/// Reading takes a missing one as NULL throughout; the first save adds it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Columns {
+    after: bool,
+    done_on: bool,
 }
 
 fn layout(conn: &Connection, at: At<'_>) -> Result<Layout> {
@@ -135,7 +148,7 @@ fn layout(conn: &Connection, at: At<'_>) -> Result<Layout> {
         .collect::<String>()
         .to_ascii_lowercase();
     Ok(Layout::Tasks {
-        has_after: has_after_column(conn).map_err(at.failed("Failed to inspect the tasks table"))?,
+        columns: columns(conn).map_err(at.failed("Failed to inspect the tasks table"))?,
         narrow_ids: definition.contains("check(idbetween1and255)"),
     })
 }
@@ -364,9 +377,14 @@ pub struct SqliteBackend {
     session: Mutex<Session>,
 }
 
-fn has_after_column(conn: &Connection) -> rusqlite::Result<bool> {
-    conn.prepare("SELECT 1 FROM pragma_table_info('tasks') WHERE name = 'after' COLLATE NOCASE")
-        .and_then(|mut stmt| stmt.exists([]))
+/// Which of the later columns the `tasks` table has (see [`Columns`]).
+fn columns(conn: &Connection) -> rusqlite::Result<Columns> {
+    let mut stmt =
+        conn.prepare("SELECT 1 FROM pragma_table_info('tasks') WHERE name = ?1 COLLATE NOCASE")?;
+    Ok(Columns {
+        after: stmt.exists(["after"])?,
+        done_on: stmt.exists(["done_on"])?,
+    })
 }
 
 fn data_version(conn: &Connection, at: At<'_>) -> Result<i64> {
@@ -395,18 +413,25 @@ fn is_current(tx: &Connection, expected: Expected, layout: &Layout, at: At<'_>) 
 /// Inside the write transaction, before the rows are replaced: makes the
 /// file hold the current [`SCHEMA`]. A table with the one-byte id CHECK is
 /// made anew — its rows are replaced right after anyway, and SQLite cannot
-/// drop a constraint in place; one that only lacks `after` gets the column.
-/// Then the header says what the file now is (see [`stamp_header`]).
+/// drop a constraint in place; one that only lacks `after` or `done_on`
+/// gets the columns. Then the header says what the file now is (see
+/// [`stamp_header`]).
 fn upgrade_schema(tx: &Connection, layout: &Layout, at: At<'_>) -> Result<()> {
     let sql = match layout {
         Layout::Empty => SCHEMA.to_string(),
         Layout::Tasks {
             narrow_ids: true, ..
         } => format!("DROP TABLE tasks; {SCHEMA};"),
-        Layout::Tasks {
-            has_after: false, ..
-        } => "ALTER TABLE tasks ADD COLUMN \"after\" TEXT".to_string(),
-        Layout::Tasks { .. } => String::new(),
+        Layout::Tasks { columns, .. } => {
+            let mut sql = String::new();
+            if !columns.after {
+                sql.push_str("ALTER TABLE tasks ADD COLUMN \"after\" TEXT; ");
+            }
+            if !columns.done_on {
+                sql.push_str("ALTER TABLE tasks ADD COLUMN done_on TEXT; ");
+            }
+            sql
+        }
         Layout::Foreign(_) => return Ok(()),
     };
     tx.execute_batch(&sql)
@@ -453,8 +478,8 @@ fn replace_rows(tx: &Connection, tasks: &[Task], at: At<'_>) -> Result<()> {
         .map_err(at.failed("Failed to clear the tasks table"))?;
     let mut stmt = tx
         .prepare(
-            "INSERT INTO tasks (pos, id, text, date, done, priority, \"after\")
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO tasks (pos, id, text, date, done, priority, \"after\", done_on)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         )
         .map_err(at.failed("Failed to prepare the insert"))?;
     for (pos, task) in tasks.iter().enumerate() {
@@ -477,6 +502,7 @@ fn replace_rows(tx: &Connection, tasks: &[Task], at: At<'_>) -> Result<()> {
             task.done,
             task.priority,
             after,
+            task.done_on.map(|d| d.to_string()),
         ])
         .map_err(at.failed(&format!("Failed to insert task {}", task.id)))?;
     }
@@ -579,7 +605,7 @@ impl SqliteBackend {
         match layout {
             Layout::Empty => Ok(Vec::new()),
             Layout::Foreign(tables) => Err(foreign(&self.path, tables)),
-            Layout::Tasks { has_after, .. } => self.read_tasks(conn, *has_after, at),
+            Layout::Tasks { columns, .. } => self.read_tasks(conn, *columns, at),
         }
     }
 
@@ -653,9 +679,8 @@ impl SqliteBackend {
                 self.path.display()
             );
         }
-        let has_after = has_after_column(&conn)
-            .map_err(at.failed("Failed to inspect the tasks table"))?;
-        self.read_tasks(&conn, has_after, at)
+        let columns = columns(&conn).map_err(at.failed("Failed to inspect the tasks table"))?;
+        self.read_tasks(&conn, columns, at)
     }
 
     /// For `rusk restore` over a database that failed to load: when SQLite
@@ -761,13 +786,15 @@ impl SqliteBackend {
     /// The rows as tasks that follow the rules ([`super::normalized`]): a
     /// table another tool wrote need not have rusk's constraints. A NULL
     /// reads like a JSON `null` — no id, a flag that is not set — except in
-    /// `text`, which a task must have. `has_after` is false for a table made
-    /// before dependencies existed: reading never adds the column.
-    fn read_tasks(&self, conn: &Connection, has_after: bool, at: At<'_>) -> Result<Vec<Task>> {
-        let after = if has_after { "\"after\"" } else { "NULL" };
+    /// `text`, which a task must have. A column of `columns` that an older
+    /// table lacks reads as NULL: reading never adds one.
+    fn read_tasks(&self, conn: &Connection, columns: Columns, at: At<'_>) -> Result<Vec<Task>> {
+        let after = if columns.after { "\"after\"" } else { "NULL" };
+        let done_on = if columns.done_on { "done_on" } else { "NULL" };
         let mut stmt = conn
             .prepare(&format!(
-                "SELECT pos, id, text, date, done, priority, {after} FROM tasks ORDER BY pos"
+                "SELECT pos, id, text, date, done, priority, {after}, {done_on} FROM tasks \
+                 ORDER BY pos"
             ))
             .map_err(at.failed("Failed to query the tasks table"))?;
         // A row that SQLite hands over but that is not a task (a NULL text,
@@ -790,6 +817,7 @@ impl SqliteBackend {
                     row.get::<_, Option<bool>>(4),
                     row.get::<_, Option<bool>>(5),
                     row.get::<_, Option<String>>(6),
+                    row.get::<_, Option<String>>(7),
                 ))
             })
             .map_err(at.failed("Failed to read the tasks table"))?
@@ -803,19 +831,22 @@ impl SqliteBackend {
             })?;
         let tasks = rows
             .into_iter()
-            .map(|(pos, id, text, date, done, priority, after)| {
+            .map(|(pos, id, text, date, done, priority, after, done_on)| {
                 let row = match &id {
                     Ok(Some(id)) => format!("row {pos} (id {id})"),
                     _ => format!("row {pos}"),
                 };
                 let task = || -> Result<Task> {
-                    let date = date
-                        .map_err(SqliteCause)?
-                        .map(|d| {
-                            d.parse::<chrono::NaiveDate>()
-                                .with_context(|| format!("invalid date '{d}'"))
-                        })
-                        .transpose()?;
+                    let iso_date = |cell: rusqlite::Result<Option<String>>, column: &str| {
+                        cell.map_err(SqliteCause)?
+                            .map(|d| {
+                                d.parse::<chrono::NaiveDate>()
+                                    .with_context(|| format!("invalid {column} '{d}'"))
+                            })
+                            .transpose()
+                    };
+                    let date = iso_date(date, "date")?;
+                    let done_on = iso_date(done_on, "done_on")?;
                     let after = after
                         .map_err(SqliteCause)?
                         .unwrap_or_default()
@@ -832,6 +863,7 @@ impl SqliteBackend {
                         text: text.map_err(SqliteCause)?,
                         date,
                         done: done.map_err(SqliteCause)?.unwrap_or(false),
+                        done_on,
                         priority: priority.map_err(SqliteCause)?.unwrap_or(false),
                         after,
                     })
@@ -994,6 +1026,7 @@ mod tests {
                 text: "first\nmulti-line".into(),
                 date: NaiveDate::from_ymd_opt(2026, 7, 15),
                 done: false,
+                done_on: None,
                 priority: true, after: Vec::new(),
             },
             Task {
@@ -1001,6 +1034,7 @@ mod tests {
                 text: "second".into(),
                 date: None,
                 done: true,
+                done_on: NaiveDate::from_ymd_opt(2026, 10, 25),
                 priority: false, after: Vec::new(),
             },
         ];
@@ -1018,6 +1052,7 @@ mod tests {
             text: text.into(),
             date: None,
             done: false,
+            done_on: None,
             priority: false,
             after: Vec::new(),
         }
@@ -1190,6 +1225,7 @@ mod tests {
                 task(1, "a"),
                 Task {
                     done: true,
+                    done_on: None,
                     ..task(2, "b")
                 }
             ]
@@ -1271,6 +1307,61 @@ mod tests {
             .collect();
         assert!(columns.contains(&"note".to_string()), "{columns:?}");
         assert!(columns.contains(&"after".to_string()), "{columns:?}");
+        assert!(columns.contains(&"done_on".to_string()), "{columns:?}");
+    }
+
+    /// A database of the rusk before `done_on` (schema 1, `after` but no
+    /// `done_on`): read as it is, the day NULL; the first save adds the
+    /// column, writes the day and marks the file as schema 2.
+    #[test]
+    fn a_table_without_done_on_gets_the_column_on_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tasks.db");
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE tasks (pos INTEGER PRIMARY KEY, id INTEGER NOT NULL UNIQUE,
+                                     text TEXT NOT NULL, date TEXT, done INTEGER NOT NULL DEFAULT 0,
+                                     priority INTEGER NOT NULL DEFAULT 0, \"after\" TEXT);
+                 INSERT INTO tasks (pos, id, text, done) VALUES (1, 1, 'done earlier', 1), (2, 2, 'open', 0);
+                 PRAGMA application_id = 0x7275736B; PRAGMA user_version = 1;",
+            )
+            .unwrap();
+        let pragma = |name: &str| -> i64 {
+            Connection::open(&path)
+                .unwrap()
+                .query_row(&format!("PRAGMA {name}"), [], |row| row.get(0))
+                .unwrap()
+        };
+        let backend = SqliteBackend::new(path.clone());
+        let mut tasks = backend.load().unwrap();
+        assert!(tasks[0].done);
+        assert_eq!(tasks[0].done_on, None, "done without the day on record");
+        assert_eq!(pragma("user_version"), 1, "reading changed the header");
+
+        tasks[0].done_on = NaiveDate::from_ymd_opt(2026, 10, 25);
+        tasks[1].done = true;
+        tasks[1].done_on = NaiveDate::from_ymd_opt(2026, 10, 26);
+        backend.save(&tasks).unwrap();
+        assert_eq!(backend.load().unwrap(), tasks);
+        assert_eq!(pragma("user_version"), SCHEMA_VERSION);
+        let stored: Vec<Option<String>> = Connection::open(&path)
+            .unwrap()
+            .prepare("SELECT done_on FROM tasks ORDER BY pos")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(stored, [Some("2026-10-25".to_string()), Some("2026-10-26".to_string())]);
+
+        // A day that is no date names its row and column.
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch("UPDATE tasks SET done_on = 'yesterday' WHERE id = 2")
+            .unwrap();
+        let err = format!("{:#}", SqliteBackend::new(path).load().unwrap_err());
+        assert!(err.contains("row 2 (id 2): invalid done_on 'yesterday'"), "{err}");
     }
 
     #[test]
@@ -1294,7 +1385,14 @@ mod tests {
         assert_eq!(
             of(SCHEMA),
             Layout::Tasks {
-                has_after: true,
+                columns: Columns { after: true, done_on: true },
+                narrow_ids: false
+            }
+        );
+        assert_eq!(
+            of("CREATE TABLE tasks (id, text, \"after\" TEXT)"),
+            Layout::Tasks {
+                columns: Columns { after: true, done_on: false },
                 narrow_ids: false
             }
         );
@@ -1304,7 +1402,7 @@ mod tests {
             assert_eq!(
                 of(&format!("CREATE TABLE tasks (pos INTEGER PRIMARY KEY, id INTEGER {check}, text TEXT)")),
                 Layout::Tasks {
-                    has_after: false,
+                    columns: Columns { after: false, done_on: false },
                     narrow_ids: true
                 },
                 "{check}"

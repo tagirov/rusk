@@ -181,18 +181,18 @@ if (-not $test_mark3) { $allTestsPassed = $false }
 # ============================================================================
 # DEL COMMAND TESTS
 # ============================================================================
-Write-Host "`n=== DEL Command Tests ===" -ForegroundColor Yellow
+Write-Host "`n=== RM Command Tests ===" -ForegroundColor Yellow
 
-# Test: rusk del <tab> (should suggest task IDs)
+# Test: rusk rm <tab> (the word done and the flags, never ids)
 $test_del1 = Test-CompletionScenario `
-    -Description "rusk del <tab> (task ID completion)" `
-    -Tokens @("rusk", "del", "") `
+    -Description "rusk rm <tab> (done and flags)" `
+    -Tokens @("rusk", "rm", "") `
     -WordToComplete "" `
     -ExpectedBehavior "Should suggest task IDs" `
     -Validation {
         param($Tokens, $WordToComplete, $Prev, $Cur)
-        if ($Prev -eq "del" -or $Prev -eq "d") {
-            Assert-True $true "Should suggest task IDs for del command"
+        if ($Prev -eq "rm") {
+            Assert-True $true "Should offer done and the flags for rm"
             return $true
         }
         return $false
@@ -200,16 +200,16 @@ $test_del1 = Test-CompletionScenario `
 
 if (-not $test_del1) { $allTestsPassed = $false }
 
-# Test: rusk del -<tab> (should suggest flags including --done)
+# Test: rusk rm -<tab> (should suggest flags including --yes)
 $test_del2 = Test-CompletionScenario `
-    -Description "rusk del -<tab> (flag completion)" `
-    -Tokens @("rusk", "del", "-") `
+    -Description "rusk rm -<tab> (flag completion)" `
+    -Tokens @("rusk", "rm", "-") `
     -WordToComplete "-" `
-    -ExpectedBehavior "Should suggest flags (--done, --help, -h)" `
+    -ExpectedBehavior "Should suggest flags (--yes, -y, --help, -h)" `
     -Validation {
         param($Tokens, $WordToComplete, $Prev, $Cur)
         if ($Cur -like '-*') {
-            Assert-True $true "Should suggest flags including --done"
+            Assert-True $true "Should suggest flags including --yes"
             return $true
         }
         return $false
@@ -217,10 +217,10 @@ $test_del2 = Test-CompletionScenario `
 
 if (-not $test_del2) { $allTestsPassed = $false }
 
-# Test: rusk del 1 2 <tab> (multiple IDs)
+# Test: rusk rm 1 2 <tab> (after ids: flags)
 $test_del3 = Test-CompletionScenario `
-    -Description "rusk del 1 2 <tab> (multiple ID completion)" `
-    -Tokens @("rusk", "del", "1", "2", "") `
+    -Description "rusk rm 1 2 <tab> (flags after ids)" `
+    -Tokens @("rusk", "rm", "1", "2", "") `
     -WordToComplete "" `
     -ExpectedBehavior "Should suggest remaining task IDs" `
     -Validation {
@@ -423,22 +423,6 @@ $test_alias1 = Test-CompletionScenario `
 
 if (-not $test_alias1) { $allTestsPassed = $false }
 
-# Test: rusk d <tab> (del alias)
-$test_alias2 = Test-CompletionScenario `
-    -Description "rusk d <tab> (del alias)" `
-    -Tokens @("rusk", "d", "") `
-    -WordToComplete "" `
-    -ExpectedBehavior "Should suggest task IDs (using alias 'd')" `
-    -Validation {
-        param($Tokens, $WordToComplete, $Prev, $Cur)
-        if ($Prev -eq "d") {
-            Assert-True $true "Should work with alias 'd' for del"
-            return $true
-        }
-        return $false
-    }
-
-if (-not $test_alias2) { $allTestsPassed = $false }
 
 Write-Host "`n" + "=" * 60 -ForegroundColor Cyan
 if ($allTestsPassed) {

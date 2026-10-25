@@ -125,6 +125,7 @@ mod tests {
             text: text.to_string(),
             date: chrono::NaiveDate::from_ymd_opt(2026, 7, 8),
             done: false,
+            done_on: None,
             priority: true, after: Vec::new(),
         }
     }

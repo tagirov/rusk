@@ -4,7 +4,9 @@
 //!
 //! Mapping per VTODO: SUMMARY = task text (`\n`-escaped for multi-line),
 //! DUE (date value) = due date, STATUS:COMPLETED or CANCELLED = done (with
-//! no STATUS, COMPLETED or PERCENT-COMPLETE:100 say it), PRIORITY 1–4 = the
+//! no STATUS, COMPLETED or PERCENT-COMPLETE:100 say it), the date part of
+//! COMPLETED = the day the task was marked done (kept when the VTODO reads
+//! as done, see below), PRIORITY 1–4 = the
 //! priority flag (written as 1), a rusk UID (`rusk-<id>@<hash>.rusk`, or
 //! `rusk-<id>@rusk` as rusk wrote it up to 0.7.3) pins the rusk id (a
 //! foreign UID gets the lowest free id on load, and a rusk UID on the next
@@ -16,6 +18,14 @@
 //! VALARM) and properties are ignored and not preserved — rusk owns the
 //! file. A VTODO without SUMMARY has no text: no task, unless its UID is a
 //! rusk one (see [`crate::model::normalize`]).
+//!
+//! The day a task was done is written, when it is on record, as
+//! `COMPLETED:YYYYMMDDT120000Z`. rusk knows the day and not the time of
+//! day, and COMPLETED has to name one: noon UTC is the time that falls on
+//! that calendar day in every time zone but the farthest, so a client
+//! anywhere shows the day rusk has, and the day comes back the same when
+//! the file is read (its date part, no time-zone conversion, as DUE is
+//! read).
 //!
 //! A save keeps what the file it replaces says of each task: its UID and,
 //! while the task is unchanged, its DTSTAMP; a changed task gets the time of
@@ -185,6 +195,14 @@ pub fn encode(tasks: &[Task], previous: Option<&str>) -> String {
                 "STATUS:NEEDS-ACTION"
             },
         );
+        if task.done && let Some(done_on) = task.done_on {
+            // Noon UTC: the same calendar day in every time zone but the
+            // farthest (see the module docs).
+            fold_into(
+                &mut out,
+                &format!("COMPLETED:{}T120000Z", done_on.format("%Y%m%d")),
+            );
+        }
         fold_into(&mut out, "END:VTODO");
     }
     fold_into(&mut out, "END:VCALENDAR");
@@ -305,16 +323,22 @@ struct Todo {
 
 /// Whether a VTODO is done: STATUS says it when there is one — COMPLETED,
 /// or CANCELLED, which is not to do either — and without one COMPLETED (a
-/// completion time) or PERCENT-COMPLETE:100 do (REVIEW №92).
+/// completion time) or PERCENT-COMPLETE:100 do (REVIEW №92). The day of
+/// the COMPLETED time is the day the task was done, if it is done.
 #[derive(Default)]
 struct Done {
     status: Option<bool>,
     completed: bool,
+    completed_on: Option<NaiveDate>,
 }
 
 impl Done {
     fn done(&self) -> bool {
         self.status.unwrap_or(self.completed)
+    }
+
+    fn done_on(&self) -> Option<NaiveDate> {
+        self.completed_on.filter(|_| self.done())
     }
 }
 
@@ -341,6 +365,7 @@ fn read_todos(data: &str) -> Result<Vec<Todo>> {
                         text: String::new(),
                         date: None,
                         done: false,
+                        done_on: None,
                         priority: false,
                         after: Vec::new(),
                     },
@@ -356,6 +381,7 @@ fn read_todos(data: &str) -> Result<Vec<Todo>> {
                     in_vtodo = false;
                     if let Some(todo) = todos.last_mut() {
                         todo.task.done = done.done();
+                        todo.task.done_on = done.done_on();
                     }
                 } else {
                     anyhow::bail!("iCalendar: END:{} while inside a VTODO", value.trim());
@@ -400,7 +426,13 @@ fn read_todos(data: &str) -> Result<Vec<Todo>> {
                                 || status.eq_ignore_ascii_case("CANCELLED"),
                         );
                     }
-                    "COMPLETED" => done.completed = true,
+                    "COMPLETED" => {
+                        done.completed = true;
+                        // The date part, as DUE is read: no time-zone
+                        // conversion (a client wrote a UTC time; rusk
+                        // keeps the day it names).
+                        done.completed_on = parse_ics_date(value);
+                    }
                     "PERCENT-COMPLETE" if value.trim().parse::<u8>() == Ok(100) => {
                         done.completed = true;
                     }
@@ -434,6 +466,7 @@ mod tests {
             text: text.to_string(),
             date: None,
             done: false,
+            done_on: None,
             priority: false, after: Vec::new(),
         }
     }
@@ -608,6 +641,41 @@ mod tests {
         assert!(!todo("STATUS:NEEDS-ACTION\nPERCENT-COMPLETE:100\n"));
         assert!(!todo("COMPLETED:20260102T100000Z\nSTATUS:IN-PROCESS\n"));
         assert!(!todo(""));
+    }
+
+    #[test]
+    fn the_completed_time_carries_the_day_the_task_was_done() {
+        let mut t = task(3, "shipped");
+        t.done = true;
+        t.date = NaiveDate::from_ymd_opt(2026, 7, 15);
+        t.done_on = NaiveDate::from_ymd_opt(2026, 10, 25);
+        let ics = encode(std::slice::from_ref(&t), None);
+        assert!(ics.contains("STATUS:COMPLETED\r\nCOMPLETED:20261025T120000Z\r\n"), "{ics}");
+        assert_eq!(decode(&ics).unwrap(), vec![t.clone()]);
+        // Done without the day on record: no COMPLETED.
+        t.done_on = None;
+        assert!(!encode(std::slice::from_ref(&t), None).contains("COMPLETED:"));
+        // Unchanged, the task keeps its stamp, COMPLETED or not.
+        t.done_on = NaiveDate::from_ymd_opt(2026, 10, 25);
+        let ics = encode(std::slice::from_ref(&t), None);
+        let again = encode(&decode(&ics).unwrap(), Some(&ics));
+        assert_eq!(again, ics);
+
+        // What a client wrote: the day of the time, no time-zone shift.
+        let todo = |props: &str| {
+            let ics = format!("BEGIN:VCALENDAR\nBEGIN:VTODO\nSUMMARY:x\n{props}END:VTODO\nEND:VCALENDAR\n");
+            let task = &decode(&ics).unwrap()[0];
+            (task.done, task.done_on)
+        };
+        let day = NaiveDate::from_ymd_opt(2026, 1, 2);
+        assert_eq!(todo("COMPLETED:20260102T100000Z\nSTATUS:COMPLETED\n"), (true, day));
+        assert_eq!(todo("COMPLETED:20260102T235959Z\n"), (true, day));
+        assert_eq!(todo("COMPLETED;VALUE=DATE:20260102\n"), (true, day));
+        // Kept only when the VTODO reads as done.
+        assert_eq!(todo("COMPLETED:20260102T100000Z\nSTATUS:IN-PROCESS\n"), (false, None));
+        // A COMPLETED that is no date still says done, without a day.
+        assert_eq!(todo("COMPLETED:soon\n"), (true, None));
+        assert_eq!(todo("STATUS:COMPLETED\n"), (true, None));
     }
 
     /// REVIEW №94: the value was cut at the first `:`, one inside a quoted

@@ -682,7 +682,25 @@ fn route(request: &mut Request, opts: &ServeOptions) -> Reply {
             api::replace_tasks(tm, body, if_match.as_deref())
         }),
         (Method::Delete, "/api/tasks/done") => {
-            with_tasks(|tm| Reply::from_api(api::delete_done(tm, if_match.as_deref())))
+            // `?older=7d&newer=01-09-2026`: ages or dates, as `rusk rm done
+            // --older` / `--newer` take them.
+            let today = chrono::Local::now().date_naive();
+            let bound = |name: &str| match form_value(query, name, false) {
+                None => Ok(None),
+                Some(value) => crate::parser::date::day_bound(&value, today)
+                    .map(Some)
+                    .map_err(|e| Reply::json_error(400, &format!("{name}: {e:#}"))),
+            };
+            let range = match (bound("older"), bound("newer")) {
+                (Ok(older), Ok(newer)) => crate::storage::DoneRange { older, newer },
+                (Err(reply), _) | (_, Err(reply)) => return reply,
+            };
+            if let (Some(o), Some(n)) = (range.older, range.newer)
+                && n > o
+            {
+                return Reply::json_error(400, "an empty range: newer is after older");
+            }
+            with_tasks(|tm| Reply::from_api(api::delete_done(tm, range, if_match.as_deref())))
         }
         (Method::Get, p) if task_id_from_path(p).is_some() => {
             let id = task_id_from_path(p).unwrap();

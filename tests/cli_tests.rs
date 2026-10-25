@@ -75,9 +75,8 @@ fn test_cli_delete_command() {
 }
 
 #[test]
-fn test_cli_delete_with_done_flag() {
-    // Test that --done flag logic works correctly
-    // This tests the core functionality without interactive confirmation
+fn test_cli_delete_all_done() {
+    // What `rusk rm done` does, without the interactive confirmation
     let mut tm = TaskManager::new_empty().unwrap();
 
     // Add tasks
@@ -94,8 +93,6 @@ fn test_cli_delete_with_done_flag() {
     assert!(!tm.tasks[1].done); // Task 2
     assert!(tm.tasks[2].done); // Task 3
 
-    // Test deleting all done tasks (simulating --done flag behavior)
-    // This directly tests delete_all_done which is what --done flag calls
     let deleted_count = tm.delete_all_done().unwrap();
     assert_eq!(deleted_count, 2); // Should delete 2 tasks
     assert_eq!(tm.tasks.len(), 1); // Only Task 2 should remain
@@ -104,15 +101,15 @@ fn test_cli_delete_with_done_flag() {
 }
 
 #[test]
-fn test_cli_delete_error_no_ids_no_done() {
+fn test_cli_delete_error_no_ids() {
     use rusk::cli::HandlerCLI;
     let mut tm = TaskManager::new_empty().unwrap();
 
     // Add a task
     tm.add_task(vec!["Task 1".to_string()], None).unwrap();
 
-    // Neither ids nor --done: an error, nothing deleted.
-    let result = HandlerCLI::handle_delete_tasks(&mut tm, vec![], false, false);
+    // No ids: an error, nothing deleted.
+    let result = HandlerCLI::handle_delete_tasks(&mut tm, vec![], false);
     assert!(result.is_err());
     assert_eq!(tm.tasks.len(), 1); // Task should remain
 }

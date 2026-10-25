@@ -63,10 +63,10 @@ src/
 ├── parser/
 │   ├── mod.rs           # Re-exports
 │   ├── date.rs          # Date parsing: absolute (DD-MM-YYYY), relative (2d, 3w, 1q)
-│   └── ids.rs           # Task id lists (mark/del/edit, --after): one comma-separated list, glued back across shell-split commas; edit: ids, then text
+│   └── ids.rs           # Task id lists (mark/rm/edit, --after): one comma-separated list, glued back across shell-split commas; edit: ids, then text
 ├── cli/
 │   ├── mod.rs           # HandlerCLI struct, submodule declarations
-│   ├── handlers.rs      # Command handlers: add, del, mark, edit, list, restore
+│   ├── handlers.rs      # Command handlers: add, rm, mark, edit, list, restore
 │   ├── formatter.rs     # The list (format_task_list): rows as byte ranges (by cells), search highlight, compact row; ANSI stripping, terminal width
 │   ├── dialogs.rs       # Confirmation prompts (crossterm raw mode, only while a key is read)
 │   └── editor/          # Interactive full-screen editor (crossterm): task text + first-line date
@@ -186,11 +186,16 @@ Builds without a feature:
 - Without `completions`: the `rusk completions` subcommand is unavailable.
 - A minimal binary: `cargo build --release --no-default-features`.
 
-`rusk del` asks before it deletes (`dialogs::read_confirmation`), on a
-terminal only. With stdin or stdout not a terminal it refuses before asking
-anything and names `--yes`, which deletes without asking in every build.
-Either way the deletion goes through `TaskManager::delete_confirmed`, so a
-task that changed in the meantime is reported, not deleted.
+`rusk rm` asks before it deletes (`dialogs::read_confirmation`),
+on a terminal only. With stdin or stdout not a terminal it refuses before
+asking anything and names `--yes`, which deletes without asking in every
+build. Either way the deletion goes through `TaskManager::delete_confirmed`,
+so a task that changed in the meantime is reported, not deleted. `rusk rm done`
+selects the done tasks (`storage::DoneRange`): all of them, or with
+`--older` / `--newer` those whose `done_on` — the day `rusk mark` or the web
+page marked them done, `None` when nothing recorded it — lies within the
+bounds, each an age counted back or a date (`parser::date::day_bound`); the
+undated ones are kept and counted.
 
 ## Interactive editor
 
@@ -451,10 +456,11 @@ Two kinds of destination are told apart:
 - A file without tables is an empty database. One with tables but no
   `tasks` is another program's and is refused on read and on write.
 - The save that needs it brings an older table up to date inside its
-  transaction (`after` added; the one-byte `CHECK (id BETWEEN 1 AND 255)`
-  table made anew, its rows being replaced right after anyway) and marks
-  the header: the `application_id` is "rusk" in ASCII, `user_version` the
-  schema of `SCHEMA` (1).
+  transaction (`after` and `done_on` added, each when missing; the one-byte
+  `CHECK (id BETWEEN 1 AND 255)` table made anew, its rows being replaced
+  right after anyway) and marks the header: the `application_id` is "rusk"
+  in ASCII, `user_version` the schema of `SCHEMA` (2: 1 was the table up to
+  `after`). A missing column reads as NULL until then.
 - A file whose header names another application, or a later schema, is
   refused on read and on write. One without an application id is taken on
   its tables (an older rusk wrote none), and a `user_version` somebody set
@@ -479,7 +485,7 @@ list that breaks the rules:
 
 - A record with neither text nor id is no task and is left out.
 - One with an id but no text keeps everything else and gets the text
-  `(no text)` (`model::NO_TEXT`, so that `edit`/`del` can reach it).
+  `(no text)` (`model::NO_TEXT`, so that `edit`/`rm` can reach it).
 - The first task with an id keeps it; a later one with the same id, and one
   without an id, get the lowest free ids, in list order.
 - `after` keeps only other tasks that exist, each once. Dependencies are
@@ -617,7 +623,7 @@ looking at a snapshot:
 - `rusk edit` stores an editor session only if the task still has the text
   and date the editor showed (`TaskChanged` otherwise; the typed text goes
   back into the draft), one task at a time, right after Ctrl+S.
-- `rusk del` deletes only tasks whose text still is what the prompt showed.
+- `rusk rm` deletes only tasks whose text still is what the prompt showed.
 
 ### The web API and the page
 
@@ -668,7 +674,7 @@ looking at a snapshot:
   reused.
 - A task may list other task ids in `after` (`--after`). The dependencies
   are shown after the text as `(19,22)` and are stripped when the
-  referenced tasks are deleted: `rusk del` names the dependents in its
+  referenced tasks are deleted: `rusk rm` names the dependents in its
   question and says whose lists it changed (`storage::strip_deps` returns
   them). For lists edited outside rusk they are stripped when the list is
   read (see [Normalization](#normalization)).
@@ -721,7 +727,7 @@ looking at a snapshot:
   (`storage::clean_text`: CLI, editor and web API alike), and a new text
   that differs from the stored one only there is no change
   (`storage::text_changes`).
-- Every interactive part (the editors, the `del` prompt) needs a terminal
+- Every interactive part (the editors, the `rm` prompt) needs a terminal
   on stdin and stdout (`HandlerCLI::on_a_terminal`) and says so without
   one.
 

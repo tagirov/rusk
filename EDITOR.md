@@ -246,7 +246,7 @@ cursor shown. That holds:
 with no text does. Into a pipe or a redirect it says so instead of painting
 an editor nobody can see. So does a terminal that prints escape sequences
 instead of obeying them, `TERM=dumb` (Emacs' `M-x shell`, some CI): pass the
-text on the command line there. The one-line `rusk del` question is asked
+text on the command line there. The one-line `rusk rm` question is asked
 there as usual.
 
 After `Ctrl+C` the typed text is kept as a draft, and one blank line
@@ -285,7 +285,7 @@ typed against, a timestamp, and the text:
 
 **Removed when the text is somewhere safer**: once the database holds it, on
 a confirmed discard (`Esc` → `y`), and as soon as the buffer is brought back
-to the task's own text, since nothing unsaved is left to keep. A `rusk del`
+to the task's own text, since nothing unsaved is left to keep. A `rusk rm`
 takes the draft of the deleted task with it.
 
 **`Ctrl+S` stores the task right away.** In `rusk edit 1,2,3` each task is

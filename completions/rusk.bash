@@ -253,12 +253,10 @@ _rusk_complete_edit_flags() {
     return 0
 }
 
-# Complete flags for del command (`--done` takes no ids: offered only before any)
-_rusk_complete_del_flags() {
+# Flags for rm done (--older/--newer take an age or a date: free-form values)
+_rusk_complete_rm_flags() {
     local gcur="$cur"
-    local flags="--yes -y --help -h"
-    [ "$(_rusk_count_ids)" -eq 0 ] && flags="--done $flags"
-    COMPREPLY=($(compgen -W "$flags" -- "$gcur"))
+    COMPREPLY=($(compgen -W "--older --newer --yes -y --help -h" -- "$gcur"))
     return 0
 }
 
@@ -386,7 +384,7 @@ _rusk_completion() {
                 COMPREPLY=($(compgen -W "-h --help -V --version" -- "$cur"))
                 ;;
             *)
-                COMPREPLY=($(compgen -W "add edit mark del list search restore gen serve sync completions help a e m d l s r g c" -- "$cur"))
+                COMPREPLY=($(compgen -W "add edit mark rm list search restore gen serve sync completions help a e m l s r g c" -- "$cur"))
                 ;;
         esac
         return 0
@@ -424,16 +422,34 @@ _rusk_completion() {
             fi
             ;;
             
-        mark|m|del|d)
+        mark|m)
             if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
-                if [[ "$cmd" == "del" || "$cmd" == "d" ]]; then
-                    _rusk_complete_del_flags
+                _rusk_complete_mark_flags
+            fi
+            ;;
+
+        rm)
+            # Ids (never offered) or the word `done`; `--older`/`--newer` go
+            # with `done`, `--yes` with both. The word is offered until it,
+            # or an id, is on the line.
+            if [[ "$prev" == "--older" || "$prev" == "--newer" ]]; then
+                # Free-form value (an age or a date): no candidates
+                :
+            elif [[ -z "$cur" ]] || [[ "$cur" == -* ]] || [[ "done" == "$cur"* ]]; then
+                local has_done=0 w
+                for w in "${COMP_WORDS[@]:0:COMP_CWORD}"; do
+                    [[ "$w" == "done" ]] && has_done=1
+                done
+                if [[ $has_done -eq 1 ]]; then
+                    _rusk_complete_rm_flags
+                elif [[ "$(_rusk_count_ids)" -gt 0 ]]; then
+                    COMPREPLY=($(compgen -W "--yes -y --help -h" -- "$cur"))
                 else
-                    _rusk_complete_mark_flags
+                    COMPREPLY=($(compgen -W "done --older --newer --yes -y --help -h" -- "$cur"))
                 fi
             fi
             ;;
-            
+
         list|l)
             if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
                 _rusk_complete_list_flags
@@ -509,7 +525,7 @@ _rusk_completion() {
             # `rusk help <command> [<subcommand>]`, nothing more.
             case $((COMP_CWORD - rusk_idx)) in
                 2)
-                    COMPREPLY=($(compgen -W "add edit mark del list search restore gen serve sync completions" -- "$cur"))
+                    COMPREPLY=($(compgen -W "add edit mark rm list search restore gen serve sync completions" -- "$cur"))
                     ;;
                 3)
                     case "${COMP_WORDS[rusk_idx + 2]}" in

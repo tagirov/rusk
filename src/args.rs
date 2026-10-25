@@ -156,22 +156,40 @@ fn root_after_long_help() -> String {
     help
 }
 
-const DEL_LONG_ABOUT: &str = if cfg!(feature = "interactive") {
-    "Delete tasks by ID, or all completed ones with --done. Each \
-deletion is confirmed on the terminal first; --yes deletes without asking, which is how a script \
-deletes (there is no terminal to ask on).\n\n\
+const RM_LONG_ABOUT: &str = if cfg!(feature = "interactive") {
+    "Delete tasks by ID, or the completed tasks with the word `done`: `rusk rm done` deletes all \
+of them; --older and --newer narrow it down to the day they were marked done. Each takes an age \
+(7d, 2w, 1m, 1y; units d, w, m, q, y, combinable: 1m2w), counted back from today, or a date as -d \
+takes one (25-10-2026, 25-oct-26, today): --older keeps to that day and earlier, --newer to that \
+day and later, both together make a range. rusk records the day a task is marked done; one done \
+before that was recorded, or ticked off in a file by hand, has no day on record — the bounds keep \
+it and say so, `rusk rm done` alone deletes it with the rest. Each deletion is confirmed on the \
+terminal first; --yes deletes without asking, which is how a script deletes (there is no terminal \
+to ask on).\n\n\
 Examples:\n  \
-rusk del 3\n  \
-rusk del 1,2,3\n  \
-rusk del --done\n  \
-rusk del 3 --yes                  # no question asked"
+rusk rm 3\n  \
+rusk rm 1,2,3\n  \
+rusk rm 3 --yes                   # no question asked\n  \
+rusk rm done\n  \
+rusk rm done --older 7d           # done a week ago or earlier\n  \
+rusk rm done --older 30-09-2026   # done in September or earlier\n  \
+rusk rm done --newer 1m --older 2w"
 } else {
-    "Delete tasks by ID, or all completed ones with --done. This build has no terminal UI and \
+    "Delete tasks by ID, or the completed tasks with the word `done`: `rusk rm done` deletes all \
+of them; --older and --newer narrow it down to the day they were marked done. Each takes an age \
+(7d, 2w, 1m, 1y; units d, w, m, q, y, combinable: 1m2w), counted back from today, or a date as -d \
+takes one (25-10-2026, 25-oct-26, today): --older keeps to that day and earlier, --newer to that \
+day and later, both together make a range. rusk records the day a task is marked done; one done \
+before that was recorded, or ticked off in a file by hand, has no day on record — the bounds keep \
+it and say so, `rusk rm done` alone deletes it with the rest. This build has no terminal UI and \
 deletes without asking; --yes is accepted, so a script runs the same with any build.\n\n\
 Examples:\n  \
-rusk del 3\n  \
-rusk del 1,2,3\n  \
-rusk del --done"
+rusk rm 3\n  \
+rusk rm 1,2,3\n  \
+rusk rm done\n  \
+rusk rm done --older 7d           # done a week ago or earlier\n  \
+rusk rm done --older 30-09-2026   # done in September or earlier\n  \
+rusk rm done --newer 1m --older 2w"
 };
 
 const DEL_YES_HELP: &str = if cfg!(feature = "interactive") {
@@ -295,23 +313,28 @@ pub enum Command {
         after: Option<String>,
     },
     #[command(
-        visible_alias = "d",
-        about = "Delete tasks by ID, or all completed ones with --done",
-        long_about = DEL_LONG_ABOUT,
-        override_usage = "rusk del [--yes] <IDS>\n       rusk del [--yes] --done"
+        about = "Delete tasks by ID, or the completed ones with `rm done`",
+        long_about = RM_LONG_ABOUT,
+        override_usage = "rusk rm [--yes] <IDS>\n       rusk rm [--yes] [--older <AGE|DATE>] [--newer <AGE|DATE>] done"
     )]
-    Del {
+    Rm {
         #[arg(
-            value_name = "IDS",
-            help = "Task IDs: one comma-separated list, e.g. 1,2,3"
+            value_name = "IDS|done",
+            help = "Task IDs, one comma-separated list (e.g. 1,2,3), or the word `done`: the completed tasks"
         )]
-        ids: Vec<String>,
+        what: Vec<String>,
         #[arg(
             long,
-            conflicts_with = "ids",
-            help = "Delete all completed tasks instead of the ones given by ID"
+            value_name = "AGE|DATE",
+            help = "With `done`: only the tasks completed this long ago or earlier (7d, 2w, 1m, 1y; combinable: 1m2w), or on this date or earlier (25-10-2026, 25-oct-26, today)"
         )]
-        done: bool,
+        older: Option<String>,
+        #[arg(
+            long,
+            value_name = "AGE|DATE",
+            help = "With `done`: only the tasks completed this long ago or later, or on this date or later; with --older, a range"
+        )]
+        newer: Option<String>,
         #[arg(short, long, help = DEL_YES_HELP)]
         yes: bool,
     },

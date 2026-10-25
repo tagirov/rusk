@@ -161,7 +161,7 @@ elements in the terminal's own foreground color until set; their style
 |---|---|---|
 | `error` | `red` | Error messages, the argument errors of the command line included |
 | `success` | `green` | "Added task", "Edited task", confirmation checkmarks; a valid value in an argument error |
-| `warning` | `yellow` | Warnings, "No tasks", skipped/not-found notices; the invalid value in an argument error; the tasks that depend on the one `rusk del` asks about |
+| `warning` | `yellow` | Warnings, "No tasks", skipped/not-found notices; the invalid value in an argument error; the tasks that depend on the one `rusk rm` asks about |
 | `notice` | `dim` | "Task unchanged", "Canceled ...", the age and preview in the draft question |
 | `info` | `cyan` | Date-change details, completions instructions |
 | `emphasis` | terminal default | IDs and counts inside prompts (always bold, like the ids of the list) |

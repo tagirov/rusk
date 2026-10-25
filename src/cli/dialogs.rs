@@ -44,7 +44,7 @@ impl HandlerCLI {
 
     /// Puts `prompt` on the screen and reads one key: `y` is yes, Ctrl+C
     /// aborts, Ctrl+D cancels, anything else is no. For a question whose
-    /// "yes" throws something away (`rusk del`): the `y` itself, not Ctrl+Y
+    /// "yes" throws something away (`rusk rm`): the `y` itself, not Ctrl+Y
     /// or Alt+Y (REVIEW section 4).
     pub(crate) fn read_confirmation(prompt: &str) -> Result<bool> {
         Self::ask(prompt, is_bare)

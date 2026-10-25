@@ -253,18 +253,18 @@ impl HandlerCLI {
     /// `--done` deletes every completed task; otherwise `ids` says which
     /// ones. It is one or the other. Each deletion is confirmed on the
     /// terminal unless `yes` says it already is.
-    pub fn handle_delete_tasks(
-        tm: &mut TaskManager,
-        ids: Vec<TaskId>,
-        done: bool,
-        yes: bool,
-    ) -> Result<()> {
-        match (done, ids.is_empty()) {
-            (true, true) => Self::delete_all_done(tm, yes),
-            (false, false) => Self::delete_by_ids(tm, ids, yes),
-            (true, false) => anyhow::bail!("`--done` deletes all completed tasks and takes no task ids"),
-            (false, true) => anyhow::bail!("no task ids given; e.g. `rusk del 1,2,3`, or `rusk del --done`"),
+    pub fn handle_delete_tasks(tm: &mut TaskManager, ids: Vec<TaskId>, yes: bool) -> Result<()> {
+        if ids.is_empty() {
+            anyhow::bail!("no task ids given; e.g. `rusk rm 1,2,3`, or `rusk rm done` for the completed ones");
         }
+        Self::delete_by_ids(tm, ids, yes)
+    }
+
+    /// `rusk rm done`: every done task, or those marked done within the
+    /// bounds (`--older`, `--newer`). A done task without the day on record
+    /// is of unknown age: bounds keep it, and the report says how many.
+    pub fn handle_rm(tm: &mut TaskManager, bounds: super::DoneBounds, yes: bool) -> Result<()> {
+        Self::delete_done(tm, bounds, yes)
     }
 
     /// What the editor opens on for a task: its date as an editable prefix
@@ -492,16 +492,16 @@ impl HandlerCLI {
         Ok(())
     }
 
-    /// `rusk del` asks before it deletes, on the terminal; without one there
+    /// `rusk rm` asks before it deletes, on the terminal; without one there
     /// is nobody to answer (REVIEW №69). That is an error before anything
     /// is asked, and it names the way to delete without asking.
     #[cfg(feature = "interactive")]
-    fn check_can_ask() -> Result<()> {
+    fn check_can_ask(command: &str) -> Result<()> {
         if Self::on_a_terminal() {
             return Ok(());
         }
         anyhow::bail!(
-            "`rusk del` asks before it deletes, and there is no terminal to ask on; \
+            "`rusk {command}` asks before it deletes, and there is no terminal to ask on; \
              pass --yes to delete without asking"
         )
     }
@@ -509,7 +509,7 @@ impl HandlerCLI {
     /// The tasks of `tasks` the user agrees to delete, asked one by one.
     #[cfg(feature = "interactive")]
     fn confirm_each(tasks: Vec<Task>, all: &[Task]) -> Result<Vec<Task>> {
-        Self::check_can_ask()?;
+        Self::check_can_ask("rm")?;
         let mut confirmed = Vec::new();
         for task in tasks {
             let dependents = crate::storage::dependents_of(all, task.id);
@@ -547,18 +547,37 @@ impl HandlerCLI {
         let _ = (tasks, outcome);
     }
 
-    fn delete_all_done(tm: &mut TaskManager, yes: bool) -> Result<()> {
-        let done: Vec<Task> = tm.tasks().iter().filter(|t| t.done).cloned().collect();
+    fn delete_done(tm: &mut TaskManager, bounds: super::DoneBounds, yes: bool) -> Result<()> {
+        use crate::storage::is_done_undated;
+        let range = bounds.range();
+        let done: Vec<Task> = tm.tasks().iter().filter(|t| range.selects(t)).cloned().collect();
+        // Of unknown age, so within no bounds: said, not deleted.
+        let undated = if range.is_bounded() {
+            tm.tasks().iter().filter(|t| is_done_undated(t)).count()
+        } else {
+            0
+        };
+        let which = if range.is_bounded() {
+            format!("done tasks {}", bounds.describe())
+        } else {
+            "done tasks".to_string()
+        };
         if done.is_empty() {
-            return outln!("{}", theme().warning.paint("No done tasks to delete."));
+            outln!("{}", theme().warning.paint(&format!("No {which} to delete.")))?;
+            return Self::print_kept_undated(undated);
         }
 
         #[cfg(feature = "interactive")]
         if !yes {
-            Self::check_can_ask()?;
+            Self::check_can_ask("rm")?;
+            let question = if range.is_bounded() {
+                format!("Delete {which} (")
+            } else {
+                "Delete all done tasks (".to_string()
+            };
             let confirmed = Self::read_confirmation(&format!(
                 "{}{}{} {}",
-                theme().accent.paint("Delete all done tasks ("),
+                theme().accent.paint(&question),
                 theme().emphasis.paint(&done.len().to_string()).bold(),
                 theme().accent.paint(")?"),
                 Self::yn_hint()
@@ -573,16 +592,37 @@ impl HandlerCLI {
         let _ = yes;
 
         // Exactly the tasks that were counted: one that another process has
-        // reopened, rewritten or marked done meanwhile (while the prompt was
-        // waiting) is not what the user agreed to delete.
-        let outcome =
-            tm.delete_confirmed(&done, |shown, now| now.done && now.text == shown.text)?;
+        // reopened, rewritten or marked done again meanwhile (while the
+        // prompt was waiting) is not what the user agreed to delete.
+        let outcome = tm.delete_confirmed(&done, |shown, now| {
+            now.done && now.done_on == shown.done_on && now.text == shown.text
+        })?;
         Self::forget_drafts(&done, &outcome);
         if !outcome.deleted.is_empty() {
-            Self::print_deleted(outcome.deleted.len(), " done tasks.")?;
+            Self::print_deleted(outcome.deleted.len(), " done task(s).")?;
             Self::print_unlinked(&outcome.unlinked)?;
         }
+        Self::print_kept_undated(undated)?;
         Self::report_unconfirmed(&outcome)
+    }
+
+    /// The done tasks the bounds left alone for want of a day on record: a
+    /// deletion that skips something says so, and names the way to delete
+    /// them.
+    fn print_kept_undated(count: usize) -> Result<()> {
+        if count == 0 {
+            return Ok(());
+        }
+        let tasks = if count == 1 { "task has" } else { "tasks have" };
+        outln!(
+            "{}{}{}",
+            theme().notice.paint("Kept: "),
+            theme().emphasis.paint(&count.to_string()).bold(),
+            theme().notice.paint(&format!(
+                " done {tasks} no day on record (done before rusk recorded it, or ticked off in \
+                 a file by hand); `rusk rm done` without --older/--newer deletes them too."
+            ))
+        )
     }
 
     /// Tasks that were to be deleted but are no longer the tasks read when
@@ -902,6 +942,7 @@ mod tests {
             text: text.to_string(),
             date: None,
             done: false,
+            done_on: None,
             priority: false,
             after: Vec::new(),
         }

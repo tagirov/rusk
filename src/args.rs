@@ -157,13 +157,14 @@ fn root_after_long_help() -> String {
 }
 
 const RM_LONG_ABOUT: &str = if cfg!(feature = "interactive") {
-    "Delete tasks by ID, or the completed tasks with the word `done`: `rusk rm done` deletes all \
-of them; --older and --newer narrow it down to the day they were marked done. Each takes an age \
+    "Delete tasks by ID, or by a word: `rusk rm done` deletes the completed tasks, `rusk rm all` \
+every task, open or done. --older and --newer narrow either down: with `done` to the day the tasks \
+were marked done, with `all` to their due date (the one day an open task has). Each takes an age \
 (7d, 2w, 1m, 1y; units d, w, m, q, y, combinable: 1m2w), counted back from today, or a date as -d \
 takes one (25-10-2026, 25-oct-26, today): --older keeps to that day and earlier, --newer to that \
-day and later, both together make a range. rusk records the day a task is marked done; one done \
-before that was recorded, or ticked off in a file by hand, has no day on record — the bounds keep \
-it and say so, `rusk rm done` alone deletes it with the rest. Each deletion is confirmed on the \
+day and later, both together make a range. A task without the day the bounds go by — done before \
+rusk recorded that day, or ticked off in a file by hand; with `all`, one without a due date — is \
+kept and counted; the word alone deletes it with the rest. Each deletion is confirmed on the \
 terminal first; --yes deletes without asking, which is how a script deletes (there is no terminal \
 to ask on).\n\n\
 Examples:\n  \
@@ -173,15 +174,18 @@ rusk rm 3 --yes                   # no question asked\n  \
 rusk rm done\n  \
 rusk rm done --older 7d           # done a week ago or earlier\n  \
 rusk rm done --older 30-09-2026   # done in September or earlier\n  \
-rusk rm done --newer 1m --older 2w"
+rusk rm done --newer 1m --older 2w\n  \
+rusk rm all                       # every task: a clean slate\n  \
+rusk rm all --older 1y            # due a year ago or earlier, done or not"
 } else {
-    "Delete tasks by ID, or the completed tasks with the word `done`: `rusk rm done` deletes all \
-of them; --older and --newer narrow it down to the day they were marked done. Each takes an age \
+    "Delete tasks by ID, or by a word: `rusk rm done` deletes the completed tasks, `rusk rm all` \
+every task, open or done. --older and --newer narrow either down: with `done` to the day the tasks \
+were marked done, with `all` to their due date (the one day an open task has). Each takes an age \
 (7d, 2w, 1m, 1y; units d, w, m, q, y, combinable: 1m2w), counted back from today, or a date as -d \
 takes one (25-10-2026, 25-oct-26, today): --older keeps to that day and earlier, --newer to that \
-day and later, both together make a range. rusk records the day a task is marked done; one done \
-before that was recorded, or ticked off in a file by hand, has no day on record — the bounds keep \
-it and say so, `rusk rm done` alone deletes it with the rest. This build has no terminal UI and \
+day and later, both together make a range. A task without the day the bounds go by — done before \
+rusk recorded that day, or ticked off in a file by hand; with `all`, one without a due date — is \
+kept and counted; the word alone deletes it with the rest. This build has no terminal UI and \
 deletes without asking; --yes is accepted, so a script runs the same with any build.\n\n\
 Examples:\n  \
 rusk rm 3\n  \
@@ -189,7 +193,9 @@ rusk rm 1,2,3\n  \
 rusk rm done\n  \
 rusk rm done --older 7d           # done a week ago or earlier\n  \
 rusk rm done --older 30-09-2026   # done in September or earlier\n  \
-rusk rm done --newer 1m --older 2w"
+rusk rm done --newer 1m --older 2w\n  \
+rusk rm all                       # every task: a clean slate\n  \
+rusk rm all --older 1y            # due a year ago or earlier, done or not"
 };
 
 const DEL_YES_HELP: &str = if cfg!(feature = "interactive") {
@@ -313,26 +319,26 @@ pub enum Command {
         after: Option<String>,
     },
     #[command(
-        about = "Delete tasks by ID, or the completed ones with `rm done`",
+        about = "Delete tasks by ID, the completed ones with `rm done`, or every task with `rm all`",
         long_about = RM_LONG_ABOUT,
-        override_usage = "rusk rm [--yes] <IDS>\n       rusk rm [--yes] [--older <AGE|DATE>] [--newer <AGE|DATE>] done"
+        override_usage = "rusk rm [--yes] <IDS>\n       rusk rm [--yes] [--older <AGE|DATE>] [--newer <AGE|DATE>] done\n       rusk rm [--yes] [--older <AGE|DATE>] [--newer <AGE|DATE>] all"
     )]
     Rm {
         #[arg(
-            value_name = "IDS|done",
-            help = "Task IDs, one comma-separated list (e.g. 1,2,3), or the word `done`: the completed tasks"
+            value_name = "IDS|done|all",
+            help = "Task IDs, one comma-separated list (e.g. 1,2,3); the word `done`: the completed tasks; or the word `all`: every task, open or done"
         )]
         what: Vec<String>,
         #[arg(
             long,
             value_name = "AGE|DATE",
-            help = "With `done`: only the tasks completed this long ago or earlier (7d, 2w, 1m, 1y; combinable: 1m2w), or on this date or earlier (25-10-2026, 25-oct-26, today)"
+            help = "With `done`: only the tasks completed this long ago or earlier (7d, 2w, 1m, 1y; combinable: 1m2w), or on this date or earlier (25-10-2026, 25-oct-26, today); with `all`: the tasks due that long ago or earlier"
         )]
         older: Option<String>,
         #[arg(
             long,
             value_name = "AGE|DATE",
-            help = "With `done`: only the tasks completed this long ago or later, or on this date or later; with --older, a range"
+            help = "With `done`: only the tasks completed this long ago or later, or on this date or later; with `all`: the tasks due that long ago or later; with --older, a range"
         )]
         newer: Option<String>,
         #[arg(short, long, help = DEL_YES_HELP)]

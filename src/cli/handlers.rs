@@ -255,16 +255,20 @@ impl HandlerCLI {
     /// terminal unless `yes` says it already is.
     pub fn handle_delete_tasks(tm: &mut TaskManager, ids: Vec<TaskId>, yes: bool) -> Result<()> {
         if ids.is_empty() {
-            anyhow::bail!("no task ids given; e.g. `rusk rm 1,2,3`, or `rusk rm done` for the completed ones");
+            anyhow::bail!(
+                "no task ids given; e.g. `rusk rm 1,2,3`, `rusk rm done` for the completed ones, or \
+                 `rusk rm all` for every task"
+            );
         }
         Self::delete_by_ids(tm, ids, yes)
     }
 
-    /// `rusk rm done`: every done task, or those marked done within the
-    /// bounds (`--older`, `--newer`). A done task without the day on record
-    /// is of unknown age: bounds keep it, and the report says how many.
+    /// `rusk rm done` / `rusk rm all`: every task of the scope, or those
+    /// with a day within the bounds (`--older`, `--newer`): the day they
+    /// were marked done, or the due date. A task without that day is of
+    /// unknown age: bounds keep it, and the report says how many.
     pub fn handle_rm(tm: &mut TaskManager, bounds: super::Bounds, yes: bool) -> Result<()> {
-        Self::delete_done(tm, bounds, yes)
+        Self::delete_selected(tm, bounds, yes)
     }
 
     /// What the editor opens on for a task: its date as an editable prefix
@@ -547,33 +551,39 @@ impl HandlerCLI {
         let _ = (tasks, outcome);
     }
 
-    fn delete_done(tm: &mut TaskManager, bounds: super::Bounds, yes: bool) -> Result<()> {
-        let range = bounds.selection();
-        let done: Vec<Task> = tm.tasks().iter().filter(|t| range.selects(t)).cloned().collect();
+    fn delete_selected(tm: &mut TaskManager, bounds: super::Bounds, yes: bool) -> Result<()> {
+        use crate::storage::Scope;
+        let scope = bounds.scope;
+        let selection = bounds.selection();
+        let picked: Vec<Task> = tm.tasks().iter().filter(|t| selection.selects(t)).cloned().collect();
         // Of unknown age, so within no bounds: said, not deleted.
-        let undated = tm.tasks().iter().filter(|t| range.leaves_undated(t)).count();
-        let which = if range.is_bounded() {
-            format!("done tasks {}", bounds.describe())
-        } else {
-            "done tasks".to_string()
+        let undated = tm.tasks().iter().filter(|t| selection.leaves_undated(t)).count();
+        let noun = match scope {
+            Scope::Done => "done tasks",
+            Scope::All => "tasks",
         };
-        if done.is_empty() {
+        let which = if selection.is_bounded() {
+            format!("{noun} {}", bounds.describe())
+        } else {
+            noun.to_string()
+        };
+        if picked.is_empty() {
             outln!("{}", theme().warning.paint(&format!("No {which} to delete.")))?;
-            return Self::print_kept_undated(undated);
+            return Self::print_kept_undated(scope, undated);
         }
 
         #[cfg(feature = "interactive")]
         if !yes {
             Self::check_can_ask("rm")?;
-            let question = if range.is_bounded() {
+            let question = if selection.is_bounded() {
                 format!("Delete {which} (")
             } else {
-                "Delete all done tasks (".to_string()
+                format!("Delete all {noun} (")
             };
             let confirmed = Self::read_confirmation(&format!(
                 "{}{}{} {}",
                 theme().accent.paint(&question),
-                theme().emphasis.paint(&done.len().to_string()).bold(),
+                theme().emphasis.paint(&picked.len().to_string()).bold(),
                 theme().accent.paint(")?"),
                 Self::yn_hint()
             ))?;
@@ -587,35 +597,49 @@ impl HandlerCLI {
         let _ = yes;
 
         // Exactly the tasks that were counted: one that another process has
-        // reopened, rewritten or marked done again meanwhile (while the
-        // prompt was waiting) is not what the user agreed to delete.
-        let outcome = tm.delete_confirmed(&done, |shown, now| {
-            now.done && now.done_on == shown.done_on && now.text == shown.text
+        // reopened, rewritten, redated or marked done again meanwhile (while
+        // the prompt was waiting) is not what the user agreed to delete.
+        let outcome = tm.delete_confirmed(&picked, |shown, now| match scope {
+            Scope::Done => now.done && now.done_on == shown.done_on && now.text == shown.text,
+            Scope::All => now.done == shown.done && now.date == shown.date && now.text == shown.text,
         })?;
-        Self::forget_drafts(&done, &outcome);
+        Self::forget_drafts(&picked, &outcome);
         if !outcome.deleted.is_empty() {
-            Self::print_deleted(outcome.deleted.len(), " done task(s).")?;
+            let suffix = match scope {
+                Scope::Done => " done task(s).",
+                Scope::All => " task(s).",
+            };
+            Self::print_deleted(outcome.deleted.len(), suffix)?;
             Self::print_unlinked(&outcome.unlinked)?;
         }
-        Self::print_kept_undated(undated)?;
+        Self::print_kept_undated(scope, undated)?;
         Self::report_unconfirmed(&outcome)
     }
 
-    /// The done tasks the bounds left alone for want of a day on record: a
-    /// deletion that skips something says so, and names the way to delete
-    /// them.
-    fn print_kept_undated(count: usize) -> Result<()> {
+    /// The tasks the bounds left alone for want of the day they go by — a
+    /// done task with no day on record, with `all` a task without a due
+    /// date: a deletion that skips something says so, and names the way to
+    /// delete them.
+    fn print_kept_undated(scope: crate::storage::Scope, count: usize) -> Result<()> {
+        use crate::storage::Scope;
         if count == 0 {
             return Ok(());
         }
         let tasks = if count == 1 { "task has" } else { "tasks have" };
+        let why = match scope {
+            Scope::Done => format!(
+                " done {tasks} no day on record (done before rusk recorded it, or ticked off in \
+                 a file by hand)"
+            ),
+            Scope::All => format!(" {tasks} no due date, the day the bounds of `all` go by"),
+        };
         outln!(
             "{}{}{}",
             theme().notice.paint("Kept: "),
             theme().emphasis.paint(&count.to_string()).bold(),
             theme().notice.paint(&format!(
-                " done {tasks} no day on record (done before rusk recorded it, or ticked off in \
-                 a file by hand); `rusk rm done` without --older/--newer deletes them too."
+                "{why}; `rusk rm {}` without --older/--newer deletes them too.",
+                scope.word()
             ))
         )
     }

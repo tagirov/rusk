@@ -211,6 +211,8 @@ rusk rm done --older 7d            # completed a week ago or earlier
 rusk rm done --older 30-09-2026    # completed on that day or earlier
 rusk rm done --newer 1m --older 2w # a range: a month to two weeks ago
 rusk rm done --newer 1-9-26 --older 30-9-26 -y
+rusk rm all                        # every task, open or done
+rusk rm all --older 1y             # due a year ago or earlier, done or not
 ```
 
 The question names the tasks that depend on the one being deleted. The
@@ -231,6 +233,14 @@ keep it in their own fields, see [STORAGE.md](STORAGE.md)). A task done
 before rusk recorded that day, or ticked off in a file by hand, has no day
 on record: the bounds keep it and say how many they kept; `rusk rm done`
 without them deletes it with the rest.
+
+`rusk rm all` deletes every task, open or done: a clean slate. Its
+`--older` and `--newer` go by the due date, the one day an open task has
+(the day a done task was marked done plays no part here): `rusk rm all
+--older 1y` deletes what was due a year ago or earlier, whether it got done
+or not. A task without a due date has no day for the bounds to go by: it
+is kept and counted, as above, and `rusk rm all` without them deletes it
+with the rest.
 
 ### Several tasks at once
 
@@ -284,7 +294,7 @@ rusk edit 1,2,3     # several tasks in one session
 | `--compact` | `-c` | `list` (`--no-compact` has no short form) |
 | `--priority` | `-p` | `mark` |
 | `--yes` | `-y` | `rm` |
-| `--older`, `--newer` | — | `rm done` |
+| `--older`, `--newer` | — | `rm done`, `rm all` |
 | `--output` | `-o` | `gen` |
 | `--help` | `-h` | everywhere |
 | `--version` | `-V` | `rusk -V` |

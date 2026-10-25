@@ -1,5 +1,6 @@
 //! `rusk rm done`: the completed tasks — all of them, or with `--older` those
-//! marked done a while ago — and the day `rusk mark` records for that.
+//! marked done a while ago — and the day `rusk mark` records for that;
+//! `rusk rm all`: every task, with the bounds by the due date.
 
 use chrono::{Duration, Local, NaiveDate};
 
@@ -227,4 +228,104 @@ fn an_open_task_loses_a_stray_done_on() {
     let tasks = db_tasks(&sb);
     assert_eq!(tasks[0]["done"], false);
     assert!(tasks[0].get("done_on").is_none(), "{tasks:?}");
+}
+
+/// Open task 1 due ten days ago; open task 2, undated; task 3 due three
+/// days ago, done a month ago; task 4 done a month ago, no due date;
+/// task 5 due tomorrow, waits for task 1.
+fn dated_db() -> Sandbox {
+    Sandbox::with_db(&format!(
+        r#"[{{"id":1,"text":"open, long due","date":"{}"}},
+            {{"id":2,"text":"open, undated"}},
+            {{"id":3,"text":"done, lately due","date":"{}","done":true,"done_on":"{}"}},
+            {{"id":4,"text":"done, undated","done":true,"done_on":"{}"}},
+            {{"id":5,"text":"waits for 1","date":"{}","after":[1]}}]"#,
+        days_ago(10),
+        days_ago(3),
+        days_ago(30),
+        days_ago(30),
+        days_ago(-1)
+    ))
+}
+
+/// `rusk rm all` is the clean slate: every task, open or done, dated or
+/// not, and nothing is kept.
+#[test]
+fn rm_all_deletes_every_task() {
+    let sb = dated_db();
+    let out = sb.cmd().args(["rm", "all", "-y"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let said = stdout_of(&out);
+    assert!(said.contains("Deleted 5 task(s)."), "{said}");
+    assert!(!said.contains("Kept") && !said.contains("no longer depends"), "{said}");
+    assert!(db_tasks(&sb).is_empty());
+
+    let out = sb.cmd().args(["rm", "all", "--yes"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(stdout_of(&out).contains("No tasks to delete."), "{}", stdout_of(&out));
+}
+
+/// The bounds of `all` go by the due date, the one day an open task has:
+/// the day a done task was marked done plays no part, and a task without
+/// a due date is kept and counted.
+#[test]
+fn rm_all_bounds_go_by_the_due_date() {
+    let sb = dated_db();
+    let out = sb.cmd().args(["rm", "all", "--older", "7d", "-y"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let said = stdout_of(&out);
+    assert!(said.contains("Deleted 1 task(s)."), "{said}");
+    assert!(said.contains("Task 5 no longer depends on 1."), "{said}");
+    assert!(said.contains("Kept: 2 tasks have no due date"), "{said}");
+    assert!(said.contains("`rusk rm all` without --older"), "{said}");
+    assert!(!said.contains("done task"), "{said}");
+    let tasks = db_tasks(&sb);
+    assert_eq!(ids_of(&tasks), [2, 3, 4, 5]);
+    assert!(tasks[3].get("after").is_none(), "{tasks:?}");
+
+    // Done a month ago but due lately: `--newer` takes it, by the due date.
+    let out = sb.cmd().args(["rm", "all", "--newer", "1w", "-y"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let said = stdout_of(&out);
+    assert!(said.contains("Deleted 2 task(s).") && said.contains("Kept: 2 tasks"), "{said}");
+    assert_eq!(ids_of(&db_tasks(&sb)), [2, 4]);
+
+    // Nothing dated is left: the bounds find nothing and say what they kept.
+    let before = sb.read_db();
+    let out = sb.cmd().args(["rm", "all", "--older", &dmy(1), "--yes"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let said = stdout_of(&out);
+    assert!(said.contains(&format!("No tasks older than {} to delete.", dmy(1))), "{said}");
+    assert!(said.contains("Kept: 2 tasks have no due date"), "{said}");
+    assert_eq!(sb.read_db(), before, "nothing to delete, nothing to write");
+
+    // A range of one day, inclusive, as dates.
+    let sb = dated_db();
+    let out = sb.cmd().args(["rm", "all", "--newer", &dmy(3), "--older", &dmy(3), "-y"]).output().unwrap();
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(stdout_of(&out).contains("Deleted 1 task(s)."), "{}", stdout_of(&out));
+    assert_eq!(ids_of(&db_tasks(&sb)), [1, 2, 4, 5]);
+}
+
+/// `all` is a word like `done`: nothing after it, the same bounds and the
+/// same refusals, before the database is touched.
+#[test]
+fn rm_all_takes_nothing_more_and_shares_the_rules_of_the_bounds() {
+    let sb = dated_db();
+    let out = sb.cmd().args(["rm", "all", "2", "-y"]).output().unwrap();
+    assert!(!out.status.success(), "ids after all must be refused");
+    assert!(stderr_of(&out).contains("`rusk rm all` takes nothing more"), "{}", stderr_of(&out));
+    let out = sb.cmd().args(["rm", "all", "--newer", "7d", "--older", "1m", "-y"]).output().unwrap();
+    assert!(!out.status.success(), "an empty range must be refused");
+    assert!(stderr_of(&out).contains("empty range"), "{}", stderr_of(&out));
+    let out = sb.cmd().args(["rm", "all", "--older", "7x", "-y"]).output().unwrap();
+    assert!(!out.status.success());
+    assert!(stderr_of(&out).contains("--older") && stderr_of(&out).contains("unknown unit"), "{}", stderr_of(&out));
+    let out = sb.cmd().args(["rm", "1", "--older", "7d", "-y"]).output().unwrap();
+    assert!(!out.status.success(), "--older goes with a word");
+    assert!(stderr_of(&out).contains("go with the word `done` or `all`"), "{}", stderr_of(&out));
+    let out = sb.cmd().args(["rm", "-y"]).output().unwrap();
+    assert!(!out.status.success(), "something to remove is required");
+    assert!(stderr_of(&out).contains("rusk rm all"), "{}", stderr_of(&out));
+    assert_eq!(db_tasks(&sb).len(), 5, "nothing may be deleted");
 }

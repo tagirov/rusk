@@ -250,13 +250,18 @@ fn run() -> Result<()> {
             HandlerCLI::handle_add_task(&mut tm, text, date, after_ids)?;
         }
         Some(Command::Rm { what, older, newer, yes }) => {
-            // The word `done`, or an id list: both read before the database,
-            // like every other argument.
-            if what.first().map(String::as_str) == Some("done") {
+            // The word `done` or `all`, or an id list: all read before the
+            // database, like every other argument.
+            let scope = match what.first().map(String::as_str) {
+                Some("done") => Some(rusk::storage::Scope::Done),
+                Some("all") => Some(rusk::storage::Scope::All),
+                _ => None,
+            };
+            if let Some(scope) = scope {
                 if let Some(more) = what.get(1) {
                     exit_with_error(format!(
-                        "`rusk rm done` deletes the completed tasks and takes nothing more, got \
-                         '{more}'; tasks by id are `rusk rm 1,2,3`"
+                        "`rusk rm {}` takes nothing more, got '{more}'; tasks by id are `rusk rm 1,2,3`",
+                        scope.word()
                     ));
                 }
                 let today = chrono::Local::now().date_naive();
@@ -267,7 +272,7 @@ fn run() -> Result<()> {
                     })
                 };
                 let bounds = rusk::cli::Bounds {
-                    scope: rusk::storage::Scope::Done,
+                    scope,
                     older: bound("--older", older),
                     newer: bound("--newer", newer),
                 };
@@ -287,12 +292,13 @@ fn run() -> Result<()> {
             } else {
                 if older.is_some() || newer.is_some() {
                     exit_with_error(
-                        "`--older` and `--newer` go with the word `done`: `rusk rm done --older 7d`",
+                        "`--older` and `--newer` go with the word `done` or `all`: `rusk rm done \
+                         --older 7d`, `rusk rm all --older 1y`",
                     );
                 }
                 let ids = ids_or_exit(
                     parse_id_args(&what),
-                    "`rusk rm 1,2,3`, or `rusk rm done` for the completed tasks",
+                    "`rusk rm 1,2,3`, `rusk rm done` for the completed tasks, or `rusk rm all` for every task",
                 );
                 let mut tm = TaskManager::new()?;
                 HandlerCLI::handle_delete_tasks(&mut tm, ids, yes)?;

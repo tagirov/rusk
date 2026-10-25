@@ -6,7 +6,7 @@ mod handlers;
 
 pub struct HandlerCLI;
 
-/// A bound of `rusk rm done --older` / `--newer`: as it was given (an age
+/// A bound of `rusk rm done --older` / `--newer` (and `rm all`'s): as it was given (an age
 /// or a date), for the messages, and the day it names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bound {
@@ -14,17 +14,20 @@ pub struct Bound {
     pub day: chrono::NaiveDate,
 }
 
-/// What `rusk rm done` was told to select: the tasks marked done on a day
-/// from `newer` to `older`, both inclusive, either bound optional.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct DoneBounds {
+/// What `rusk rm done` / `rusk rm all` was told to select: the tasks of
+/// the scope with a day from `newer` to `older`, both inclusive, either
+/// bound optional.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Bounds {
+    pub scope: crate::storage::Scope,
     pub older: Option<Bound>,
     pub newer: Option<Bound>,
 }
 
-impl DoneBounds {
-    pub fn range(&self) -> crate::storage::DoneRange {
-        crate::storage::DoneRange {
+impl Bounds {
+    pub fn selection(&self) -> crate::storage::Selection {
+        crate::storage::Selection {
+            scope: self.scope,
             older: self.older.as_ref().map(|b| b.day),
             newer: self.newer.as_ref().map(|b| b.day),
         }

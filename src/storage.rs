@@ -218,49 +218,94 @@ pub fn remove_tasks(tasks: &mut Vec<Task>, ids: &[TaskId]) -> Vec<TaskId> {
     not_found
 }
 
-/// The done tasks `rusk rm done` selects: those marked done on a day from
-/// `newer` to `older`, both inclusive, either bound optional (`--newer`,
-/// `--older`). With a bound set, a done task without the day on record
-/// (done before rusk recorded it, or ticked off in a file by hand) is of
-/// unknown age and not selected: the caller says how many it kept.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct DoneRange {
-    /// Marked done on this day or before.
+/// Which tasks `rusk rm` goes through when given a word instead of ids,
+/// and the day of a task its bounds go by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// `rm done`: the done tasks, by the day they were marked done.
+    Done,
+    /// `rm all`: every task, open or done, by its due date — the one day an
+    /// open task has.
+    All,
+}
+
+impl Scope {
+    /// The word on the command line.
+    pub fn word(self) -> &'static str {
+        match self {
+            Scope::Done => "done",
+            Scope::All => "all",
+        }
+    }
+
+    pub fn covers(self, task: &Task) -> bool {
+        match self {
+            Scope::Done => task.done,
+            Scope::All => true,
+        }
+    }
+
+    /// The day the bounds compare: `done_on` for the done tasks, the due
+    /// date for all; `None` when the task has none.
+    pub fn day_of(self, task: &Task) -> Option<NaiveDate> {
+        match self {
+            Scope::Done => task.done_on,
+            Scope::All => task.date,
+        }
+    }
+}
+
+/// The tasks `rusk rm done` / `rusk rm all` select: those of the scope
+/// whose day lies from `newer` to `older`, both inclusive, either bound
+/// optional (`--newer`, `--older`). With a bound set, a task of the scope
+/// without that day — a done task without the day on record (done before
+/// rusk recorded it, or ticked off in a file by hand), a task without a
+/// due date — is of unknown age and not selected: the caller says how many
+/// it kept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Selection {
+    pub scope: Scope,
+    /// With a day on this one or before.
     pub older: Option<NaiveDate>,
-    /// Marked done on this day or after.
+    /// With a day on this one or after.
     pub newer: Option<NaiveDate>,
 }
 
-impl DoneRange {
+impl Selection {
+    /// Every task of the scope, dated or not.
+    pub fn every(scope: Scope) -> Self {
+        Self { scope, older: None, newer: None }
+    }
+
     pub fn is_bounded(&self) -> bool {
         self.older.is_some() || self.newer.is_some()
     }
 
     pub fn selects(&self, task: &Task) -> bool {
-        if !task.done {
+        if !self.scope.covers(task) {
             return false;
         }
         if !self.is_bounded() {
             return true;
         }
-        task.done_on.is_some_and(|on| {
+        self.scope.day_of(task).is_some_and(|on| {
             self.older.is_none_or(|day| on <= day) && self.newer.is_none_or(|day| on >= day)
         })
     }
+
+    /// A task of the scope the bounds do not reach: no day on record.
+    pub fn leaves_undated(&self, task: &Task) -> bool {
+        self.is_bounded() && self.scope.covers(task) && self.scope.day_of(task).is_none()
+    }
 }
 
-/// A done task a bounded [`DoneRange`] does not reach: no day on record.
-pub fn is_done_undated(task: &Task) -> bool {
-    task.done && task.done_on.is_none()
-}
-
-/// Deletes every done task the range selects, along with every dependency
+/// Deletes every task the selection selects, along with every dependency
 /// on them. Returns how many there were.
-pub fn remove_done(tasks: &mut Vec<Task>, range: DoneRange) -> usize {
-    let done_ids: Vec<TaskId> = tasks.iter().filter(|t| range.selects(t)).map(|t| t.id).collect();
-    tasks.retain(|t| !done_ids.contains(&t.id));
-    strip_deps(tasks, &done_ids);
-    done_ids.len()
+pub fn remove_selected(tasks: &mut Vec<Task>, selection: Selection) -> usize {
+    let ids: Vec<TaskId> = tasks.iter().filter(|t| selection.selects(t)).map(|t| t.id).collect();
+    tasks.retain(|t| !ids.contains(&t.id));
+    strip_deps(tasks, &ids);
+    ids.len()
 }
 
 fn eprint_db_location(location: &str) {
@@ -509,7 +554,7 @@ impl TaskManager {
     }
 
     pub fn delete_all_done(&mut self) -> Result<usize> {
-        self.update(|tasks| Ok(remove_done(tasks, DoneRange::default())))
+        self.update(|tasks| Ok(remove_selected(tasks, Selection::every(Scope::Done))))
     }
 
     /// Toggles `done` for the given task ids. A task marked done gets
@@ -747,7 +792,7 @@ mod tests {
     /// task is marked undone; `rusk rm done --older` goes by it.
     #[test]
     fn marking_done_records_the_day_and_rm_reads_it() {
-        use super::{DoneRange, is_done_undated, remove_done};
+        use super::{Scope, Selection, remove_selected};
         let mut tm = TaskManager::new_empty().unwrap();
         for text in ["a", "b", "c"] {
             tm.add_task(vec![text.to_string()], None).unwrap();
@@ -765,24 +810,74 @@ mod tests {
         })
         .unwrap();
         let week_ago = today - chrono::Duration::days(7);
-        let older = DoneRange { older: Some(week_ago), newer: None };
-        let all = DoneRange::default();
+        let older = Selection { scope: Scope::Done, older: Some(week_ago), newer: None };
+        let all = Selection::every(Scope::Done);
         assert!(older.selects(&tm.tasks()[0]));
         assert!(!older.selects(&tm.tasks()[1]) && all.selects(&tm.tasks()[1]));
-        assert!(is_done_undated(&tm.tasks()[1]) && !is_done_undated(&tm.tasks()[0]));
+        assert!(older.leaves_undated(&tm.tasks()[1]) && !older.leaves_undated(&tm.tasks()[0]));
+        assert!(!all.leaves_undated(&tm.tasks()[1]), "without bounds nothing is left for want of a day");
+        assert!(!older.leaves_undated(&tm.tasks()[2]), "an open task is outside `done`");
         assert!(!all.selects(&tm.tasks()[2]));
         // Both bounds, inclusive: a range of one day holds the day itself.
         let ten_days_ago = today - chrono::Duration::days(10);
-        let that_day = DoneRange { older: Some(ten_days_ago), newer: Some(ten_days_ago) };
+        let that_day = Selection { scope: Scope::Done, older: Some(ten_days_ago), newer: Some(ten_days_ago) };
         assert!(that_day.selects(&tm.tasks()[0]));
-        let after = DoneRange { older: None, newer: Some(week_ago) };
+        let after = Selection { scope: Scope::Done, older: None, newer: Some(week_ago) };
         assert!(!after.selects(&tm.tasks()[0]) && !after.selects(&tm.tasks()[1]));
         let mut tasks = tm.tasks().to_vec();
-        assert_eq!(remove_done(&mut tasks, older), 1);
+        assert_eq!(remove_selected(&mut tasks, older), 1);
         assert_eq!(tasks.iter().map(|t| t.id).collect::<Vec<_>>(), [2, 3]);
-        assert_eq!(remove_done(&mut tasks, all), 1);
+        assert_eq!(remove_selected(&mut tasks, all), 1);
         assert_eq!(tasks.iter().map(|t| t.id).collect::<Vec<_>>(), [3]);
     }
+
+    /// `rusk rm all` goes through every task, open or done, and its bounds
+    /// by the due date: a task without one is kept and counted; the day a
+    /// done task was marked done plays no part.
+    #[test]
+    fn rm_all_selects_every_task_and_bounds_by_the_due_date() {
+        use super::{Scope, Selection, remove_selected};
+        let today = chrono::Local::now().date_naive();
+        let days_ago = |n: i64| today - chrono::Duration::days(n);
+        let task = |id: TaskId, date: Option<NaiveDate>, done: bool, done_on: Option<NaiveDate>| Task {
+            id,
+            text: format!("t{id}"),
+            date,
+            done,
+            done_on,
+            priority: false,
+            after: Vec::new(),
+        };
+        // Open, due ten days ago; open, undated; done long ago, due three
+        // days ago; done long ago, undated; open, due tomorrow, after 1.
+        let tasks = vec![
+            task(1, Some(days_ago(10)), false, None),
+            task(2, None, false, None),
+            task(3, Some(days_ago(3)), true, Some(days_ago(30))),
+            task(4, None, true, Some(days_ago(30))),
+            Task { after: vec![1], ..task(5, Some(days_ago(-1)), false, None) },
+        ];
+        let every = Selection::every(Scope::All);
+        assert!(tasks.iter().all(|t| every.selects(t)));
+        assert!(tasks.iter().all(|t| !every.leaves_undated(t)));
+        let older = Selection { scope: Scope::All, older: Some(days_ago(7)), newer: None };
+        assert!(older.selects(&tasks[0]) && !older.selects(&tasks[2]) && !older.selects(&tasks[4]));
+        assert!(!older.selects(&tasks[1]) && !older.selects(&tasks[3]), "no due date, no age");
+        assert!(older.leaves_undated(&tasks[1]) && older.leaves_undated(&tasks[3]));
+        assert!(!older.leaves_undated(&tasks[0]));
+        let newer = Selection { scope: Scope::All, older: None, newer: Some(days_ago(7)) };
+        assert!(!newer.selects(&tasks[0]) && newer.selects(&tasks[2]) && newer.selects(&tasks[4]));
+        let that_day = Selection { scope: Scope::All, older: Some(days_ago(3)), newer: Some(days_ago(3)) };
+        assert!(that_day.selects(&tasks[2]) && !that_day.selects(&tasks[0]));
+
+        let mut left = tasks.clone();
+        assert_eq!(remove_selected(&mut left, older), 1);
+        assert_eq!(left.iter().map(|t| t.id).collect::<Vec<_>>(), [2, 3, 4, 5]);
+        assert!(left[3].after.is_empty(), "the dependency on the deleted task goes with it");
+        assert_eq!(remove_selected(&mut left, every), 4);
+        assert!(left.is_empty());
+    }
+
     #[test]
     fn add_task_with_parsed_date_roundtrip() {
         let mut tm = TaskManager::new_empty().unwrap();

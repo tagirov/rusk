@@ -692,7 +692,7 @@ fn route(request: &mut Request, opts: &ServeOptions) -> Reply {
                     .map_err(|e| Reply::json_error(400, &format!("{name}: {e:#}"))),
             };
             let range = match (bound("older"), bound("newer")) {
-                (Ok(older), Ok(newer)) => crate::storage::DoneRange { older, newer },
+                (Ok(older), Ok(newer)) => crate::storage::Selection { scope: crate::storage::Scope::Done, older, newer },
                 (Err(reply), _) | (_, Err(reply)) => return reply,
             };
             if let (Some(o), Some(n)) = (range.older, range.newer)

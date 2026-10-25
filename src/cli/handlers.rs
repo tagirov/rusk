@@ -263,7 +263,7 @@ impl HandlerCLI {
     /// `rusk rm done`: every done task, or those marked done within the
     /// bounds (`--older`, `--newer`). A done task without the day on record
     /// is of unknown age: bounds keep it, and the report says how many.
-    pub fn handle_rm(tm: &mut TaskManager, bounds: super::DoneBounds, yes: bool) -> Result<()> {
+    pub fn handle_rm(tm: &mut TaskManager, bounds: super::Bounds, yes: bool) -> Result<()> {
         Self::delete_done(tm, bounds, yes)
     }
 
@@ -547,16 +547,11 @@ impl HandlerCLI {
         let _ = (tasks, outcome);
     }
 
-    fn delete_done(tm: &mut TaskManager, bounds: super::DoneBounds, yes: bool) -> Result<()> {
-        use crate::storage::is_done_undated;
-        let range = bounds.range();
+    fn delete_done(tm: &mut TaskManager, bounds: super::Bounds, yes: bool) -> Result<()> {
+        let range = bounds.selection();
         let done: Vec<Task> = tm.tasks().iter().filter(|t| range.selects(t)).cloned().collect();
         // Of unknown age, so within no bounds: said, not deleted.
-        let undated = if range.is_bounded() {
-            tm.tasks().iter().filter(|t| is_done_undated(t)).count()
-        } else {
-            0
-        };
+        let undated = tm.tasks().iter().filter(|t| range.leaves_undated(t)).count();
         let which = if range.is_bounded() {
             format!("done tasks {}", bounds.describe())
         } else {

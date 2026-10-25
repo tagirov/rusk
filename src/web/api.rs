@@ -17,7 +17,7 @@
 use crate::model::normalize;
 use crate::revision::{if_match_allows, list_revision, task_revision};
 use crate::storage::{
-    DoneRange, clean_text, deps_change, insert_by_id, next_free_id, position_of, remove_done, remove_tasks,
+    Selection, clean_text, deps_change, insert_by_id, next_free_id, position_of, remove_selected, remove_tasks,
     text_changes, validate_after,
 };
 use crate::{Task, TaskId, TaskManager};
@@ -292,15 +292,11 @@ pub fn delete_task(tm: &mut TaskManager, id: TaskId, if_match: Option<&str>) -> 
 /// the range (the days, worked out by the caller from the ages or dates).
 /// `kept` counts the done tasks a bounded range left alone for want of a
 /// day on record.
-pub fn delete_done(tm: &mut TaskManager, range: DoneRange, if_match: Option<&str>) -> ApiResponse {
+pub fn delete_done(tm: &mut TaskManager, range: Selection, if_match: Option<&str>) -> ApiResponse {
     let deleted = tm.update(|tasks| {
         check_if_match(tasks, None, if_match)?;
-        let kept = if range.is_bounded() {
-            tasks.iter().filter(|t| crate::storage::is_done_undated(t)).count()
-        } else {
-            0
-        };
-        Ok((remove_done(tasks, range), kept))
+        let kept = tasks.iter().filter(|t| range.leaves_undated(t)).count();
+        Ok((remove_selected(tasks, range), kept))
     });
     let tasks = tm.tasks();
     finish(deleted, |(deleted, kept)| {
@@ -348,6 +344,7 @@ pub fn replace_tasks(tm: &mut TaskManager, body: &str, if_match: Option<&str>) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::Scope;
 
     fn tm() -> (tempfile::TempDir, TaskManager) {
         let dir = tempfile::tempdir().unwrap();
@@ -434,7 +431,7 @@ mod tests {
         create_task(&mut tm, r#"{"text":"a"}"#, None);
         create_task(&mut tm, r#"{"text":"b"}"#, None);
         update_task(&mut tm, 1, r#"{"done":true}"#, None);
-        let res = delete_done(&mut tm, DoneRange::default(), None);
+        let res = delete_done(&mut tm, Selection::every(Scope::Done), None);
         assert_eq!(res.status, 200);
         assert!(res.body.contains("\"deleted\":1"));
         assert_eq!(tm.tasks().len(), 1);
@@ -459,16 +456,16 @@ mod tests {
         })
         .unwrap();
         let week_ago = today - chrono::Duration::days(7);
-        let res = delete_done(&mut tm, DoneRange { older: Some(week_ago), newer: None }, None);
+        let res = delete_done(&mut tm, Selection { scope: Scope::Done, older: Some(week_ago), newer: None }, None);
         assert_eq!(res.status, 200);
         assert!(res.body.contains("\"deleted\":1") && res.body.contains("\"kept\":1"), "{}", res.body);
         assert_eq!(tm.tasks().iter().map(|t| t.id).collect::<Vec<_>>(), [2, 3, 4]);
         // `newer` alone: the one done lately; the undated is kept again.
-        let res = delete_done(&mut tm, DoneRange { older: None, newer: Some(week_ago) }, None);
+        let res = delete_done(&mut tm, Selection { scope: Scope::Done, older: None, newer: Some(week_ago) }, None);
         assert!(res.body.contains("\"deleted\":1") && res.body.contains("\"kept\":1"), "{}", res.body);
         assert_eq!(tm.tasks().iter().map(|t| t.id).collect::<Vec<_>>(), [3, 4]);
         // Without bounds the undated go too, and nothing is kept.
-        let res = delete_done(&mut tm, DoneRange::default(), None);
+        let res = delete_done(&mut tm, Selection::every(Scope::Done), None);
         assert!(res.body.contains("\"deleted\":1") && res.body.contains("\"kept\":0"), "{}", res.body);
         assert_eq!(tm.tasks().len(), 1);
     }
@@ -519,7 +516,7 @@ mod tests {
         assert_eq!(update_task(&mut tm, 2, r#"{"text":"beta!"}"#, stale).status, 412);
         assert_eq!(update_task(&mut tm, 2, r#"{"done":true}"#, stale).status, 412);
         assert_eq!(update_task(&mut tm, 7, r#"{"done":true}"#, stale).status, 412);
-        assert_eq!(delete_done(&mut tm, DoneRange::default(), stale).status, 412);
+        assert_eq!(delete_done(&mut tm, Selection::every(Scope::Done), stale).status, 412);
         assert_eq!(replace_tasks(&mut tm, "[]", stale).status, 412);
         assert_eq!(create_task(&mut tm, r#"{"text":"x"}"#, stale).status, 412);
         assert_eq!(list_tasks(&tm).body, current.body, "a refused request changed something");
@@ -529,7 +526,7 @@ mod tests {
         let fresh = quoted(&current.etag);
         assert_eq!(update_task(&mut tm, 2, r#"{"done":true}"#, Some(&fresh)).status, 200);
         let fresh = quoted(&list_tasks(&tm).etag);
-        let res = delete_done(&mut tm, DoneRange::default(), Some(&fresh));
+        let res = delete_done(&mut tm, Selection::every(Scope::Done), Some(&fresh));
         assert_eq!(res.status, 200);
         assert_eq!(res.etag, list_tasks(&tm).etag);
         let res = replace_tasks(&mut tm, "[]", Some(&quoted(&res.etag)));
@@ -584,7 +581,7 @@ mod tests {
         // A task revision says nothing about the list.
         let brand_new = quoted(&get_task(&tm, 2).etag);
         assert_eq!(replace_tasks(&mut tm, "[]", Some(&brand_new)).status, 412);
-        assert_eq!(delete_done(&mut tm, DoneRange::default(), Some(&brand_new)).status, 412);
+        assert_eq!(delete_done(&mut tm, Selection::every(Scope::Done), Some(&brand_new)).status, 412);
     }
 
     /// The server reloads per request, but a handler must not depend on it:

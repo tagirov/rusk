@@ -191,7 +191,7 @@ on a terminal only. With stdin or stdout not a terminal it refuses before
 asking anything and names `--yes`, which deletes without asking in every
 build. Either way the deletion goes through `TaskManager::delete_confirmed`,
 so a task that changed in the meantime is reported, not deleted. `rusk rm done`
-selects the done tasks (`storage::DoneRange`): all of them, or with
+selects the done tasks (`storage::Selection`): all of them, or with
 `--older` / `--newer` those whose `done_on` — the day `rusk mark` or the web
 page marked them done, `None` when nothing recorded it — lies within the
 bounds, each an age counted back or a date (`parser::date::day_bound`); the

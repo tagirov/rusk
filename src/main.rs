@@ -266,7 +266,8 @@ fn run() -> Result<()> {
                         Err(err) => exit_with_error(format!("{flag}: {err:#}")),
                     })
                 };
-                let bounds = rusk::cli::DoneBounds {
+                let bounds = rusk::cli::Bounds {
+                    scope: rusk::storage::Scope::Done,
                     older: bound("--older", older),
                     newer: bound("--newer", newer),
                 };

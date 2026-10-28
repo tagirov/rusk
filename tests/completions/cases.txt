@@ -19,11 +19,28 @@ rusk a|a add
 rusk s|s search serve sync
 rusk r|r restore rm
 rusk he|help
+# Task ids in place of the command show those tasks; they are never
+# offered, and after them comes --json, which prints the tasks as JSON
+# lines. With it on the line, help only.
+rusk 1|
+rusk 1 |-h --help --json
+rusk 1 2 |-h --help --json
+rusk 1,2 -|-h --help --json
+rusk 1 --j|--json
+rusk 1 --json |-h --help
+rusk 1 --json 2 -|-h --help
+rusk --json |-h --help
 rusk help |add completions edit gen list mark restore rm search serve sync
 rusk help s|search serve sync
-rusk add |-h --help
-rusk add -|-h --help
-rusk a |-h --help
+# `add --json` reads the tasks from standard input and goes alone: offered
+# while nothing follows `add`; with it on the line, help only.
+rusk add |-h --help --json
+rusk add -|-h --help --json
+rusk a |-h --help --json
+rusk add --j|--json
+rusk add --json |-h --help
+rusk add --json -|-h --help
+rusk add -d tomorrow |-h --help
 rusk add x |-h --help -d --date -a --after
 rusk add x -|-h --help -d --date -a --after
 rusk add x --date |-h --help

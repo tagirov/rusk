@@ -258,6 +258,15 @@ _rusk_after_double_dash() {
     return 1
 }
 
+# Whether a `--json` comes before the word under the cursor.
+_rusk_json_on_line() {
+    local j
+    for ((j=rusk_idx+1; j<CURRENT; j++)); do
+        [[ "${words[j]}" == "--json" ]] && return 0
+    done
+    return 1
+}
+
 _rusk_main() {
     # Find rusk command index
     local rusk_idx=-1
@@ -304,10 +313,15 @@ _rusk_main() {
                     compadd -- -h --help
                 fi
             elif [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
-                if _rusk_add_has_task_text; then
+                if _rusk_json_on_line; then
+                    compadd -- -h --help
+                elif _rusk_add_has_task_text; then
                     local -a reply
                     _rusk_unused_value_flags
                     compadd -- "${reply[@]}" -h --help
+                elif (( CURRENT == rusk_idx + 2 )); then
+                    # --json takes the tasks from standard input: nothing else goes with it
+                    compadd -- --json -h --help
                 else
                     compadd -- -h --help
                 fi
@@ -487,6 +501,18 @@ _rusk_main() {
                 fi
             else
                 compadd -- install show -h --help
+            fi
+            ;;
+
+        --json|[0-9]*)
+            # Task ids in place of the command (never offered), --json with
+            # them; once it is on the line, help only.
+            if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+                if _rusk_json_on_line; then
+                    compadd -- -h --help
+                else
+                    compadd -- --json -h --help
+                fi
             fi
             ;;
 

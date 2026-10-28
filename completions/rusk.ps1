@@ -152,6 +152,7 @@ function _rusk_emit_flag_completions {
             '--host' { 'Bind address' }
             '--port' { 'Port' }
             '--force' { 'Overwrite changes on the other side' }
+            '--json' { if ($command -in 'add', 'a') { 'Add the tasks read from standard input as JSON lines' } else { 'Print the tasks as JSON lines' } }
             '--help' { 'Show help' }
             '-h' { 'Show help' }
             default { $t }
@@ -394,11 +395,20 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
             }
             if ($cur -like '-*' -or [string]::IsNullOrEmpty($cur)) {
                 $hasText = _rusk_add_has_prior_task_text $tokens $wordToComplete
-                $flags = if ($hasText) {
+                $lineHasJson = $false
+                for ($i = 2; $i -lt $last; $i++) {
+                    if ((_rusk_token_text $tokens[$i]) -eq '--json') { $lineHasJson = $true }
+                }
+                $flags = if ($lineHasJson) {
+                    @('--help', '-h')
+                } elseif ($hasText) {
                     $f = @()
                     if (-not $lineHasDateFlag) { $f += @('--date', '-d') }
                     if (-not $lineHasAfterFlag) { $f += @('--after', '-a') }
                     $f + @('--help', '-h')
+                } elseif ($last -eq 2) {
+                    # --json takes the tasks from standard input: nothing else goes with it
+                    @('--json', '--help', '-h')
                 } else {
                     @('--help', '-h')
                 }
@@ -577,6 +587,20 @@ Register-ArgumentCompleter -Native -CommandName rusk -ScriptBlock {
                 return @($subcmdResults) + @($flagResults)
             }
             return $subcmdResults
+        }
+
+        { $_ -eq '--json' -or $_ -match '^[0-9]' } {
+            # Task ids in place of the command (never offered), --json with
+            # them; once it is on the line, help only.
+            if ([string]::IsNullOrEmpty($cur) -or $cur -like '-*') {
+                $hasJson = $false
+                for ($i = 1; $i -lt $last; $i++) {
+                    if ((_rusk_token_text $tokens[$i]) -eq '--json') { $hasJson = $true }
+                }
+                $flags = if ($hasJson) { @('--help', '-h') } else { @('--json', '--help', '-h') }
+                return _rusk_emit_flag_completions $flags $wordToComplete $tokens $command $cur
+            }
+            return @()
         }
 
         { $_ -in 'help' } {

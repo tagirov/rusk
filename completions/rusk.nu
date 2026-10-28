@@ -449,9 +449,15 @@ def complete-add [spans: list<string>, cur: string, prev: string] {
     let args_done = (add-completed-args-after $spans)
     let has_date_on_line = ($args_done | any {|t| is-date-flag-token $t}) or $cur == "-d" or $cur == "--date"
     let has_after_on_line = ($args_done | any {|t| is-after-flag-token $t}) or $cur == "-a" or $cur == "--after"
-    let all_flags = if $has_text {
+    let all_flags = if ("--json" in $args_done) {
+      (get-common-flags)
+    } else if $has_text {
       (if $has_date_on_line { [] } else { (get-date-flags) })
       | append (if $has_after_on_line { [] } else { (get-after-flags) })
+      | append (get-common-flags)
+    } else if ($args_done | is-empty) {
+      # --json takes the tasks from standard input: nothing else goes with it
+      [{value: "--json", description: "Add the tasks read from standard input as JSON lines"}]
       | append (get-common-flags)
     } else {
       (get-common-flags)
@@ -459,6 +465,20 @@ def complete-add [spans: list<string>, cur: string, prev: string] {
     return (complete-flags $all_flags $cur)
   }
 
+  []
+}
+
+# Complete task ids in place of the command (never offered): --json goes
+# with them, and with it on the line help only
+def complete-show [before: list<string>, cur: string] {
+  if ($cur == "") or ($cur | str starts-with "-") {
+    let flags = if ("--json" in $before) {
+      (get-common-flags)
+    } else {
+      [{value: "--json", description: "Print the tasks as JSON lines"}] | append (get-common-flags)
+    }
+    return (complete-flags $flags $cur)
+  }
   []
 }
 
@@ -858,7 +878,12 @@ def complete-root [ctx: record] {
     let all_flags = ((get-common-flags) | append (get-version-flags))
     return (complete-flags $all_flags $ctx.cur)
   }
-  
+
+  # Task ids in place of the command are never offered
+  if ($ctx.word_count == 1) and ($ctx.cur =~ '^[0-9]') {
+    return []
+  }
+
   # Complete commands when only "rusk" is typed (or partial command without trailing space)
   # When cur is empty or equals "rusk", return all options
   # But NOT if there's already a command and trailing space (word_count == 1 with trailing space means we're after the command)
@@ -963,7 +988,11 @@ export def rusk-completions-main [spans: list<string>] {
     }
     
     _ => {
-      []
+      if ($ctx.command == "--json") or ($ctx.command =~ '^[0-9]') {
+        complete-show $before $cur_n
+      } else {
+        []
+      }
     }
   }
 }

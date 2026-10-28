@@ -18,11 +18,11 @@ $test_add1 = Test-CompletionScenario `
     -Description "rusk add <tab> (flag completion)" `
     -Tokens @("rusk", "add", "") `
     -WordToComplete "" `
-    -ExpectedBehavior "Should suggest -h/--help only before task text" `
+    -ExpectedBehavior "Should suggest --json and -h/--help before task text" `
     -Validation {
         param($Tokens, $WordToComplete, $Prev, $Cur)
         if ($Prev -eq "add" -or $Prev -eq "a") {
-            Assert-True $true "Should suggest help flags for add before task text"
+            Assert-True $true "Should suggest --json and help flags for add before task text"
             return $true
         }
         return $false
@@ -69,7 +69,7 @@ $test_add3 = Test-CompletionScenario `
     -Description "rusk add -<tab> (flag completion)" `
     -Tokens @("rusk", "add", "-") `
     -WordToComplete "-" `
-    -ExpectedBehavior "Should suggest -h/--help only before task text" `
+    -ExpectedBehavior "Should suggest --json and -h/--help before task text" `
     -Validation {
         param($Tokens, $WordToComplete, $Prev, $Cur)
         if ($Cur -like '-*') {

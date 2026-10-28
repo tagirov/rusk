@@ -107,6 +107,10 @@ same in all five shells unless the line names the shells it is for. In short:
   on the line, given alone or with their value (`--date=X`, `-dX`), and
   after task text (`add`) or an id (`edit`). After `-d`/`--date` + space,
   help only.
+- `rusk add <tab>` also offers `--json` (the tasks from standard input),
+  while nothing follows `add`; with `--json` on the line, help only.
+- Task ids in place of the command (`rusk 1 <tab>`, `rusk 1,2 -<tab>`) get
+  `--json` and help; with `--json` on the line, help only.
 - After `--` everything is text: nothing is offered.
 - `rusk completions install <tab>`, `rusk completions show <tab>`: the
   shells not chosen yet.

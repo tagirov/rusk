@@ -37,7 +37,8 @@ rusk completions show zsh > ~/.zsh/completions/_rusk
 - **Commands**: `add`, `edit`, `mark`, `rm`, `completions`, etc. and
   their aliases.
 - **Flags**: `--date` / `--after` (`add`, and `edit` after an id), `--older` / `--newer`
-  (`rm`), etc.
+  (`rm`), `--json` (`add` with nothing after it, and after the ids of
+  `rusk <ids>`), etc.
 - **Task text**: `rusk edit <id><tab>` appends the text of that task, quoted
   so that running the line stores exactly that text.
   - The text is wrapped in single quotes when it contains shell-special

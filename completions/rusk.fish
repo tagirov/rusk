@@ -89,6 +89,17 @@ function __rusk_after_double_dash
     contains -- -- (__rusk_get_cmdline)
 end
 
+# Task ids in place of the command, or --json in front of them
+function __rusk_is_show
+    set -l word (__rusk_command_word); or return 1
+    test "$word" = --json; or string match -qr '^[0-9]' -- $word
+end
+
+# No command on the line yet: not after `rusk --json` either, where ids follow
+function __rusk_use_subcommand
+    __fish_use_subcommand; and not contains -- --json (__rusk_get_cmdline)
+end
+
 # Check if we're in completions/c command
 function __rusk_is_completions_command
     set -l cmdline (__rusk_get_cmdline)
@@ -220,8 +231,14 @@ function __rusk_complete_add_flags
         end
     end
     set -l all_flags -h --help
-    if __rusk_add_has_prior_task_text
+    set -l cmdline (__rusk_get_cmdline)
+    if contains -- --json $cmdline
+        # With --json, help only
+    else if __rusk_add_has_prior_task_text
         set all_flags (__rusk_unused_value_flags) -h --help
+    else if set -l at (contains -i -- rusk $cmdline); and test (count $cmdline) -eq (math $at + 1)
+        # --json takes the tasks from standard input: nothing else goes with it
+        set all_flags --json -h --help
     end
     __rusk_complete_flags $all_flags
 end
@@ -254,6 +271,22 @@ function __rusk_should_complete_add_flags
         end
     end
     return 1
+end
+
+# Check if we should complete flags after task ids in place of the command
+function __rusk_should_complete_show_flags
+    __rusk_after_double_dash; and return 1
+    __rusk_is_show; or return 1
+    set -l current_word (__rusk_get_current_word)
+    test -z "$current_word"; or __rusk_is_flag "$current_word"
+end
+
+function __rusk_complete_show_flags
+    if contains -- --json (__rusk_get_cmdline)
+        __rusk_complete_flags -h --help
+    else
+        __rusk_complete_flags --json -h --help
+    end
 end
 
 # True if edit has a task id token in completed words
@@ -847,38 +880,46 @@ end
 # No file names: rusk takes task text, ids and words of its own. The value
 # of `gen -o` is the one path, and its rule says so (-F).
 complete -c rusk -f
-complete -c rusk -f -n '__fish_use_subcommand' -a 'add' -d 'Add a new task'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'edit' -d 'Edit tasks by id(s)'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'mark' -d 'Mark tasks as done/undone'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'rm' -d 'Delete tasks by id, the completed ones (rm done) or every task (rm all)'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'list' -d 'List all tasks'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'search' -d 'Search tasks by text'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'restore' -d 'Restore from backup'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'gen' -d 'Generate a read-only HTML page'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'serve' -d 'Serve the web UI'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'sync' -d 'Synchronize with a remote'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'completions' -d 'Install shell completions'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'help' -d 'Print help for a command'
+complete -c rusk -f -n '__rusk_use_subcommand' -a 'add' -d 'Add a new task'
+complete -c rusk -f -n '__rusk_use_subcommand' -a 'edit' -d 'Edit tasks by id(s)'
+complete -c rusk -f -n '__rusk_use_subcommand' -a 'mark' -d 'Mark tasks as done/undone'
+complete -c rusk -f -n '__rusk_use_subcommand' -a 'rm' -d 'Delete tasks by id, the completed ones (rm done) or every task (rm all)'
+complete -c rusk -f -n '__rusk_use_subcommand' -a 'list' -d 'List all tasks'
+complete -c rusk -f -n '__rusk_use_subcommand' -a 'search' -d 'Search tasks by text'
+complete -c rusk -f -n '__rusk_use_subcommand' -a 'restore' -d 'Restore from backup'
+complete -c rusk -f -n '__rusk_use_subcommand' -a 'gen' -d 'Generate a read-only HTML page'
+complete -c rusk -f -n '__rusk_use_subcommand' -a 'serve' -d 'Serve the web UI'
+complete -c rusk -f -n '__rusk_use_subcommand' -a 'sync' -d 'Synchronize with a remote'
+complete -c rusk -f -n '__rusk_use_subcommand' -a 'completions' -d 'Install shell completions'
+complete -c rusk -f -n '__rusk_use_subcommand' -a 'help' -d 'Print help for a command'
 complete -c rusk -f -n '__rusk_is_command help' -a '(__rusk_complete_help)'
 
 # Aliases share the command description so the fish pager groups each
 # alias with its command on one aligned row (e.g. "a  add    Add a new task").
-complete -c rusk -f -n '__fish_use_subcommand' -a 'a' -d 'Add a new task'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'e' -d 'Edit tasks by id(s)'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'm' -d 'Mark tasks as done/undone'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'l' -d 'List all tasks'
-complete -c rusk -f -n '__fish_use_subcommand' -a 's' -d 'Search tasks by text'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'r' -d 'Restore from backup'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'g' -d 'Generate a read-only HTML page'
-complete -c rusk -f -n '__fish_use_subcommand' -a 'c' -d 'Install shell completions'
+complete -c rusk -f -n '__rusk_use_subcommand' -a 'a' -d 'Add a new task'
+complete -c rusk -f -n '__rusk_use_subcommand' -a 'e' -d 'Edit tasks by id(s)'
+complete -c rusk -f -n '__rusk_use_subcommand' -a 'm' -d 'Mark tasks as done/undone'
+complete -c rusk -f -n '__rusk_use_subcommand' -a 'l' -d 'List all tasks'
+complete -c rusk -f -n '__rusk_use_subcommand' -a 's' -d 'Search tasks by text'
+complete -c rusk -f -n '__rusk_use_subcommand' -a 'r' -d 'Restore from backup'
+complete -c rusk -f -n '__rusk_use_subcommand' -a 'g' -d 'Generate a read-only HTML page'
+complete -c rusk -f -n '__rusk_use_subcommand' -a 'c' -d 'Install shell completions'
 
 # Global flags (-s/-l only appear after "-" on the token; -a lists them with subcommands on bare <tab>)
-complete -c rusk -f -n '__fish_use_subcommand' -a '-h' -d 'Show help'
-complete -c rusk -f -n '__fish_use_subcommand' -a '--help' -d 'Show help'
-complete -c rusk -f -n '__fish_use_subcommand' -a '-V' -d 'Show version'
-complete -c rusk -f -n '__fish_use_subcommand' -a '--version' -d 'Show version'
-complete -c rusk -f -n '__fish_use_subcommand' -s h -l help -d 'Show help'
-complete -c rusk -f -n '__fish_use_subcommand' -s V -l version -d 'Show version'
+complete -c rusk -f -n '__rusk_use_subcommand' -a '-h' -d 'Show help'
+complete -c rusk -f -n '__rusk_use_subcommand' -a '--help' -d 'Show help'
+complete -c rusk -f -n '__rusk_use_subcommand' -a '-V' -d 'Show version'
+complete -c rusk -f -n '__rusk_use_subcommand' -a '--version' -d 'Show version'
+complete -c rusk -f -n '__rusk_use_subcommand' -s h -l help -d 'Show help'
+complete -c rusk -f -n '__rusk_use_subcommand' -s V -l version -d 'Show version'
+
+# ============================================================================
+# Task Ids In Place Of The Command
+# ============================================================================
+
+# The ids are never offered; --json goes with them, and with it on the line
+# help only
+complete -c rusk -f -n '__rusk_should_complete_show_flags' -a '(__rusk_complete_show_flags)'
 
 # ============================================================================
 # Add Command Completions

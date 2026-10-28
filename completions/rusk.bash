@@ -234,8 +234,13 @@ _rusk_unused_value_flags() {
 
 _rusk_complete_add_edit_flags() {
     local gcur="$cur"
-    if _rusk_add_has_task_text; then
+    if _rusk_json_on_line; then
+        COMPREPLY=($(compgen -W "-h --help" -- "$gcur"))
+    elif _rusk_add_has_task_text; then
         COMPREPLY=($(compgen -W "$(_rusk_unused_value_flags) -h --help" -- "$gcur"))
+    elif (( COMP_CWORD == rusk_idx + 2 )); then
+        # --json takes the tasks from standard input: nothing else goes with it
+        COMPREPLY=($(compgen -W "--json -h --help" -- "$gcur"))
     else
         COMPREPLY=($(compgen -W "-h --help" -- "$gcur"))
     fi
@@ -346,6 +351,15 @@ _rusk_after_double_dash() {
     local j
     for ((j=rusk_idx+2; j<COMP_CWORD; j++)); do
         [[ "${COMP_WORDS[j]}" == "--" ]] && return 0
+    done
+    return 1
+}
+
+# Whether a `--json` comes before the word under the cursor.
+_rusk_json_on_line() {
+    local j
+    for ((j=rusk_idx+1; j<COMP_CWORD; j++)); do
+        [[ "${COMP_WORDS[j]}" == "--json" ]] && return 0
     done
     return 1
 }
@@ -518,6 +532,18 @@ _rusk_completion() {
                 fi
             else
                 COMPREPLY=($(compgen -W "install show -h --help" -- "$cur"))
+            fi
+            ;;
+
+        --json|[0-9]*)
+            # Task ids in place of the command (never offered), --json with
+            # them; once it is on the line, help only.
+            if [[ -z "$cur" ]] || [[ "$cur" == -* ]]; then
+                if _rusk_json_on_line; then
+                    COMPREPLY=($(compgen -W "-h --help" -- "$cur"))
+                else
+                    COMPREPLY=($(compgen -W "--json -h --help" -- "$cur"))
+                fi
             fi
             ;;
 

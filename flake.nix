@@ -49,8 +49,16 @@
           # into the right locations inside $out
           nativeBuildInputs = [ pkgs.installShellFiles ];
 
-          # Git backend tests call the git binary, which is absent in the build sandbox
-          nativeCheckInputs = [ pkgs.git ];
+          # Tools the test suite shells out to, none of them in the build sandbox
+          # by default: git for the git backend, curl for http:// database
+          # locations, and bashInteractive for the completion table test, which
+          # drives rusk.bash through `complete`/`compgen` - builtins that
+          # stdenv's bash is built without
+          nativeCheckInputs = [
+            pkgs.git
+            pkgs.curl
+            pkgs.bashInteractive
+          ];
 
           # postInstall runs after `cargo install`:
           # ship the completions next to the binary

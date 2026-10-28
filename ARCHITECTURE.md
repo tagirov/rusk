@@ -46,7 +46,7 @@ src/
 │   ├── csv.rs           # RFC 4180, spreadsheet interop
 │   ├── markdown.rs      # GitHub task list        [feature = "fmt-markdown"]
 │   ├── todotxt.rs       # todo.txt                [feature = "fmt-todotxt"]
-│   ├── ndjson.rs        # one JSON task per line  [feature = "fmt-ndjson"]
+│   ├── ndjson.rs        # one JSON task per line (the db format with fmt-ndjson; rusk <IDS> --json / add --json always)
 │   └── ics.rs           # iCalendar VTODO         [feature = "fmt-ics"]
 ├── backend/             # Storage backends, chosen by the shape of rusk_db
 │   ├── mod.rs           # Backend enum: resolve/parse, load/save/update, StaleDatabase, backup/restore
@@ -165,7 +165,7 @@ Nearly every module also reads `config::theme()` for output colors.
 | `sync`           | yes     | `sync` module + CLI command; implies `backend-ssh` + `backend-http` |
 | `fmt-markdown`   | yes     | `.md` database format (GitHub task list)                     |
 | `fmt-todotxt`    | yes     | `.txt` database format (todo.txt)                            |
-| `fmt-ndjson`     | yes     | `.ndjson` / `.jsonl` database format                         |
+| `fmt-ndjson`     | yes     | `.ndjson` / `.jsonl` database format (the codec itself is always built: `--json` pipes) |
 | `fmt-ics`        | yes     | `.ics` database format (iCalendar VTODO)                     |
 | `backend-http`   | yes     | `rusk_db = https://…` (rusk serve API, system curl)          |
 | `backend-ssh`    | yes     | `rusk_db = [user@]host:path` (system ssh)                    |
@@ -324,6 +324,10 @@ User input → clap (args.rs) → main.rs (config::load → init) dispatch
 
 rusk serve: browser ←→ tiny_http (web/server.rs) → auth → api.rs handlers
     → fresh TaskManager per request, one request at a time ←→ database
+
+rusk <IDS> --json | RUSK_DB=… rusk add --json: the tasks as NDJSON lines
+    (codec/ndjson.rs) → TaskManager::add_copies: new ids, dependencies
+    among the copies remapped, the rest dropped and reported, one update
 
 rusk sync: sync.rs → the ssh/http backends as transports
     → conflict check against the .sync state file

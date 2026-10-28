@@ -24,7 +24,8 @@ pub mod csv;
 pub mod ics;
 #[cfg(feature = "fmt-markdown")]
 pub mod markdown;
-#[cfg(feature = "fmt-ndjson")]
+// In every build: also the form `rusk <IDS> --json` and `rusk add --json`
+// pass tasks in (`fmt-ndjson` adds it as a database format).
 pub mod ndjson;
 #[cfg(feature = "fmt-todotxt")]
 pub mod todotxt;

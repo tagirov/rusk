@@ -36,6 +36,7 @@ tests/
 ├── id_list_tests.rs                # Task id lists on the command line (parse_id_list, split_leading_ids, parse_id_args, parse_edit_args)
 ├── persistence_tests.rs            # Data persistence and save/load tests
 ├── restore_tests.rs                # Backup restore functionality tests
+├── show_tests.rs                   # rusk <IDS>: the tasks by id, --json, and the copy through `rusk add --json`
 ├── review_urgent_tests.rs          # Regression tests for the urgent REVIEW.md fixes (№1, №6, №7, №154, №161)
 ├── review_known_bugs.rs            # REVIEW.md repros by refactor cluster: #[ignore]d while open, regressions once closed (R1–R30)
 ├── unchanged_detection_tests.rs    # Unchanged task detection tests

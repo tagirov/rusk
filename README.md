@@ -144,7 +144,11 @@ rusk list --no-compact   # full view for one run, even with `compact = true` in 
 rusk search omega        # matches highlighted
 rusk s buy milk          # the words are one phrase
 rusk s --id omega        # only the ids, one per line (script-friendly)
+
+rusk 3                   # task 3 alone; `rusk 1,2` for several
 ```
+
+`rusk <ids>` says which ids no task has: `Tasks not found IDs: 9`.
 
 The compact view trims trailing punctuation and never wraps. A new task that
 takes the id of a deleted one is listed in that place. In a hand-edited file
@@ -507,6 +511,19 @@ export RUSK_NO_COLOR=1
   `rusk rm` without one refuses and asks for `--yes`. The editors (`rusk add`,
   `rusk edit <id>`) need a terminal too.
 - `rusk search --id` prints the matching ids only, one per line, no colors.
+- `rusk <ids> --json` prints the tasks as JSON lines, one task per line, and
+  `rusk add --json` adds such lines from standard input as new tasks. Together
+  they copy tasks into another database:
+
+  ```bash
+  rusk 3,5 --json | RUSK_DB=~/work.json rusk add --json
+  ```
+
+  Each copy gets an id of the target database and keeps its text, due date,
+  priority and done state. A dependency on a task copied along points at its
+  new id; one on a task left behind is dropped, and rusk says so. The ids no
+  task has go to stderr, so that stdout stays JSON. A line that is not a task
+  adds nothing at all.
 
 ## Documentation
 

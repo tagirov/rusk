@@ -873,6 +873,56 @@ impl HandlerCLI {
         Self::render_task_list(&matched, false, Some(&query))
     }
 
+    /// `rusk <IDS>`: the tasks with these ids in the list's form and order
+    /// (always full text, like search), then the ids no task has. With
+    /// `json`, the tasks as JSON lines (the NDJSON database format) for
+    /// `rusk add --json`: stdout is the data then, so the ids no task has
+    /// go to stderr.
+    pub fn handle_show_tasks(tasks: &[Task], ids: &[TaskId], json: bool) -> Result<()> {
+        let shown: Vec<&Task> = tasks.iter().filter(|t| ids.contains(&t.id)).collect();
+        let not_found: Vec<TaskId> = ids
+            .iter()
+            .copied()
+            .filter(|&id| !shown.iter().any(|t| t.id == id))
+            .collect();
+
+        if json {
+            let shown: Vec<Task> = shown.into_iter().cloned().collect();
+            out!("{}", crate::codec::ndjson::encode(&shown)?)?;
+            if !not_found.is_empty() {
+                let list = not_found.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(" ");
+                crate::errln!("{} {}", theme().warning.paint("Tasks not found IDs:"), list);
+            }
+            return Ok(());
+        }
+
+        if !shown.is_empty() {
+            Self::render_task_list(&shown, false, None)?;
+        }
+        Self::print_not_found_ids(&not_found)
+    }
+
+    /// `rusk add --json`: `copies` (what `rusk <IDS> --json` printed) added
+    /// as new tasks; each is reported as `rusk add` reports one, and so is a
+    /// dependency that could not come along.
+    pub fn handle_add_copies(tm: &mut TaskManager, copies: &[Task]) -> Result<()> {
+        let copied = tm.add_copies(copies)?;
+        for &id in &copied.ids {
+            Self::print_added_task(tm, id)?;
+        }
+        for (id, lost) in &copied.dropped {
+            let lost = lost.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ");
+            outln!(
+                "{}{}{}{}",
+                theme().notice.paint("Task "),
+                theme().emphasis.paint(&id.to_string()).bold(),
+                theme().notice.paint(" no longer depends on "),
+                theme().notice.paint(&format!("{lost}: not among the copied tasks."))
+            )?;
+        }
+        Ok(())
+    }
+
     fn render_task_list(tasks: &[&Task], compact: bool, query: Option<&Query>) -> Result<()> {
         let listing = Self::format_task_list(tasks, compact, query, Self::get_max_line_width());
         out!("{listing}")

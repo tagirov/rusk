@@ -99,6 +99,57 @@ fn after_ids_or_exit(raw: &str, clear_allowed: bool) -> Vec<TaskId> {
     })
 }
 
+/// The word in place of the COMMAND when it is neither a command nor
+/// anything that starts like a task id (`rusk lsit`, `rusk del --help`):
+/// clap's own answer to an unknown command, with its tip on a similar one,
+/// as rusk gave it before it took IDS there. The root options in front of
+/// the word are left out (none of them takes a value), so that the word is
+/// what is answered, not a `--help` or `--json` before it.
+fn exit_if_unknown_command(cmd: &clap::Command) {
+    let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    let Some(at) = (1..args.len()).find(|&i| !args[i].to_string_lossy().starts_with('-')) else {
+        return;
+    };
+    let word = args[at].to_string_lossy();
+    // `help` is a command clap adds only when it builds the command line.
+    if word.trim_start().starts_with(|c: char| c.is_ascii_digit())
+        || word == "help"
+        || cmd.find_subcommand(&args[at]).is_some()
+    {
+        return;
+    }
+    let commands = clap::Command::new("rusk")
+        .color(output::colors().clap())
+        .styles(config::theme().clap_styles())
+        .subcommands(cmd.get_subcommands().cloned());
+    let from_the_word = std::iter::once(args[0].clone()).chain(args[at..].iter().cloned());
+    if let Err(err) = commands.try_get_matches_from(from_the_word) {
+        err.exit();
+    }
+}
+
+/// `rusk add --json`: the tasks on standard input, one JSON object per line
+/// (what `rusk <IDS> --json` prints), read and checked before the database
+/// is opened.
+fn copies_from_stdin_or_exit() -> Vec<rusk::Task> {
+    const EXAMPLE: &str = "e.g. `rusk 3 --json | RUSK_DB=~/work.json rusk add --json`";
+    if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        exit_with_error(format!(
+            "`rusk add --json` reads the tasks from standard input, one JSON object per line; \
+             pipe them in, {EXAMPLE}"
+        ));
+    }
+    let input = std::io::read_to_string(std::io::stdin())
+        .unwrap_or_else(|err| exit_with_error(format!("Failed to read standard input: {err}")));
+    let copies = rusk::codec::ndjson::decode(&input).unwrap_or_else(|err| {
+        exit_with_error(format!("standard input is not tasks as `rusk <IDS> --json` prints them: {err:#}"))
+    });
+    if copies.is_empty() {
+        exit_with_error(format!("no tasks on standard input; {EXAMPLE}"));
+    }
+    copies
+}
+
 fn main() {
     match run() {
         Ok(()) => {}
@@ -143,7 +194,9 @@ fn run() -> Result<()> {
         );
     }
 
-    let cli = Cli::from_arg_matches(&cli_command().get_matches()).unwrap_or_else(|e| e.exit());
+    let cmd = cli_command();
+    exit_if_unknown_command(&cmd);
+    let cli = Cli::from_arg_matches(&cmd.get_matches()).unwrap_or_else(|e| e.exit());
 
     // `sync` loads the database itself (and must not create sample tasks),
     // so intercept it before any TaskManager is created.
@@ -215,7 +268,13 @@ fn run() -> Result<()> {
     }
 
     match cli.command {
-        Some(Command::Add { text, date, after }) => {
+        Some(Command::Add { json: true, .. }) => {
+            // clap keeps TEXT, -d and -a away from --json: the tasks bring their own.
+            let copies = copies_from_stdin_or_exit();
+            let mut tm = TaskManager::new()?;
+            HandlerCLI::handle_add_copies(&mut tm, &copies)?;
+        }
+        Some(Command::Add { text, date, after, .. }) => {
             let after_ids = after.as_deref().map_or_else(Vec::new, |raw| after_ids_or_exit(raw, false));
             check_date_or_exit(date.as_deref());
             if !text.is_empty() {
@@ -382,6 +441,11 @@ fn run() -> Result<()> {
         Some(Command::Search { query, id }) => {
             let tm = TaskManager::new()?;
             HandlerCLI::handle_search_tasks(tm.tasks(), &query.join(" "), id)?;
+        }
+        None if !cli.ids.is_empty() => {
+            let ids = ids_or_exit(parse_id_args(&cli.ids), "`rusk 3`, `rusk 1,2,3`");
+            let tm = TaskManager::new()?;
+            HandlerCLI::handle_show_tasks(tm.tasks(), &ids, cli.json)?;
         }
         None => {
             let tm = TaskManager::new()?;

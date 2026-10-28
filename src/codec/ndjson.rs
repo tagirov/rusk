@@ -1,7 +1,9 @@
 //! NDJSON database format (`tasks.ndjson` / `tasks.jsonl`), feature
 //! `fmt-ndjson`: one compact JSON task per line. The schema per line is the
 //! same as the JSON format; the win is line-oriented tooling — clean git
-//! diffs, `grep`, and `jq -c` over the database.
+//! diffs, `grep`, and `jq -c` over the database. Built in every build: it
+//! is also the form `rusk <IDS> --json` prints tasks in and `rusk add
+//! --json` reads them back.
 
 use crate::model::Task;
 use anyhow::{Context, Result};

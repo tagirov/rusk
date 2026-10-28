@@ -63,6 +63,16 @@ pub struct ConfirmedDeletion {
     pub unlinked: Vec<(TaskId, Vec<TaskId>)>,
 }
 
+/// What [`TaskManager::add_copies`] made of the tasks it was given.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Copied {
+    /// The new id of each task, in the order they were given.
+    pub ids: Vec<TaskId>,
+    /// The copies that lost dependencies, by new id, with the ids (as the
+    /// input gave them) of the tasks that did not come along.
+    pub dropped: Vec<(TaskId, Vec<TaskId>)>,
+}
+
 /// Position of the task with this id.
 pub fn position_of(tasks: &[Task], id: TaskId) -> Option<usize> {
     tasks.iter().position(|t| t.id == id)
@@ -510,6 +520,87 @@ impl TaskManager {
                 },
             );
             Ok(id)
+        })
+    }
+
+    /// Adds `copies` — tasks of another database, as `rusk <IDS> --json`
+    /// printed them — as new tasks, all in one step: each gets an id of
+    /// this database's own and keeps its text, due date, priority and done
+    /// flag (a day it was done on only with the flag). A dependency on a task
+    /// among the copies points at that task's new id; one on any other task
+    /// means nothing here and is dropped, and returned. A dependency on the
+    /// task itself, and dependencies that make a cycle (a hand-written
+    /// input), are refused, as `edit -a` refuses them.
+    pub fn add_copies(&mut self, copies: &[Task]) -> Result<Copied> {
+        for (n, copy) in copies.iter().enumerate() {
+            if clean_text(&copy.text).is_empty() {
+                anyhow::bail!("Task text cannot be empty (task {} of the input)", n + 1);
+            }
+        }
+        self.update(|tasks| {
+            let mut ids = Vec::with_capacity(copies.len());
+            for copy in copies {
+                let id = next_free_id(tasks)?;
+                insert_by_id(
+                    tasks,
+                    Task {
+                        id,
+                        text: clean_text(&copy.text).to_string(),
+                        date: copy.date,
+                        done: copy.done,
+                        done_on: copy.done_on.filter(|_| copy.done),
+                        priority: copy.priority,
+                        after: Vec::new(),
+                    },
+                );
+                ids.push(id);
+            }
+            // The id a copy had where it came from, to its new one: an id
+            // given twice is the first task's, and 0 is no id at all.
+            let mut new_ids: std::collections::HashMap<TaskId, TaskId> =
+                std::collections::HashMap::new();
+            for (copy, &id) in copies.iter().zip(&ids) {
+                if copy.id != 0 {
+                    new_ids.entry(copy.id).or_insert(id);
+                }
+            }
+            let mut dropped = Vec::new();
+            for (copy, &id) in copies.iter().zip(&ids) {
+                let mut after: Vec<TaskId> = Vec::new();
+                let mut lost: Vec<TaskId> = Vec::new();
+                for on in &copy.after {
+                    match new_ids.get(on) {
+                        Some(&dep) if dep == id => {
+                            anyhow::bail!("Task {on} of the input cannot depend on itself")
+                        }
+                        Some(&dep) if !after.contains(&dep) => after.push(dep),
+                        None if !lost.contains(on) => lost.push(*on),
+                        // Named once already.
+                        _ => {}
+                    }
+                }
+                if let Some(idx) = position_of(tasks, id) {
+                    tasks[idx].after = after;
+                }
+                if !lost.is_empty() {
+                    dropped.push((id, lost));
+                }
+            }
+            // Named by the ids the input gave: the new ones are never saved.
+            // A copy without one is no dependency of anything, so never in
+            // a cycle.
+            for (copy, &id) in copies.iter().zip(&ids) {
+                if let Some(idx) = position_of(tasks, id) {
+                    let after = tasks[idx].after.clone();
+                    if validate_after(tasks, Some(id), &after).is_err() {
+                        anyhow::bail!(
+                            "Dependency cycle in the input: task {} would (transitively) depend on itself",
+                            copy.id
+                        );
+                    }
+                }
+            }
+            Ok(Copied { ids, dropped })
         })
     }
 

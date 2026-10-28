@@ -102,7 +102,11 @@ fn env_entry(name: &str, description: &str) -> String {
 fn root_after_long_help() -> String {
     let mut help = String::from(
         "Running `rusk` without a COMMAND is equivalent to `rusk list`. Use `rusk list -c` / \
-         `--compact` for a compact single-line view.\n\n",
+         `--compact` for a compact single-line view.\n\n\
+         With task IDS instead of a COMMAND, rusk shows those tasks (`rusk 3`, `rusk 1,2`), and \
+         says which ids no task has. With --json it prints them as JSON lines, one task per \
+         line, which `rusk add --json` reads: that copies tasks into another database, e.g. \
+         `rusk 3 --json | RUSK_DB=~/work.json rusk add --json`.\n\n",
     );
     help.push_str(if cfg!(feature = "interactive") {
         "Due dates: `rusk add -d ...` for new tasks, `rusk add` with no text for the TUI, or the \
@@ -217,21 +221,33 @@ editor (set or clear a due date on the first line). Optional `-d` pre-seeds the 
 when there is no TEXT. Optional `-a` lists tasks this one depends on: they are shown after \
 the text, e.g. `text (19,22)` — the task should be done no earlier than them (an ordering \
 hint for agents and tooling; `rusk mark` itself is never blocked).\n\n\
+With --json: the tasks come from standard input, one JSON object per line, as \
+`rusk <IDS> --json` prints them, each a new task with an id of this database's own; text, due \
+date, priority and done (with its day) come along. A dependency on a task that comes along too \
+points at that task's new id; one on a task that stays behind is dropped, and said. A line that \
+is not a task adds nothing at all.\n\n\
 Examples:\n  \
 rusk add buy groceries\n  \
 rusk add report -d 31-12-2025\n  \
 rusk add deploy -a 19,22          # depends on tasks 19 and 22\n  \
 rusk add                          # interactive editor\n  \
-rusk add -d 2w                    # editor with the date pre-seeded"
+rusk add -d 2w                    # editor with the date pre-seeded\n  \
+rusk 3 --json | RUSK_DB=~/work.json rusk add --json   # task 3, copied into ~/work.json"
 } else {
     "Add a new task. Optional `-d` sets its due date. Optional `-a` lists tasks this one \
 depends on: they are shown after the text, e.g. `text (19,22)` — the task should be done no \
 earlier than them (an ordering hint for agents and tooling; `rusk mark` itself is never \
 blocked).\n\n\
+With --json: the tasks come from standard input, one JSON object per line, as \
+`rusk <IDS> --json` prints them, each a new task with an id of this database's own; text, due \
+date, priority and done (with its day) come along. A dependency on a task that comes along too \
+points at that task's new id; one on a task that stays behind is dropped, and said. A line that \
+is not a task adds nothing at all.\n\n\
 Examples:\n  \
 rusk add buy groceries\n  \
 rusk add report -d 31-12-2025\n  \
-rusk add deploy -a 19,22          # depends on tasks 19 and 22"
+rusk add deploy -a 19,22          # depends on tasks 19 and 22\n  \
+rusk 3 --json | RUSK_DB=~/work.json rusk add --json   # task 3, copied into ~/work.json"
 };
 
 const ADD_TEXT_HELP: &str = if cfg!(feature = "interactive") {
@@ -282,10 +298,23 @@ const EDIT_TEXT_HELP: &str = if cfg!(feature = "interactive") {
 #[command(
     version,
     about,
-    after_help = "Without COMMAND, lists all tasks (same as `rusk list`). Use `rusk list -c` for a compact single-line view.\n\nFor details on flags, dates, and environment variables run `rusk --help` or `rusk <COMMAND> --help`.",
+    args_conflicts_with_subcommands = true,
+    override_usage = "rusk [COMMAND]\n       rusk [--json] <IDS>",
+    after_help = "Without COMMAND, lists all tasks (same as `rusk list`). Use `rusk list -c` for a compact single-line view. With task IDS instead, shows those tasks: `rusk 3`, `rusk 1,2`.\n\nFor details on flags, dates, and environment variables run `rusk --help` or `rusk <COMMAND> --help`.",
     after_long_help = root_after_long_help()
 )]
 pub struct Cli {
+    #[arg(
+        value_name = "IDS",
+        help = "Show the tasks with these IDs: one comma-separated list, e.g. 1,2,3"
+    )]
+    pub ids: Vec<String>,
+    #[arg(
+        long,
+        requires = "ids",
+        help = "Print the tasks as JSON lines, for `rusk add --json` to read (a copy into another database)"
+    )]
+    pub json: bool,
     #[command(subcommand)]
     pub command: Option<Command>,
 }
@@ -317,6 +346,12 @@ pub enum Command {
             help = "Tasks this one depends on, comma-separated (e.g. 19,22): shown after the text; an ordering hint for agents, manual marking is not restricted"
         )]
         after: Option<String>,
+        #[arg(
+            long,
+            conflicts_with_all = ["text", "date", "after"],
+            help = "Add the tasks read from standard input as JSON lines, one task per line, as `rusk <IDS> --json` prints them: a copy from another database"
+        )]
+        json: bool,
     },
     #[command(
         about = "Delete tasks by ID, the completed ones with `rm done`, or every task with `rm all`",

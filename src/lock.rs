@@ -91,9 +91,40 @@ fn acquire_within(db_path: &Path, patience: Duration) -> WriterLock {
 /// The database is replaced where it really lives (a symlinked path is
 /// followed, see `atomic::replace_user_file`), so that is where the writers
 /// have to meet.
+///
+/// The link is read, never resolved with `canonicalize`: that opens the
+/// file and asks the OS for its name, and on Windows a database that
+/// another writer is replacing at that very moment answers with the name
+/// of its deleted-file holding area (`\\?\C:\$Extend\$Deleted\...`). No
+/// lock file can be made there, so the save went ahead without the lock
+/// and dropped the other writer's change — seen on CI, one run in dozens
+/// of `r12_parallel_adds_lose_nothing`.
 fn lock_path(db_path: &Path) -> PathBuf {
-    let real = fs::canonicalize(db_path).unwrap_or_else(|_| db_path.to_path_buf());
-    crate::backend::aux_path(&real, "lock")
+    crate::backend::aux_path(&followed(db_path), "lock")
+}
+
+/// `path` with a symbolic link (or a chain of them) followed to the file
+/// it names, a relative target read against the directory of its link.
+/// Anything that is no link is returned as given; so is a chain that does
+/// not end (the write itself reports a loop of links).
+fn followed(path: &Path) -> PathBuf {
+    const HOPS: usize = 40;
+    let mut current = path.to_path_buf();
+    for _ in 0..HOPS {
+        let is_link =
+            fs::symlink_metadata(&current).is_ok_and(|meta| meta.file_type().is_symlink());
+        if !is_link {
+            return current;
+        }
+        let Ok(target) = fs::read_link(&current) else {
+            return current;
+        };
+        current = match current.parent() {
+            Some(dir) if !target.is_absolute() && !dir.as_os_str().is_empty() => dir.join(target),
+            _ => target,
+        };
+    }
+    current
 }
 
 fn open(path: &Path, db_path: &Path) -> io::Result<File> {
@@ -170,6 +201,46 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("no-such-dir").join("tasks.json");
         assert!(!acquire(&db).is_held());
+    }
+
+    /// The lock file is named after the database as given, not after a
+    /// resolved form of the path: resolving opens the file (see
+    /// `lock_path`).
+    #[test]
+    fn the_lock_sits_next_to_the_database_as_named() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("sub")).unwrap();
+        fs::write(dir.path().join("tasks.json"), "[]").unwrap();
+        let roundabout = dir.path().join("sub").join("..").join("tasks.json");
+        assert_eq!(
+            lock_path(&roundabout),
+            dir.path().join("sub").join("..").join("tasks.json.lock")
+        );
+        assert!(acquire(&roundabout).is_held());
+        assert!(dir.path().join("tasks.json.lock").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_chain_of_relative_links_leads_to_the_real_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let real_dir = dir.path().join("dotfiles");
+        let link_dir = dir.path().join("links");
+        fs::create_dir(&real_dir).unwrap();
+        fs::create_dir(&link_dir).unwrap();
+        fs::write(real_dir.join("tasks.json"), "[]").unwrap();
+        // tasks.json -> links/first -> ../dotfiles/tasks.json
+        std::os::unix::fs::symlink("../dotfiles/tasks.json", link_dir.join("first")).unwrap();
+        let link = dir.path().join("tasks.json");
+        std::os::unix::fs::symlink("links/first", &link).unwrap();
+
+        let through_links = acquire(&link);
+        assert!(through_links.is_held());
+        assert!(real_dir.join("tasks.json.lock").exists());
+        assert!(!dir.path().join("tasks.json.lock").exists());
+        assert!(!link_dir.join("first.lock").exists());
+        let direct = acquire_within(&real_dir.join("tasks.json"), Duration::ZERO);
+        assert!(!direct.is_held());
     }
 
     #[cfg(unix)]

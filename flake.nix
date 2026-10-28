@@ -1,6 +1,6 @@
 {
   # Short flake description, shown by `nix flake show` and `nix flake metadata`
-  description = "rusk — minimal cross-platform terminal task manager";
+  description = "rusk — a cross-platform terminal task manager with a minimalist interface";
 
   # inputs — external dependencies of the flake.
   # Nix fetches them and pins exact revisions in flake.lock,
@@ -70,7 +70,7 @@
           '';
 
           meta = {
-            description = "Minimal cross-platform terminal task manager";
+            description = "A cross-platform terminal task manager with a minimalist interface";
             homepage = "https://github.com/tagirov/rusk";
             license = pkgs.lib.licenses.gpl3Only;
             mainProgram = "rusk"; # what `nix run` executes

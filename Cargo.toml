@@ -7,7 +7,7 @@ edition = "2024"
 # from 1.89 (REVIEW №143); clippy's `incompatible_msrv` lint checks the std
 # APIs the code uses against it.
 rust-version = "1.89"
-description = "Minimal cross-platform terminal task manager"
+description = "A cross-platform terminal task manager with a minimalist interface"
 license = "GPL-3.0-only"
 repository = "https://github.com/tagirov/rusk"
 

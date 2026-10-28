@@ -1,5 +1,5 @@
 <h1 align="center" id="rusk">rusk</h1>
-<p align="center">A minimal cross-platform terminal task manager</p>
+<p align="center">A cross-platform terminal task manager with a minimalist interface</p>
 
 <p align="center">
   <a href="https://github.com/tagirov/rusk/actions"><img src="https://img.shields.io/github/actions/workflow/status/tagirov/rusk/.github/workflows/rust.yml?logo=github-actions" alt="build"></a>&nbsp;

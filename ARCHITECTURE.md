@@ -1,6 +1,6 @@
 # Architecture
 
-Cross-platform terminal task manager. Single Rust crate, one library + one binary.
+Cross-platform terminal task manager with a minimalist interface. Single Rust crate, one library + one binary.
 
 - [Module map](#module-map)
 - [Dependency graph (internal)](#dependency-graph-internal)

@@ -525,6 +525,12 @@ export RUSK_NO_COLOR=1
   task has go to stderr, so that stdout stays JSON. A line that is not a task
   adds nothing at all.
 
+  To move tasks rather than copy them, remove them once the copy succeeds:
+
+  ```bash
+  rusk 3,5 --json | RUSK_DB=~/work.json rusk add --json && rusk rm 3,5 --yes
+  ```
+
 ## Documentation
 
 | File | Covers |
